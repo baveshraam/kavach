@@ -18,6 +18,31 @@ which branches actually contributed.
 "some evidence against" -- it is disqualifying, because it is exactly what a
 replay attack looks like. Weighted fusion would let a very strong voice match
 outvote it. `FusionPolicy.liveness_is_gate` keeps that from happening.
+
+**A weighted average cannot express a veto, and the threat model needs one.**
+Arithmetic: with weights (0.40, 0.30, 0.30) and a threshold of 0.55, a branch
+weighted 0.30 can move the fused score by at most 0.30. An attacker who fools
+the acoustic branch (0.85) and knows the answer (0.90) is already at 0.61 from
+those two alone, so *no* CSBG score, not even zero, can pull the total below
+threshold. That is precisely attack A4 -- the one the CSBG exists to stop --
+and under plain weighted fusion the CSBG is structurally incapable of stopping
+it. Raising its weight until the arithmetic works would be tuning to a single
+adversary and would punish genuine speakers whose answers are short.
+
+The right fix follows from what the CSBG score *is*. It is a log-likelihood
+ratio against a background model, so a strongly negative value is not weak
+support for identity -- it is affirmative evidence *against* it. Averaging
+that away is a category error, the same one `liveness_is_gate` avoids.
+`FusionPolicy.veto_thresholds` therefore lets a branch reject outright when
+its score falls below a floor.
+
+A veto is a false-reject risk and is deliberately set far below the fusion
+threshold, so it fires only on strong contrary evidence rather than on a
+merely unimpressive score. Two safeguards: an *unavailable* branch never
+vetoes (so a probe too short to score cannot reject anyone), and the default
+floor is a starting point to be fitted on the dev split. **Report the fitted
+floor and the false-reject rate it costs.** A veto whose FRR cost is not
+measured is not a result.
 """
 
 from __future__ import annotations
@@ -107,10 +132,33 @@ class FusionPolicy:
     evaluation: attack A4 assumes the attacker HAS the answer, and hard-gating
     knowledge would mask whether the CSBG caught them."""
 
+    veto_thresholds: dict[Branch, float] = field(
+        default_factory=lambda: {Branch.CSBG: 0.15}
+    )
+    """Per-branch floors below which the branch rejects outright.
+
+    See the module docstring for why a weighted average alone cannot stop
+    attack A4. The 0.15 default sits far below the 0.55 fusion threshold: on
+    the squashed LLR scale, 0.5 is "no evidence either way", so 0.15 means the
+    background model explains the probe substantially better than the speaker
+    model does. It is a **starting point, not a fitted value** -- fit it on the
+    dev split against the false-reject rate it costs, and report both.
+
+    Set to `{}` to disable vetoes entirely, which is the correct setting for
+    the ablation that measures what the veto is worth."""
+
     def __post_init__(self) -> None:
         total = sum(self.weights.values())
         if not math.isclose(total, 1.0, abs_tol=1e-6):
             raise ValueError(f"Fusion weights must sum to 1.0, got {total}")
+        for branch, floor in self.veto_thresholds.items():
+            if floor >= self.threshold:
+                raise ValueError(
+                    f"Veto floor for {branch.value} is {floor}, at or above the fusion "
+                    f"threshold {self.threshold}. A veto that fires on scores the fusion "
+                    "would have rejected anyway does nothing; one that fires above the "
+                    "threshold silently replaces fusion with a single-branch decision."
+                )
 
 
 @dataclass(slots=True)
@@ -212,6 +260,34 @@ def fuse(
     knowledge = by_branch.get(Branch.KNOWLEDGE)
     if policy.require_knowledge and knowledge is not None and not knowledge.passed:
         decision = Decision.REJECT
+
+    # --- Vetoes: strong contrary evidence from one branch. ---------------
+    # Applied after fusion so `fused_score` still reports what the weighted
+    # sum actually produced -- a veto overrides the decision, it does not
+    # rewrite the evidence. Only branches that were measured can veto.
+    vetoes = [
+        b
+        for b in scored
+        if b.branch in policy.veto_thresholds and b.score < policy.veto_thresholds[b.branch]
+    ]
+    if vetoes:
+        decision = Decision.REJECT
+        veto_lines = [
+            f"Rejected on the {b.branch.value} branch alone: {b.score:.3f} is below the "
+            f"veto floor of {policy.veto_thresholds[b.branch]:.3f}. This is not a weak "
+            "score, it is evidence against identity, and no other branch overrides it."
+            for b in vetoes
+        ]
+        return FusionResult(
+            decision=decision,
+            fused_score=fused,
+            threshold=policy.threshold,
+            branches=branches,
+            liveness_ok=liveness_ok,
+            explanation=veto_lines
+            + _explain(decision, fused, policy, branches, scored),
+            contributing_branches=[b.branch.value for b in scored],
+        )
 
     return FusionResult(
         decision=decision,

@@ -633,12 +633,43 @@ class TestFusion:
             FusionPolicy(weights={Branch.SPEAKER: 0.5, Branch.CSBG: 0.9})
 
     def test_explanation_names_the_weakest_branch(self):
+        # CSBG weakest but above the veto floor, so this exercises ordinary
+        # weighted fusion rather than the veto path.
         result = fuse([
             branch(Branch.SPEAKER, 0.9),
-            branch(Branch.CSBG, 0.1),
+            branch(Branch.CSBG, 0.25),
             branch(Branch.KNOWLEDGE, 0.9),
         ])
-        assert "csbg" in result.explanation[1]
+        assert "csbg" in " ".join(result.explanation)
+
+    def test_a_branch_below_its_veto_floor_rejects_alone(self):
+        """The A4 defence: strong contrary evidence is not outvoted.
+
+        Two branches at 0.9 put the weighted score above threshold, and a
+        0.30-weighted CSBG cannot pull it back down by averaging. The veto is
+        what makes the rejection possible at all -- see the fusion module
+        docstring for the arithmetic.
+        """
+        scores = [
+            branch(Branch.SPEAKER, 0.9),
+            branch(Branch.CSBG, 0.05),
+            branch(Branch.KNOWLEDGE, 0.9),
+        ]
+        assert fuse(scores, FusionPolicy(veto_thresholds={})).decision is Decision.ACCEPT
+
+        vetoed = fuse(scores)
+        assert vetoed.decision is Decision.REJECT
+        assert "veto floor" in vetoed.explanation[0]
+        assert vetoed.fused_score > vetoed.threshold  # evidence reported honestly
+
+    def test_an_unavailable_branch_cannot_veto(self):
+        """A probe too short to score must never reject a genuine speaker."""
+        result = fuse([
+            branch(Branch.SPEAKER, 0.9),
+            BranchScore(Branch.CSBG, 0.0, 0.5, 0.3, available=False),
+            branch(Branch.KNOWLEDGE, 0.9),
+        ])
+        assert result.decision is Decision.ACCEPT
 
 
 class TestLivenessBranch:
