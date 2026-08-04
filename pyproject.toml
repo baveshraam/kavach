@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kavach"
+version = "0.1.0"
+description = "Knowledge-graph Anchored Voice Authentication for Code-switched, Hybrid-language speakers"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+
+[tool.setuptools.packages.find]
+where = ["backend"]
+include = ["kavach*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["backend"]
+addopts = "-q --strict-markers"
+markers = [
+    "slow: tests that load ML models or process audio (deselect with '-m \"not slow\"')",
+    "requires_models: needs pretrained checkpoints downloaded",
+    "requires_llm: needs a live LLM API key",
+]
+filterwarnings = ["ignore::DeprecationWarning:speechbrain.*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["backend"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "N"]
+ignore = [
+    "E501",  # line length is handled by the formatter
+    "B008",  # FastAPI Depends() in defaults is idiomatic
+    "N806",  # allow maths-style local names (JSD_lex, P_ref)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]
+
+[tool.coverage.run]
+source = ["backend/kavach"]
+omit = ["*/api/*", "*/attacks/*"]
