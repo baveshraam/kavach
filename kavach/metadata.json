@@ -1,0 +1,9 @@
+{
+  "name": "KAVACH",
+  "description": "A research console for a multilingual voice authentication system.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

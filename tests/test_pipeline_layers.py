@@ -637,7 +637,7 @@ class TestFusion:
         # weighted fusion rather than the veto path.
         result = fuse([
             branch(Branch.SPEAKER, 0.9),
-            branch(Branch.CSBG, 0.25),
+            branch(Branch.CSBG, 0.45),
             branch(Branch.KNOWLEDGE, 0.9),
         ])
         assert "csbg" in " ".join(result.explanation)

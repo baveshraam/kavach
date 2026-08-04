@@ -55,6 +55,36 @@ from typing import Any
 import numpy as np
 
 
+#: Default CSBG veto floor, on the branch's [0, 1] score scale.
+#:
+#: WHERE THIS NUMBER COMES FROM -- and why an earlier guess was wrong
+#: ------------------------------------------------------------------
+#: The CSBG branch score is a length-normalised log-likelihood ratio squashed
+#: by `csbg.scoring._squash` with scale 2.0, so a branch score `s` corresponds
+#: to a raw LLR of `2 * ln(s / (1 - s))`. Three landmarks on that scale:
+#:
+#:     s = 0.50   LLR  0.00   speaker model and background explain the probe
+#:                            equally well -- no evidence either way
+#:     s = 0.35   LLR -1.24   background is ~3.5x more likely: strong evidence
+#:                            against the claimed identity
+#:     s = 0.15   LLR -3.47   background is ~32x more likely
+#:
+#: The floor was originally set to 0.15 by reasoning about the [0, 1] scale in
+#: the abstract, without checking what the scorer emits. It does not emit that.
+#: An impostor whose language choices contradict the claimed speaker in every
+#: measured class lands around **0.29**, because the logistic compresses hard
+#: once the LLR passes -2. A floor of 0.15 therefore sat *below* the impostor
+#: mode: the veto was in the code, was covered by tests using hand-written
+#: scores, and would never once have fired on a real probe.
+#:
+#: 0.35 is the point at which the background model is about 3.5x more likely
+#: than the speaker's -- affirmative contrary evidence rather than an
+#: unimpressive score, which is exactly what the veto is for. **Fit it on the
+#: dev split and report the false-reject rate it costs**; a veto whose FRR cost
+#: is not measured is not a result.
+CSBG_VETO_FLOOR = 0.35
+
+
 class Decision(str, Enum):
     ACCEPT = "ACCEPT"
     REJECT = "REJECT"
@@ -133,16 +163,14 @@ class FusionPolicy:
     knowledge would mask whether the CSBG caught them."""
 
     veto_thresholds: dict[Branch, float] = field(
-        default_factory=lambda: {Branch.CSBG: 0.15}
+        default_factory=lambda: {Branch.CSBG: CSBG_VETO_FLOOR}
     )
     """Per-branch floors below which the branch rejects outright.
 
     See the module docstring for why a weighted average alone cannot stop
-    attack A4. The 0.15 default sits far below the 0.55 fusion threshold: on
-    the squashed LLR scale, 0.5 is "no evidence either way", so 0.15 means the
-    background model explains the probe substantially better than the speaker
-    model does. It is a **starting point, not a fitted value** -- fit it on the
-    dev split against the false-reject rate it costs, and report both.
+    attack A4, and `CSBG_VETO_FLOOR` for where the default number comes from.
+    It is a **starting point, not a fitted value** -- fit it on the dev split
+    against the false-reject rate it costs, and report both.
 
     Set to `{}` to disable vetoes entirely, which is the correct setting for
     the ablation that measures what the veto is worth."""
@@ -473,6 +501,7 @@ def build_liveness_branch(
 
 
 __all__ = [
+    "CSBG_VETO_FLOOR",
     "Decision",
     "Branch",
     "BranchScore",

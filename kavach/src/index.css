@@ -1,0 +1,75 @@
+@import "tailwindcss";
+
+@theme {
+  --color-app-bg: var(--app-bg);
+  --color-app-surface: var(--app-surface);
+  --color-app-border: var(--app-border);
+  --color-app-border-strong: var(--app-border-strong);
+  
+  --color-app-text: var(--app-text);
+  --color-app-text-muted: var(--app-text-muted);
+  
+  --color-app-accent: var(--app-accent);
+  --color-app-accent-hover: var(--app-accent-hover);
+  --color-app-accent-muted: var(--app-accent-muted);
+  
+  --color-app-accept: var(--app-accept);
+  --color-app-reject: var(--app-reject);
+  --color-app-warning: var(--app-warning);
+  --color-app-reject-subtle: var(--app-reject-subtle);
+
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'JetBrains Mono', monospace;
+}
+
+@layer base {
+  :root {
+    --app-bg: #FAFAF9;
+    --app-surface: #FFFFFF;
+    --app-surface-muted: #F2F1EE;
+    --app-border: #E5E4E1;
+    --app-border-strong: #D1D0CE;
+    
+    --app-text: #1A1A19;
+    --app-text-muted: rgba(26, 26, 25, 0.6);
+    
+    --app-accent: #2C4A6E;
+    --app-accent-hover: #1E334D;
+    --app-accent-muted: #E2E8F0;
+    
+    --app-accept: #2F6F4E;
+    --app-reject: #9B3232;
+    --app-reject-subtle: #FEF2F2;
+    --app-warning: #8A6A1F;
+  }
+  
+  .dark {
+    --app-bg: #1A1A19;
+    --app-surface: #222221;
+    --app-border: #33322F;
+    --app-border-strong: #444340;
+    
+    --app-text: #E7E5E4;
+    --app-text-muted: #A8A29E;
+    
+    --app-accent: #4A729E;
+    --app-accent-hover: #5A86B6;
+    --app-accent-muted: #1F2937;
+    
+    --app-accept: #409468;
+    --app-reject: #C84646;
+    --app-reject-subtle: #3A1D1D;
+    --app-warning: #B38928;
+  }
+
+  body {
+    @apply bg-app-bg text-app-text font-sans antialiased;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  .mono {
+    @apply font-mono;
+    font-variant-numeric: tabular-nums;
+  }
+}

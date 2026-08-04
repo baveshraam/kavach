@@ -61,10 +61,20 @@ MIN_TRIALS_PER_CELL = 30
 
 
 class SystemConfig(str, Enum):
-    """The columns of the attack table, each adding one branch."""
+    """The columns of the attack table.
+
+    `ECAPA_ONLY -> ECAPA_KNOWLEDGE -> FULL` is the cumulative progression the
+    headline table reads down. `ECAPA_CSBG` is off that path: it pairs the
+    contribution with the baseline and *omits* the knowledge branch, which is
+    the only way to see what the CSBG contributes on its own rather than on
+    top of a challenge-response protocol that is already stopping most
+    attacks. It answers the reviewer question "how much of this is just the
+    knowledge check?"
+    """
 
     ECAPA_ONLY = "ecapa_only"
     ECAPA_KNOWLEDGE = "ecapa_knowledge"
+    ECAPA_CSBG = "ecapa_csbg"
     FULL = "full"
 
     @property
@@ -72,7 +82,8 @@ class SystemConfig(str, Enum):
         return {
             SystemConfig.ECAPA_ONLY: "ECAPA alone",
             SystemConfig.ECAPA_KNOWLEDGE: "+ Knowledge",
-            SystemConfig.FULL: "+ CSBG (full)",
+            SystemConfig.ECAPA_CSBG: "+ CSBG only",
+            SystemConfig.FULL: "Full fusion",
         }[self]
 
     @property
@@ -80,19 +91,22 @@ class SystemConfig(str, Enum):
         return {
             SystemConfig.ECAPA_ONLY: (Branch.SPEAKER,),
             SystemConfig.ECAPA_KNOWLEDGE: (Branch.SPEAKER, Branch.KNOWLEDGE),
+            SystemConfig.ECAPA_CSBG: (Branch.SPEAKER, Branch.CSBG),
             SystemConfig.FULL: (Branch.SPEAKER, Branch.KNOWLEDGE, Branch.CSBG),
         }[self]
 
     @property
     def uses_liveness(self) -> bool:
-        """Liveness rides with the knowledge branch.
+        """Liveness rides with the knowledge branch, and only with it.
 
-        Both come from the challenge-response protocol: a system with no
-        challenge has no freshness binding either. Giving ECAPA-only a
-        liveness gate would credit the baseline with machinery it does not
-        have and would understate what the knowledge column adds.
+        Both come from the challenge-response protocol: a configuration
+        without a challenge has no freshness binding either. Giving the
+        ECAPA-only baseline a liveness gate would credit it with machinery no
+        deployed baseline has; giving it to `ECAPA_CSBG` would contaminate the
+        one column meant to isolate the CSBG, since a replay stopped by
+        freshness would be scored as a CSBG success.
         """
-        return self is not SystemConfig.ECAPA_ONLY
+        return Branch.KNOWLEDGE in self.branches
 
 
 def policy_for(config: SystemConfig, base: FusionPolicy | None = None) -> FusionPolicy:

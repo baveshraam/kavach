@@ -271,6 +271,21 @@ def decode_bytes(
         except ImportError:
             pass
         except Exception:
+            pass  # fall through to the stdlib reader, then ffmpeg
+
+        # 16-bit PCM WAV needs no dependency at all, and it is what `save_wav`
+        # writes -- so the round trip through the API works on a bare install
+        # with neither soundfile nor ffmpeg present.
+        try:
+            with wave.open(io.BytesIO(raw), "rb") as w:
+                if w.getsampwidth() == 2:
+                    frames = w.readframes(w.getnframes())
+                    data = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
+                    if w.getnchannels() > 1:
+                        data = data.reshape(-1, w.getnchannels()).mean(axis=1)
+                    audio = Audio(data.copy(), w.getframerate(), "upload")
+                    return resample(audio, target_sr) if audio.sample_rate != target_sr else audio
+        except (wave.Error, EOFError, ValueError):
             pass  # fall through to ffmpeg
 
     try:

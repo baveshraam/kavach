@@ -121,7 +121,28 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------- API
     api_host: str = "127.0.0.1"
     api_port: int = 8000
-    cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
+    cors_origins: list[str] = Field(
+        default_factory=lambda: [
+            # `kavach/package.json` runs Vite on 3000; 5173 is its default, kept
+            # so a plain `vite` also works.
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+        ]
+    )
+
+    demo_reveal_answers: bool = False
+    """Send the expected challenge answer to the client.
+
+    **Off, and it must stay off outside a demo.** The frontend's `Challenge`
+    type has an `expectedAnswerEntity` field; filling it in means whoever is
+    authenticating can read the answer out of the network tab and say it back,
+    which does not weaken the knowledge branch so much as delete it.
+
+    It exists because an offline demo sometimes needs to show the expected
+    answer beside the spoken one. `/api/health` reports the flag so a demo
+    build announces itself and its numbers cannot be mistaken for results."""
 
     @field_validator("data_dir", "audio_dir", "attack_dir")
     @classmethod
@@ -148,6 +169,7 @@ class Settings(BaseSettings):
             "lid_confidence_floor": self.lid_confidence_floor,
             "min_enrolment_seconds": self.min_enrolment_seconds,
             "challenge_ttl_seconds": self.challenge_ttl_seconds,
+            "demo_reveal_answers": self.demo_reveal_answers,
         }
 
 

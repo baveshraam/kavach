@@ -43,4 +43,4 @@ ignore = [
 
 [tool.coverage.run]
 source = ["backend/kavach"]
-omit = ["*/api/*", "*/attacks/*"]
+omit = []

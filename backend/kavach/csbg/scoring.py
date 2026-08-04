@@ -45,7 +45,13 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .graph import CSBG, LANG_INDEX, SmoothingConfig
-from .ontology import CLASS_INDEX, Language, SemanticClass, scoring_classes
+from .ontology import (
+    CHOICE_LANGUAGES,
+    CLASS_INDEX,
+    Language,
+    SemanticClass,
+    scoring_classes,
+)
 from .tokens import UtteranceTokens
 
 #: Floor applied inside logs. Smoothing already keeps probabilities strictly
@@ -125,9 +131,30 @@ class ClassContribution:
     observed_prob: float
     """P(observed_language | class) under the claimed speaker's model."""
 
+    observed_counts: tuple[int, ...] = (0, 0)
+    """Raw probe counts per language, indexed by LANG_INDEX (i.e. [TA, EN]).
+
+    Kept alongside `observed_language` because the dominant language alone
+    cannot distinguish "said it in English four times" from "said it in
+    English three times and Tamil twice". The explainability panel needs the
+    full empirical distribution to state a divergence rather than a winner."""
+
     @property
     def is_evidence_against(self) -> bool:
         return self.llr < 0
+
+    @property
+    def observed_distribution(self) -> tuple[float, ...]:
+        """`observed_counts` normalised to a probability vector.
+
+        Uniform when nothing was observed, so a divergence against it is 0
+        rather than undefined.
+        """
+        total = sum(self.observed_counts)
+        if total <= 0:
+            n = len(self.observed_counts) or 1
+            return tuple(1.0 / n for _ in range(n))
+        return tuple(c / total for c in self.observed_counts)
 
 
 @dataclass(slots=True)
@@ -373,6 +400,9 @@ def _build_contributions(
                 expected_prob=expected_p,
                 observed_language=observed_lang,
                 observed_prob=float(ref_probs[LANG_INDEX[observed_lang]]),
+                observed_counts=tuple(
+                    observed_counts.get(lang, 0) for lang in CHOICE_LANGUAGES
+                ),
             )
         )
     out.sort(key=lambda c: c.llr)

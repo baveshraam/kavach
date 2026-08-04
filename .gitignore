@@ -9,10 +9,13 @@ data/processed/
 *.ogg
 *.m4a
 speakers.db
+*.db
 *.sqlite
 *.sqlite3
 consent_forms/
 skg_store/
+# The API's store: voiceprints next to hometowns, schools and family names.
+data/
 
 # ---- Secrets ----
 .env
@@ -53,6 +56,9 @@ huggingface/
 node_modules/
 frontend/dist/
 frontend/.vite/
+kavach/dist/
+kavach/.vite/
+kavach/node_modules/
 npm-debug.log*
 yarn-error.log*
 pnpm-debug.log*
