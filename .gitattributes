@@ -1,0 +1,25 @@
+# Normalise line endings so the repo is consistent across Windows/Linux
+# collaborators and CI. Text files are stored LF in git, checked out native.
+* text=auto
+
+*.py    text eol=lf
+*.md    text eol=lf
+*.toml  text eol=lf
+*.txt   text eol=lf
+*.json  text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.ts    text eol=lf
+*.tsx   text eol=lf
+*.css   text eol=lf
+*.html  text eol=lf
+
+# Binary -- never touch
+*.wav   binary
+*.mp3   binary
+*.webm  binary
+*.flac  binary
+*.docx  binary
+*.pdf   binary
+*.png   binary
+*.jpg   binary
