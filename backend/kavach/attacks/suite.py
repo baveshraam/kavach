@@ -186,6 +186,20 @@ class AttackTrial:
     branch is then marked unavailable rather than scored, so a terse answer
     cannot be mistaken for an atypical one."""
 
+    integrity_score: float | None = None
+    """Edit-artefact evidence, when real audio for this attack exists.
+
+    None means the check could not run -- which is the honest state for the
+    clone attacks, because there is no cloner here to produce a waveform to
+    inspect. A1 and A2 *can* be built from the victim's stored recordings, so
+    for those this is a measurement rather than a model, and it is the one
+    column in this lab that does not need the `simulated` caveat."""
+
+    integrity_threshold: float = 0.25
+    """Default mirrors `integrity.INTEGRITY_FLOOR`. Not imported from there,
+    so that a stored trial log carries the floor it was actually scored
+    against rather than whatever the constant says when it is re-read."""
+
     provenance: dict[str, Any] = field(default_factory=dict)
 
     def branch_scores(
@@ -246,6 +260,32 @@ class AttackTrial:
                     detail="Challenge freshness, single-use and within TTL.",
                 )
             )
+        # Integrity, unlike liveness, is emitted for EVERY configuration --
+        # including the ECAPA-only baseline. It is not part of the
+        # challenge-response protocol and does not ride with it: edit-artefact
+        # tests run on a waveform and need no challenge, no knowledge graph and
+        # no CSBG. Any of these four systems could deploy them.
+        #
+        # The consequence is that the A1 and A2 rows go flat across all four
+        # columns, and that flatness is the finding: those attacks are stopped
+        # by signal evidence, identically well with or without the research
+        # contribution. Folding integrity into `uses_liveness` would have made
+        # the contribution columns look better at A2 for a reason that has
+        # nothing to do with code-switching.
+        scores.append(
+            BranchScore(
+                branch=Branch.INTEGRITY,
+                score=self.integrity_score if self.integrity_score is not None else 0.0,
+                threshold=self.integrity_threshold,
+                weight=0.0,  # gate, not a weighted term
+                available=self.integrity_score is not None,
+                detail=(
+                    "Edit- and duplicate-artefact tests on the submitted audio."
+                    if self.integrity_score is not None
+                    else "No audio for this attack; integrity could not be checked."
+                ),
+            )
+        )
         return scores
 
 

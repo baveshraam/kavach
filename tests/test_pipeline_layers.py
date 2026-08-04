@@ -388,12 +388,38 @@ class TestChallengeGeneration:
         assert ch.is_valid
 
     def test_public_dict_hides_the_answer(self):
-        """Leaking the expected answer would hand over the knowledge factor."""
+        """Leaking the expected answer would hand over the knowledge factor.
+
+        The leak check runs over the *text* fields only, not `str(public)`.
+        That was the original form and it was intermittently wrong: the dict
+        carries `issued_at` and `expires_at` as Unix timestamps, and one of the
+        SKG facts here is a hostel room number, "214". A float timestamp is ten
+        digits, so it contains any given three-digit run every few hundred
+        seconds -- the test failed roughly once in a few full-suite runs, on a
+        collision with the clock rather than on anything the code did.
+
+        Substring-searching a serialised structure for a secret is the wrong
+        shape of assertion in general: it is simultaneously too weak (an answer
+        split across fields, or case-folded, slips through) and too strong (any
+        numeric field can collide). Checking the fields that could actually
+        carry it is both.
+        """
         ch = ChallengeGenerator().generate("s1", make_skg())
         public = ch.public_dict()
+
         assert "expected_answer" not in public
         assert "expected_predicate" not in public
-        assert ch.expected_answer not in str(public)
+
+        text_fields = {
+            k: v for k, v in public.items() if isinstance(v, str)
+        }
+        answer = ch.expected_answer.casefold()
+        assert answer, "The challenge has no expected answer; nothing was tested."
+        for key, value in text_fields.items():
+            assert answer not in value.casefold(), (
+                f"public_dict()[{key!r}] contains the expected answer "
+                f"{ch.expected_answer!r}, which hands over the knowledge factor."
+            )
 
     def test_llm_failure_falls_back_to_template(self):
         """A login must not fail because the LLM is unreachable."""

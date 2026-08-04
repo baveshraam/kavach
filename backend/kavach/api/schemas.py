@@ -49,7 +49,9 @@ UtteranceType = Literal[
 
 DecisionStr = Literal["ACCEPT", "REJECT", "BORDERLINE"]
 
-BranchName = Literal["speaker_embedding", "csbg", "knowledge", "liveness"]
+BranchName = Literal[
+    "speaker_embedding", "csbg", "knowledge", "liveness", "signal_integrity"
+]
 
 #: The frontend's attack identifiers. They differ from
 #: `kavach.attacks.AttackType`; `api.converters` maps between them rather than

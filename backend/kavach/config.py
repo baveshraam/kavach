@@ -36,6 +36,27 @@ class Settings(BaseSettings):
     attack_dir: Path = Field(default=_REPO_ROOT / "data" / "attacks")
     db_path: Path = Field(default=_REPO_ROOT / "data" / "kavach.db")
 
+    # ------------------------------------------------------------- execution
+    offline: bool = False
+    """Refuse to load any model that might fetch a checkpoint.
+
+    Two reasons this is a setting and not an assumption.
+
+    First, the test suite. Before the heavy models were installed the tests ran
+    in seconds because every model load failed at `import`, and the whole suite
+    silently depended on that -- installing speechbrain and faster-whisper
+    turned a 48-second run into one that tried to download a 3 GB Whisper
+    checkpoint. A suite whose runtime depends on what happens to be installed
+    is not testing a fixed configuration, it is testing the machine. `offline`
+    lets the tests *declare* degraded mode instead of inheriting it.
+
+    Second, degraded mode is a real deployment state and deserves to be
+    reachable on purpose. `/api/health` reports which branches are unavailable
+    and why; with this flag that path can be exercised on a machine that has
+    every model installed, which is exactly the machine where it would
+    otherwise never be tested.
+    """
+
     # ----------------------------------------------------------------- ASR
     whisper_model: str = "large-v3"
     whisper_compute_type: str = "int8"

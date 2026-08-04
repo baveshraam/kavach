@@ -301,6 +301,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ),
             annotated=annotation is not None,
         )
+        # Only now, with an id assigned: a duplicate reported against
+        # `pending_1234` names nothing a human can look up.
+        pipeline.remember_recording(decoded, label=row["id"])
         return conv.utterance_to_wire(row)
 
     @app.get("/api/utterances", response_model=list[schemas.Utterance])

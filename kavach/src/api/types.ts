@@ -61,7 +61,10 @@ export interface Challenge {
 }
 
 export interface BranchScore {
-  name: 'speaker_embedding' | 'csbg' | 'knowledge' | 'liveness';
+  // 'liveness' and 'signal_integrity' are gates, not weighted factors: they
+  // carry weight 0 and reject on their own. Render them as pass/fail, not as
+  // a contribution to the fused score.
+  name: 'speaker_embedding' | 'csbg' | 'knowledge' | 'liveness' | 'signal_integrity';
   score: number;               // 0..1
   threshold: number;
   weight: number;

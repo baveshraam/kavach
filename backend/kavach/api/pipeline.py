@@ -51,6 +51,7 @@ from ..fusion import (
     build_liveness_branch,
     fuse,
 )
+from ..integrity import IntegrityChecker, IntegrityReport, build_integrity_branch
 from ..lid.pipeline import LIDPipeline
 from ..matcher import AnswerMatcher, SemanticMatcher
 from .converters import utterance_tokens_from_wire
@@ -59,6 +60,14 @@ from .store import Store, StoreError
 #: Enrolled speakers needed before a background model means anything. Below
 #: this the LLR is a comparison against one other person, not a population.
 MIN_COHORT = 2
+
+#: Why a branch is unavailable when `Settings.offline` is set. Phrased as a
+#: configuration statement, not a failure, because that is what it is -- and
+#: because `/api/health` shows this string to whoever is wondering why the
+#: acoustic branch never fires.
+_OFFLINE_REASON = (
+    "Offline mode is on (KAVACH_OFFLINE); no model checkpoint will be loaded."
+)
 
 
 @dataclass(slots=True)
@@ -84,6 +93,10 @@ class VerificationOutcome:
     challenge_id: str
     latency_ms: int
     notes: list[str] = field(default_factory=list)
+    integrity: IntegrityReport | None = None
+    """Edit-artefact evidence, kept separate from the fusion branches so a
+    rejection can be explained with the specific artefact that caused it
+    rather than with a bare score."""
 
 
 class Pipeline:
@@ -106,15 +119,66 @@ class Pipeline:
         self._lid: LIDPipeline | None = None
         self._matcher: AnswerMatcher | None = None
         self._challenges: ChallengeGenerator | None = None
+
+        self.integrity = IntegrityChecker()
+        """Edit- and duplicate-artefact tests. Pure NumPy, always available --
+        unlike every other component here it has no model to load and no
+        network dependency, which is why it is constructed eagerly.
+
+        Its duplicate memory is rebuilt from the corpus below. A replay
+        detector that starts empty on every restart catches resubmissions only
+        within one process lifetime; that is uptime, not a security
+        property."""
+        self._reload_integrity_memory()
+
         self._failed: dict[str, str] = {}
         """Component name -> why it could not load. Reported by /api/health so
         a missing dependency is visible rather than showing up as an
         unexplained branch that never fires."""
 
+    def _reload_integrity_memory(self, *, limit: int = 2000) -> None:
+        """Re-teach the duplicate detector every recording already on disk.
+
+        Bounded, because the envelope memory is a linear scan on every probe
+        and the honest scale of this system is tens of speakers. Past `limit`
+        the check silently becomes partial, so it says so in a note rather
+        than degrading quietly -- and at that point the right answer is an
+        index, not a longer list.
+
+        Never raises: a corrupt or missing file must not stop the server from
+        starting. The cost of skipping one is one recording that can be
+        replayed undetected, which is strictly better than a system that will
+        not boot.
+        """
+        loaded = 0
+        for row in self.store.list_utterances():
+            if loaded >= limit:
+                break
+            try:
+                clip = load_audio(self.store.audio_path(row["id"]))
+            except (AudioError, StoreError, OSError):
+                continue
+            self.integrity.remember(clip, label=row["id"])
+            loaded += 1
+
+    def remember_recording(self, audio: Audio, *, label: str) -> None:
+        """Add a newly stored recording to the duplicate memory.
+
+        Called on enrolment upload. Verification probes are deliberately NOT
+        remembered here: a rejected probe is an attacker's recording, and
+        storing it would let the next honest attempt collide with it. Only
+        accepted enrolment audio -- material the speaker chose to give us --
+        goes in.
+        """
+        self.integrity.remember(audio, label=label)
+
     # ------------------------------------------------------------ components
 
     @property
     def asr(self) -> WhisperASR | None:
+        if self.settings.offline:
+            self._failed.setdefault("asr", _OFFLINE_REASON)
+            return None
         if self._asr is None and "asr" not in self._failed:
             try:
                 self._asr = WhisperASR(
@@ -134,6 +198,9 @@ class Pipeline:
 
     @property
     def embedder(self) -> ECAPAEmbedder | None:
+        if self.settings.offline:
+            self._failed.setdefault("embedder", _OFFLINE_REASON)
+            return None
         if self._embedder is None and "embedder" not in self._failed:
             try:
                 embedder = ECAPAEmbedder(
@@ -234,6 +301,15 @@ class Pipeline:
         from importlib.util import find_spec
 
         out: dict[str, str] = {}
+        if self.settings.offline:
+            # Reported for every branch that needs a checkpoint, including the
+            # ones whose package is installed. Otherwise a machine with every
+            # dependency present would show a clean bill of health while
+            # scoring nothing, which is the one health report worse than a
+            # missing dependency: a wrong one.
+            for _module, name, consequence in self.REQUIREMENTS:
+                if name in ("speaker_embedding", "asr", "semantic_matcher"):
+                    out[name] = f"{_OFFLINE_REASON} {consequence}"
         for module, name, consequence in self.REQUIREMENTS:
             try:
                 present = find_spec(module) is not None
@@ -492,6 +568,25 @@ class Pipeline:
         )
         notes.extend(quality.warnings)
 
+        # Integrity runs before the models, for the same reason liveness runs
+        # before integrity: a file we can show was assembled does not need a
+        # voiceprint computed for it, and a gate placed after the expensive
+        # work is a gate an attacker can use to spend our GPU.
+        integrity = self.integrity.check(audio)
+        branches.append(build_integrity_branch(integrity))
+        if not integrity.clean:
+            result = fuse(branches, self._policy())
+            return VerificationOutcome(
+                fusion=result,
+                annotation=None,
+                csbg_score=None,
+                speaker_id=speaker_id,
+                challenge_id=challenge.id,
+                latency_ms=int((time.perf_counter() - started) * 1000),
+                notes=notes + integrity.reasons,
+                integrity=integrity,
+            )
+
         branches.append(self._speaker_branch(speaker_id, audio, notes))
 
         annotation = self.annotate(audio, utterance_id=challenge.id, speaker_id=speaker_id)
@@ -532,6 +627,7 @@ class Pipeline:
             challenge_id=challenge.id,
             latency_ms=int((time.perf_counter() - started) * 1000),
             notes=notes,
+            integrity=integrity,
         )
 
     def _policy(self) -> FusionPolicy:

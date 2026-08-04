@@ -27,6 +27,16 @@ drawn from a documented per-attack distribution rather than measured. A1 and
 A2 are measured when speechbrain is available, because a replay and a splice
 can be built from the victim's stored audio with signal processing alone.
 
+**The integrity column is real for A1 and A2, always.** Those two attacks are
+constructed as actual waveforms from the victim's stored recordings -- A1 is
+the file itself, A2 is segments of it cut and crossfaded by
+`splice.splice_segments` -- and then handed to the same detector a live login
+runs. No model is involved and nothing is drawn from a distribution, so this
+column needs no simulation caveat. For A3-A5 it is blank rather than zero:
+there is no cloner here to produce a waveform, and reporting "no artefact
+found" for audio that was never synthesised would credit the defence with
+catching something it never saw.
+
 Every run therefore carries `simulated: true` and the reasons in `notes`, and
 `suite.AttackTable.paper_ready()` refuses the row. **The paper's table comes
 from attacks recorded through real hardware and a real cloner, not from
@@ -51,16 +61,19 @@ from typing import Any
 
 from ..attacks import AttackType, StyleSource
 from ..attacks.clone import CloneBatchStats
+from ..attacks.splice import SpliceConfig, splice_segments
 from ..attacks.suite import AttackSuite, AttackTrial
+from ..audio import Audio, AudioError, load_audio
 from ..csbg.graph import CSBG
 from ..csbg.ontology import CHOICE_LANGUAGES, Language
 from ..csbg.scoring import build_background_model, score_llr
 from ..csbg.tokens import Token, UtteranceTokens
 from ..fusion import FusionPolicy
+from ..integrity import INTEGRITY_FLOOR
 from . import converters as conv
 from . import schemas
 from .pipeline import MIN_COHORT, Pipeline
-from .store import Store
+from .store import Store, StoreError
 
 #: Seconds of the victim's public speech the A5 attacker is assumed to have
 #: overheard. Chosen as a plausible social-media clip, not fitted. Sweeping it
@@ -112,12 +125,12 @@ DEFEATED_BY: dict[AttackType, str] = {
         "replays would be claiming credit for the liveness gate."
     ),
     AttackType.A2_SPLICE: (
-        "A2 defeats all four fusion configurations, and that is the honest result: "
+        "A2 defeats all four *fusion* configurations, and that is the honest result: "
         "the attacker uses the victim's real voice, their real words, and answers "
-        "the live challenge. What stops a splice is signal evidence -- "
-        "`attacks.splice.detect_splice` finds the crossfades, the digital silence "
-        "and the background mismatch at the joins. That detector is not wired into "
-        "this lab, so this row measures fusion alone."
+        "the live challenge, so every identity branch is satisfied. What stops a "
+        "splice is signal evidence, not fusion -- the integrity gate builds the "
+        "spliced file from this speaker's own recordings and looks for the joins. "
+        "Read the integrity column, not the fusion columns, for whether A2 works."
     ),
     AttackType.A3_CLONE: (
         "A3 is stopped by the knowledge branch: the attacker has the voice but not "
@@ -268,9 +281,33 @@ def run_attack(
         borderline_margin=pipeline.settings.borderline_margin,
     )
     suite = AttackSuite(policy)
+
+    # The same trials scored with the integrity gate switched off. Run because
+    # a flat row of zeros does not say *why* it is flat, and "fusion stops this"
+    # and "a splice detector stops this and fusion is helpless" are very
+    # different claims about the contribution. This is the gate's own ablation,
+    # computed every time rather than left to be reasoned about.
+    ungated = AttackSuite(
+        FusionPolicy(
+            threshold=pipeline.settings.fused_threshold,
+            borderline_margin=pipeline.settings.borderline_margin,
+            integrity_is_gate=False,
+        )
+    )
     stats = CloneBatchStats()
     model = ACOUSTIC_MODEL[attack]
     speaker_threshold = pipeline.settings.speaker_threshold
+
+    # Real audio for the two attacks that can be built without a cloner. The
+    # detector is the pipeline's own, so its duplicate memory already holds
+    # every enrolled recording -- which is the whole mechanism behind A1.
+    victim_clips = _victim_audio(store, speaker_id)
+    if attack in (AttackType.A1_REPLAY, AttackType.A2_SPLICE) and not victim_clips:
+        notes.append(
+            "No readable audio for this speaker, so the integrity column could not "
+            "be measured -- only the fusion columns below are populated. For A1 and "
+            "A2 the integrity column is the one that matters."
+        )
 
     built: list[AttackTrial] = []
     for i in range(max(1, trials)):
@@ -282,6 +319,11 @@ def run_attack(
             lid_confidence_floor=pipeline.settings.lid_confidence_floor,
         )
         acoustic = model.draw(rng)
+
+        forged = _attack_audio(attack, victim_clips, rng)
+        integrity_score: float | None = None
+        if forged is not None:
+            integrity_score = pipeline.integrity.check(forged).score
 
         stats.attempted += 1
         stats.synthesised += 1
@@ -309,17 +351,23 @@ def run_attack(
             style_source=style_source,
             text_generator="template",
             csbg_reliable=csbg.n_scored_tokens >= pipeline.settings.min_scored_tokens,
+            integrity_score=integrity_score,
+            integrity_threshold=INTEGRITY_FLOOR,
             provenance={
                 "n_scored_tokens": csbg.n_scored_tokens,
                 "raw_llr": round(csbg.raw_score, 4),
                 "acoustic_source": "modelled",
+                "integrity_source": "measured" if integrity_score is not None else "n/a",
             },
         )
         built.append(trial)
         suite.run(trial)
+        ungated.run(trial)
 
     if attack.is_synthetic_speech:
         suite.record_yield(attack, stats)
+
+    notes.extend(_integrity_notes(attack, built, suite, ungated))
 
     table = suite.table()
     run = conv.attack_run_to_wire(
@@ -340,6 +388,138 @@ def run_attack(
             "not about the defence."
         )
     return run
+
+
+#: How many pieces a splice attacker cuts their answer into. Three is the
+#: smallest number that makes a splice worth doing -- carrier, answer, carrier
+#: -- and each join is an independent chance for the detector to fire, so a
+#: more elaborate attack is a *weaker* one against this test. Reporting the
+#: three-segment case is therefore reporting the attacker's best move, not a
+#: convenient one.
+SPLICE_SEGMENTS = 3
+
+
+def _integrity_notes(
+    attack: AttackType,
+    trials: list[AttackTrial],
+    gated: AttackSuite,
+    ungated: AttackSuite,
+) -> list[str]:
+    """State what the integrity gate caught, and what fusion would have done.
+
+    Both halves are needed. The caught-rate alone reads as the system working;
+    the counterfactual alone reads as the system failing. Together they say the
+    true thing, which is that one specific component earns this row and the
+    fusion the paper is about does not.
+    """
+    measured = [t.integrity_score for t in trials if t.integrity_score is not None]
+    if not measured:
+        return []
+
+    caught = sum(1 for s in measured if s < INTEGRITY_FLOOR)
+    lines = [
+        f"Integrity gate: {caught}/{len(measured)} of these attacks were caught by "
+        f"edit- and duplicate-artefact tests on the audio itself "
+        f"({caught / len(measured):.0%}). This column is measured, not modelled -- "
+        "the waveforms were built from this speaker's own recordings."
+    ]
+
+    gated_worst = _worst_iapmr(gated, attack)
+    ungated_worst = _worst_iapmr(ungated, attack)
+    if ungated_worst is not None and gated_worst is not None:
+        lines.append(
+            f"With the integrity gate switched off, the best-defended configuration "
+            f"still admits {ungated_worst:.0%} of these attacks; with it on, "
+            f"{gated_worst:.0%}. The difference is what signal evidence contributes "
+            "here, and it is not attributable to the CSBG."
+        )
+    return lines
+
+
+def _worst_iapmr(suite: AttackSuite, attack: AttackType) -> float | None:
+    """The lowest IAPMR any configuration achieves against this attack.
+
+    The *lowest*, because the question a defender asks is "can any
+    configuration I might deploy stop this?" -- reporting the worst
+    configuration's rate would answer a question nobody asked.
+    """
+    rates = [
+        cell.iapmr
+        for (atk, _), cell in suite.table().cells.items()
+        if atk is attack and cell.n_trials
+    ]
+    return min(rates) if rates else None
+
+
+def _victim_audio(store: Store, speaker_id: str, *, limit: int = 6) -> list[Audio]:
+    """Load the victim's stored recordings, skipping anything unreadable.
+
+    Bounded because splicing needs a handful of segments, not the corpus, and
+    an attacker with six of someone's recordings is already a strong one.
+    """
+    clips: list[Audio] = []
+    for row in store.list_utterances(speaker_id):
+        if len(clips) >= limit:
+            break
+        try:
+            clips.append(load_audio(store.audio_path(row["id"])))
+        except (AudioError, StoreError, OSError):
+            continue
+    return clips
+
+
+def _attack_audio(
+    attack: AttackType, clips: list[Audio], rng: random.Random
+) -> Audio | None:
+    """Build the waveform this attacker would actually submit.
+
+    Only A1 and A2 can be built without a voice cloner, which is precisely why
+    they are the two attacks whose integrity column is a measurement. Returning
+    None for A3-A5 is the honest answer, and `build_integrity_branch` turns it
+    into an unavailable branch rather than a pass.
+
+    A1 is the victim's file submitted verbatim -- the attack *is* the identity
+    of the bytes, so nothing is done to them.
+
+    A2 cuts segments from different recordings and crossfades them. Different
+    recordings matter: two segments from one continuous take share a noise
+    floor and the background test has nothing to find, which is the limitation
+    named in `kavach.integrity`. An attacker who has only one recording of the
+    victim is in that better position, and `_attack_audio` reproduces it
+    faithfully by falling back to slicing the single clip it has.
+    """
+    if not clips:
+        return None
+
+    if attack is AttackType.A1_REPLAY:
+        return clips[rng.randrange(len(clips))]
+
+    if attack is AttackType.A2_SPLICE:
+        if len(clips) >= SPLICE_SEGMENTS:
+            chosen = rng.sample(clips, SPLICE_SEGMENTS)
+            segments = [
+                c.slice_seconds(0.0, min(1.5, c.duration_sec)) for c in chosen
+            ]
+        else:
+            # One recording only: cut it into pieces and reassemble out of
+            # order. A real attacker in this position is harder to catch, and
+            # the number this produces should be read as the harder case.
+            src = clips[0]
+            span = src.duration_sec / SPLICE_SEGMENTS
+            segments = [
+                src.slice_seconds(i * span, (i + 1) * span)
+                for i in range(SPLICE_SEGMENTS)
+            ]
+            rng.shuffle(segments)
+        segments = [s for s in segments if len(s.samples)]
+        if len(segments) < 2:
+            return None
+        try:
+            return splice_segments(segments, SpliceConfig.naive())
+        except AudioError:
+            return None
+
+    return None
 
 
 def _knows_answer(attack: AttackType) -> bool:

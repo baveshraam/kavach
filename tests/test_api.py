@@ -195,6 +195,34 @@ def enrol_tokens(store: Store, speaker_id: str, utterances: list[UtteranceTokens
 # --------------------------------------------------------------------------
 
 
+def strip_line_comments(source: str) -> str:
+    """Blank out `//` comments, preserving line structure and offsets.
+
+    Necessary because prose is not syntax: an English sentence in a comment
+    can contain `word:` and every field parser here keys on exactly that. A
+    comment reading "these are gates, not weighted factors: they carry weight
+    0" contributes a phantom field named `factors`, and the contract test then
+    fails against a field that does not exist in either the schema or the
+    interface. Replacing the comment body with spaces rather than deleting it
+    keeps every subsequent index the same, which matters because the callers
+    below walk the string by offset.
+
+    Only `//` is handled. `/* ... */` does not appear in `types.ts`, and a
+    half-correct block-comment stripper that silently eats a real field would
+    be worse than not having one.
+    """
+    out: list[str] = []
+    for line in source.splitlines(keepends=True):
+        idx = line.find("//")
+        if idx == -1:
+            out.append(line)
+            continue
+        newline = len(line) - len(line.rstrip("\r\n"))
+        body = line[idx : len(line) - newline]
+        out.append(line[:idx] + " " * len(body) + line[len(line) - newline :])
+    return "".join(out)
+
+
 def parse_typescript_interfaces(source: str) -> dict[str, set[str]]:
     """Field names of every `export interface` in a TypeScript file.
 
@@ -202,6 +230,7 @@ def parse_typescript_interfaces(source: str) -> dict[str, set[str]]:
     does not contribute `far` to its parent. Nested literals are picked up
     separately by `parse_nested_literals`.
     """
+    source = strip_line_comments(source)
     out: dict[str, set[str]] = {}
     for match in re.finditer(r"export interface (\w+)\s*\{", source):
         name = match.group(1)
@@ -233,6 +262,7 @@ def parse_nested_literals(source: str, interface: str) -> list[set[str]]:
     the schemas that mirror them (`EvalConfiguration`, `StabilityPoint`, ...)
     have nothing to compare against without this.
     """
+    source = strip_line_comments(source)
     start = source.index(f"export interface {interface}")
     depth = 0
     literals: list[set[str]] = []
@@ -760,8 +790,16 @@ class TestRoutes:
 
         assert result["decision"] == "REJECT"
         assert "system failure" in " ".join(result["explanation"])
-        # No branch may be reported as a scored failure when it never ran.
-        assert [b for b in result["branches"] if b["name"] != "liveness"] == []
+
+        # No *identity* branch may be reported when none of them ran. The two
+        # gates are exempt and must still appear: liveness is decided from the
+        # ledger and signal integrity is pure signal processing, so both are
+        # real measurements even with every model absent. Listing them is the
+        # point -- it is what distinguishes "we checked what we could and found
+        # nothing wrong, but could not identify you" from "we checked nothing".
+        identity = {"speaker_embedding", "csbg", "knowledge"}
+        assert [b for b in result["branches"] if b["name"] in identity] == []
+        assert {b["name"] for b in result["branches"]} == {"liveness", "signal_integrity"}
 
     def test_auth_history_is_recorded(self, client: TestClient) -> None:
         speaker = make_speaker(client, "Ravi")

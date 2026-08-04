@@ -1,9 +1,16 @@
-"""Score fusion: four branches into one accept/reject decision.
+"""Score fusion: five branches into one accept/reject decision.
 
     S_spk    ECAPA-TDNN cosine        -- "does this sound like them?"
     S_csbg   CSBG likelihood ratio    -- "do they code-switch like them?"
     S_know   Cross-lingual answer match -- "do they know the answer?"
     S_live   Challenge freshness      -- "is this answer live?"
+    S_int    Edit-artefact tests      -- "is this one honest capture?"
+
+The first three are weighted; the last two are gates. That split is not a
+convenience -- the first three all answer *who is this*, so averaging them is
+coherent, while the last two answer *is this submission legitimate at all*,
+which no amount of voice similarity can compensate for. See `kavach.integrity`
+for the same argument made at length.
 
 Two design points that matter more than the weights:
 
@@ -99,6 +106,10 @@ class Branch(str, Enum):
     CSBG = "csbg"
     KNOWLEDGE = "knowledge"
     LIVENESS = "liveness"
+    INTEGRITY = "signal_integrity"
+    """Edit- and duplicate-artefact evidence. A gate, never a weighted term --
+    it answers "was this file assembled?", not "who is speaking?", and the two
+    must not be averaged. See `kavach.integrity`."""
 
 
 @dataclass(slots=True)
@@ -155,6 +166,11 @@ class FusionPolicy:
     liveness_is_gate: bool = True
     """Treat liveness as pass/fail rather than a weighted term. Keep True --
     see the module docstring."""
+
+    integrity_is_gate: bool = True
+    """Treat signal integrity as pass/fail. Keep True in any reported
+    configuration; set False only for the ablation that measures what the gate
+    is worth, and label that row as the ablation it is."""
 
     require_knowledge: bool = False
     """When True, a failed knowledge check rejects regardless of fusion.
@@ -250,6 +266,32 @@ def fuse(
                     "Rejected: liveness check failed. "
                     + (liveness.detail or "The challenge was expired, reused, or unmatched."),
                     "This is the signature of a replay attack; no other branch can override it.",
+                ],
+                contributing_branches=[],
+            )
+
+    # --- Integrity gate: disqualifying, not weighted. --------------------
+    # Second, after liveness, because liveness is decided on the ledger alone
+    # and costs nothing, while this one needs the audio decoded and analysed.
+    # An *unavailable* integrity branch skips the gate rather than failing it:
+    # a check that did not run is missing evidence, not a finding.
+    integrity = by_branch.get(Branch.INTEGRITY)
+    integrity_ok = True
+    if policy.integrity_is_gate and integrity is not None and integrity.available:
+        integrity_ok = integrity.passed
+        if not integrity_ok:
+            return FusionResult(
+                decision=Decision.REJECT,
+                fused_score=0.0,
+                threshold=policy.threshold,
+                branches=branches,
+                liveness_ok=liveness_ok,
+                explanation=[
+                    "Rejected: this recording shows signs of having been edited or "
+                    "resubmitted. " + (integrity.detail or ""),
+                    "A spliced file can carry a perfect voiceprint, because it is made "
+                    "of the real speaker's voice -- so a strong acoustic match is not a "
+                    "reason to accept it, and no branch overrides this.",
                 ],
                 contributing_branches=[],
             )
