@@ -470,6 +470,17 @@ class CohortNormaliser:
         std = self.stds.get(speaker_id, self.default_std)
         return (raw_score - mean) / std
 
+    def apply_squashed(self, speaker_id: str, raw_score: float) -> float:
+        """Z-normalise and squash to (0, 1) -- the scale fusion consumes.
+
+        The squash scale here is 1.5, not the 2.0 used on un-normalised
+        scores: a z-score is already in units of the cohort's spread, so it
+        occupies a much narrower range and needs less compression to land in
+        a usable part of the logistic. Using the same constant for both would
+        make z-normed scores cluster near 0.5 and quietly flatten the branch.
+        """
+        return _squash(self.apply(speaker_id, raw_score), scale=1.5)
+
     def normalise(self, speaker_id: str, score: CSBGScore) -> CSBGScore:
         """Apply z-norm to a CSBGScore in place and return it."""
         z = self.apply(speaker_id, score.raw_score)

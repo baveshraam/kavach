@@ -640,8 +640,15 @@ def verification_metrics_to_wire(
         name=name,
         eer=_finite(m.eer),
         min_dcf=_finite(m.min_dcf),
-        far_at_frr1=_finite(m.far_at_frr_1pct),
-        frr_at_far1=_finite(m.frr_at_far_1pct),
+        # NaN here means the operating point is unattainable -- no threshold
+        # reaches 1% FRR, which happens with a veto or with too few genuine
+        # trials to resolve 1%. `types.ts` types these as plain numbers, so
+        # there is no "n/a" to send. It is reported as 1.0, the worst case,
+        # because the alternative default of 0.0 would render an unattainable
+        # operating point as a *perfect* one. A demo page that overstates
+        # error is recoverable; one that understates it is not.
+        far_at_frr1=_finite(m.far_at_frr_1pct, default=1.0),
+        frr_at_far1=_finite(m.frr_at_far_1pct, default=1.0),
         det_curve=[
             schemas.DETPoint(far=_finite(p.far), frr=_finite(p.frr)) for p in curve
         ],

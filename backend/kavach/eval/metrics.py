@@ -21,6 +21,7 @@ honest answer is usually "several points wide".
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -51,10 +52,14 @@ class VerificationMetrics:
     min_dcf_threshold: float
 
     far_at_frr_1pct: float
-    """FAR when the threshold is set for 1% FRR -- a usability-first operating point."""
+    """FAR when the threshold is set for 1% FRR -- a usability-first operating
+    point. **NaN when no threshold reaches 1% FRR**, which is the normal state
+    for a system with a veto: the veto's own false-reject cost is a floor.
+    Render it as unattainable, never as 100%."""
 
     frr_at_far_1pct: float
-    """FRR when the threshold is set for 1% FAR -- a security-first operating point."""
+    """FRR when the threshold is set for 1% FAR -- a security-first operating
+    point. NaN when unattainable; see above."""
 
     auc: float
     """Area under the ROC curve."""
@@ -84,8 +89,8 @@ class VerificationMetrics:
         flag = "" if self.is_reliable else "  [!] small sample -- report CI"
         return (
             f"EER {self.eer_percent:6.2f}%  minDCF {self.min_dcf:.4f}  "
-            f"FAR@1%FRR {self.far_at_frr_1pct * 100:6.2f}%  "
-            f"FRR@1%FAR {self.frr_at_far_1pct * 100:6.2f}%  "
+            f"FAR@1%FRR {format_rate(self.far_at_frr_1pct):>6}%  "
+            f"FRR@1%FAR {format_rate(self.frr_at_far_1pct):>6}%  "
             f"(n={self.n_genuine}/{self.n_impostor}){flag}"
         )
 
@@ -96,13 +101,32 @@ def _rates(
     """Compute (thresholds, FAR, FRR) over all candidate thresholds.
 
     Uses every observed score as a candidate threshold, plus one below the
-    minimum, giving the exact empirical curve with no binning artefacts.
-    The convention is: accept when score >= threshold.
+    lowest *finite* score, giving the exact empirical curve with no binning
+    artefacts. The convention is: accept when score >= threshold.
+
+    WHY "FINITE" IS DOING WORK THERE
+    --------------------------------
+    A score of -inf marks a trial that no threshold can accept -- a veto (see
+    `eval.ablation`). Building the low anchor from `min(all) - 1.0` would make
+    that anchor `-inf` too, and `-inf >= -inf` is True: every vetoed trial
+    would be accepted at the bottom of the sweep, the curve would start at
+    FRR=0, and "FAR at 1% FRR" would come back as an ordinary number for a
+    system whose veto puts a hard floor under FRR.
+
+    Anchoring below the lowest finite score instead makes -inf rejected
+    everywhere, which is what a veto means, and the curve then correctly
+    starts at the FRR the veto enforces.
     """
     all_scores = np.concatenate([genuine, impostor])
     thresholds = np.unique(all_scores)
-    # Prepend a threshold below everything so the curve starts at FAR=1, FRR=0.
-    thresholds = np.concatenate([[thresholds[0] - 1.0], thresholds])
+
+    finite = thresholds[np.isfinite(thresholds)]
+    if len(finite) == 0:
+        # Every trial was vetoed. One threshold, everything rejected.
+        anchor = 0.0
+        thresholds = np.array([anchor])
+    else:
+        thresholds = np.concatenate([[finite[0] - 1.0], finite])
 
     # far[i] = P(impostor >= t_i), frr[i] = P(genuine < t_i)
     far = np.array([np.mean(impostor >= t) for t in thresholds])
@@ -175,14 +199,35 @@ def _rate_at_fixed(
     genuine: np.ndarray, impostor: np.ndarray, *, target_frr: float | None = None,
     target_far: float | None = None
 ) -> float:
-    """FAR at a fixed FRR, or FRR at a fixed FAR."""
+    """FAR at a fixed FRR, or FRR at a fixed FAR.
+
+    Returns NaN when no threshold reaches the target -- **not 1.0.**
+
+    That distinction is load-bearing once the system has a veto. A veto sets a
+    floor on FRR that no threshold can go below, so "FAR at 1% FRR" simply does
+    not exist for a system whose veto costs 1.25% FRR. Returning 1.0 there
+    prints as "100.00" in a table next to a baseline's "46.70", and a reader
+    compares the two as measured rates -- concluding that fusion is
+    catastrophically worse at an operating point that fusion cannot occupy at
+    all.
+
+    NaN forces the caller to render it as unattainable, which is the true
+    statement. `VerificationMetrics.summary` and `eval.ablation` both do.
+    """
     thresholds, far, frr = _rates(genuine, impostor)
     if target_frr is not None:
         feasible = np.where(frr <= target_frr)[0]
         # Among thresholds meeting the FRR budget, take the one with lowest FAR.
-        return float(far[feasible].min()) if len(feasible) else 1.0
+        return float(far[feasible].min()) if len(feasible) else math.nan
     feasible = np.where(far <= target_far)[0]
-    return float(frr[feasible].min()) if len(feasible) else 1.0
+    return float(frr[feasible].min()) if len(feasible) else math.nan
+
+
+def format_rate(value: float, *, percent: bool = True) -> str:
+    """Render a rate, or `n/a` when the operating point is unattainable."""
+    if math.isnan(value):
+        return "n/a"
+    return f"{value * 100:.2f}" if percent else f"{value:.4f}"
 
 
 def compute_auc(genuine: np.ndarray, impostor: np.ndarray) -> float:
@@ -313,6 +358,7 @@ def bootstrap_eer_ci(
 __all__ = [
     "DETPoint",
     "VerificationMetrics",
+    "format_rate",
     "evaluate",
     "compute_eer",
     "compute_min_dcf",
