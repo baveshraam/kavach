@@ -1,0 +1,75 @@
+# ---- Sensitive data: NEVER commit biometric or personal data ----
+data/raw/
+data/attacks/
+data/processed/
+*.wav
+*.mp3
+*.webm
+*.flac
+*.ogg
+*.m4a
+speakers.db
+*.sqlite
+*.sqlite3
+consent_forms/
+skg_store/
+
+# ---- Secrets ----
+.env
+.env.*
+!.env.example
+*.key
+credentials.json
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+ENV/
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# ---- Model caches ----
+pretrained_models/
+.cache/
+huggingface/
+*.ckpt
+*.pt
+*.pth
+*.bin
+!requirements*.txt
+
+# ---- Node / frontend ----
+node_modules/
+frontend/dist/
+frontend/.vite/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---- Editors / OS ----
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- LaTeX build artifacts ----
+paper/*.aux
+paper/*.log
+paper/*.out
+paper/*.bbl
+paper/*.blg
+paper/*.synctex.gz
+paper/*.fls
+paper/*.fdb_latexmk
