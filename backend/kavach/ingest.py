@@ -630,7 +630,7 @@ def ingest(
                     prompt_id=prompt.prompt_id,
                     audio_path=str(relative) if copy_audio else "",
                     duration_sec=round(audio.duration_sec, 3),
-                    transcript=script_text.get(prompt.prompt_id, ""),
+                    reference_transcript=script_text.get(prompt.prompt_id, ""),
                 )
             )
 

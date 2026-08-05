@@ -412,6 +412,26 @@ class UtteranceRecord:
 
     duration_sec: float = 0.0
     transcript: str = ""
+    """What the speaker was heard to say. ASR output, or a human correction of
+    it. This is the string the LID pipeline tags."""
+
+    reference_transcript: str = ""
+    """What the speaker was *asked* to say, for read speech. Empty for
+    spontaneous answers, where no such thing exists.
+
+    Kept apart from `transcript` because conflating them would make the corpus
+    unable to answer the one question a scripted corpus is uniquely good at.
+    With both, ASR is scoreable against a known target on code-mixed
+    Tamil-English, which is a labelled evaluation set and a contribution that
+    does not depend on the CSBG separating anybody. With one, the reference
+    would silently become the annotation input and the measured word error
+    rate would be zero by construction."""
+
+    asr_wer: float | None = None
+    """Word error rate of `transcript` against `reference_transcript`, or None
+    where there is no reference. Per utterance rather than aggregated, because
+    the interesting variation is per prompt: the numerals prompt and the
+    festival prompt fail differently."""
 
     tokens: list[Token] | None = None
     annotation_source: AnnotationSource | None = None
@@ -739,6 +759,8 @@ class Corpus:
                     "audio_path": u.audio_path,
                     "duration_sec": u.duration_sec,
                     "transcript": u.transcript,
+                    "reference_transcript": u.reference_transcript,
+                    "asr_wer": u.asr_wer,
                     "annotation_source": (
                         u.annotation_source.value if u.annotation_source else None
                     ),
@@ -1159,6 +1181,8 @@ def _corpus_from_dict(data: dict[str, Any], *, root: Path | None = None) -> Corp
             audio_path=u.get("audio_path", ""),
             duration_sec=float(u.get("duration_sec", 0.0)),
             transcript=u.get("transcript", ""),
+            reference_transcript=u.get("reference_transcript", ""),
+            asr_wer=(None if u.get("asr_wer") is None else float(u["asr_wer"])),
             annotation_source=(
                 AnnotationSource(u["annotation_source"])
                 if u.get("annotation_source")

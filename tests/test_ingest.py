@@ -189,7 +189,18 @@ class TestIngest:
             returned_folder, one_speaker, tmp_path / "corpus", scripts_dir=SCRIPTS_DIR
         )
         control = next(u for u in corpus.utterances if u.prompt_id == "p14_control_name")
-        assert control.transcript == "En amma peru Vasanthi."
+        assert control.reference_transcript == "En amma peru Vasanthi."
+
+    def test_the_asr_transcript_field_is_left_empty_for_annotate_to_fill(
+        self, returned_folder, one_speaker, tmp_path
+    ):
+        """Writing the script into `transcript` would make it the annotation
+        input, and any word error rate measured against it zero."""
+        corpus, _ = I.ingest(
+            returned_folder, one_speaker, tmp_path / "corpus", scripts_dir=SCRIPTS_DIR
+        )
+        assert all(u.transcript == "" for u in corpus.utterances)
+        assert all(u.asr_wer is None for u in corpus.utterances)
 
     def test_transcripts_are_absent_when_not_requested(
         self, returned_folder, one_speaker, tmp_path
@@ -201,7 +212,7 @@ class TestIngest:
             scripts_dir=SCRIPTS_DIR,
             reference_transcripts=False,
         )
-        assert all(u.transcript == "" for u in corpus.utterances)
+        assert all(u.reference_transcript == "" for u in corpus.utterances)
 
     def test_a_missing_answer_is_a_problem_not_a_silent_gap(
         self, returned_folder, one_speaker, tmp_path
