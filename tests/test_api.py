@@ -1247,3 +1247,109 @@ class TestPerSpeakerIapmr:
         self._attack(client, victim)
         assert client.get("/api/attacks").status_code == 200
         assert client.get("/api/attacks/per-speaker").status_code == 200
+
+
+class TestDemoRevealAnswers:
+    """`demo_reveal_answers` is the one setting that can turn the knowledge
+    factor into a giveaway, and until now only its `/api/health` field was
+    tested.
+
+    Two directions matter and they are not the same test. Off, the expected
+    answer must not appear in *any* response body -- not merely in the field
+    that was designed to hold it, because the failure mode is a future route
+    that serialises a challenge or a fact wholesale. On, it must actually
+    reveal, or an offline demo silently has no answers to show and someone
+    turns off something else to fix it.
+    """
+
+    ANSWER = "Kumbakonam"
+    """Distinctive on purpose: the sweep below is a substring search, so a
+    common answer like "Chennai" could match unrelated fixture text and pass
+    for the wrong reason."""
+
+    def _demo_client(self, store, pipeline, settings, *, reveal: bool) -> TestClient:
+        settings.demo_reveal_answers = reveal
+        app = create_app(settings)
+        app.dependency_overrides[get_store] = lambda: store
+        app.dependency_overrides[get_pipeline] = lambda: pipeline
+        app.dependency_overrides[get_settings] = lambda: settings
+        return TestClient(app)
+
+    def _enrol(self, client: TestClient) -> dict:
+        speaker = make_speaker(client, "Ravi")
+        client.put(
+            f"/api/speakers/{speaker['id']}/skg",
+            json=[{"subject": "x", "predicate": "hometown", "object": self.ANSWER}],
+        )
+        return speaker
+
+    def test_default_is_off(self, settings: Settings) -> None:
+        """A build that ships revealing by default is a build that ships the
+        answers, and nobody would notice from the UI."""
+        assert Settings().demo_reveal_answers is False
+        assert settings.demo_reveal_answers is False
+
+    def test_on_the_answer_is_returned(self, store, pipeline, settings) -> None:
+        client = self._demo_client(store, pipeline, settings, reveal=True)
+        speaker = self._enrol(client)
+        challenge = client.post("/api/challenge", json={"speakerId": speaker["id"]}).json()
+        assert challenge["expectedAnswerEntity"] == self.ANSWER
+
+    def test_on_health_says_so(self, store, pipeline, settings) -> None:
+        """The flag is only safe because it is visible. A demo build that looks
+        like a real one is how a demo number reaches a slide."""
+        client = self._demo_client(store, pipeline, settings, reveal=True)
+        assert client.get("/api/health").json()["demoRevealAnswers"] is True
+
+    def test_off_the_answer_leaks_from_no_route(self, store, pipeline, settings) -> None:
+        """The real assertion: sweep every GET that touches a speaker, plus the
+        challenge itself, for the answer string."""
+        client = self._demo_client(store, pipeline, settings, reveal=False)
+        speaker = self._enrol(client)
+        sid = speaker["id"]
+
+        challenge = client.post("/api/challenge", json={"speakerId": sid})
+        assert self.ANSWER not in challenge.text
+
+        for path in (
+            "/api/health",
+            "/api/speakers",
+            f"/api/speakers/{sid}",
+            f"/api/speakers/{sid}/csbg",
+            "/api/utterances",
+            "/api/auth-history",
+            "/api/attacks",
+            "/api/evaluation",
+        ):
+            response = client.get(path)
+            assert response.status_code in (200, 404, 409), (path, response.status_code)
+            assert self.ANSWER not in response.text, f"{path} leaked the answer"
+
+    def test_the_skg_route_still_returns_it_deliberately(
+        self, store, pipeline, settings
+    ) -> None:
+        """`/api/speakers/{id}/skg` is the enrolment editor: it exists to show
+        and edit the operator's own facts, so it returns them whatever this
+        flag says. Excluded from the sweep above on purpose, and asserted here
+        so nobody 'fixes' the sweep by silencing this route."""
+        client = self._demo_client(store, pipeline, settings, reveal=False)
+        speaker = self._enrol(client)
+        body = client.get(f"/api/speakers/{speaker['id']}/skg").text
+        assert self.ANSWER in body
+
+    def test_authenticating_does_not_echo_the_answer(
+        self, store, pipeline, settings
+    ) -> None:
+        """The reasoning in an AuthResult explains *why* a decision was made,
+        and the tempting way to write that explanation quotes the expected
+        answer back."""
+        client = self._demo_client(store, pipeline, settings, reveal=False)
+        speaker = self._enrol(client)
+        challenge = client.post("/api/challenge", json={"speakerId": speaker["id"]}).json()
+        result = client.post(
+            "/api/authenticate",
+            files={"audio": ("r.wav", wav_bytes(seconds=3.0), "audio/wav")},
+            data={"challengeId": challenge["id"]},
+        )
+        assert self.ANSWER not in result.text
+        assert self.ANSWER not in client.get("/api/auth-history").text

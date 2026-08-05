@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { apiClient } from '../api/client';
 import { PageHeader } from '../components/layout/PageHeader';
 import { GraphViz } from '../components/ui/GraphViz';
+import { SKGViz } from '../components/ui/SKGViz';
 import { Download } from 'lucide-react';
 
 export function GraphExplorer() {
@@ -32,6 +33,14 @@ export function GraphExplorer() {
     queryFn: () => apiClient.getSpeakerCSBG(selectedSpeakerId),
     enabled: !!selectedSpeakerId && graphType === 'csbg'
   });
+
+  const { data: skgData } = useQuery({
+    queryKey: ['skg', selectedSpeakerId],
+    queryFn: () => apiClient.getSpeakerSKG(selectedSpeakerId),
+    enabled: !!selectedSpeakerId && graphType === 'skg'
+  });
+
+  const selectedSpeaker = speakers?.find(s => s.id === selectedSpeakerId);
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -75,22 +84,30 @@ export function GraphExplorer() {
           </select>
         </label>
 
-        <div className="w-[1px] h-4 bg-app-border" />
-
-        <label className="flex items-center gap-2">
-          <span className="text-app-text-muted">Edge Thr (P):</span>
-          <input type="range" min="0" max="0.5" step="0.01" value={threshold} onChange={e => setThreshold(parseFloat(e.target.value))} className="w-24 accent-app-accent" />
-          <span className="mono text-[11px] w-8">{threshold.toFixed(2)}</span>
-        </label>
+        {/* SKG edges are enrolled facts, not estimated probabilities, so there
+            is nothing to threshold. A slider that moves and changes nothing is
+            worse than an absent one. */}
+        {graphType === 'csbg' && (
+          <>
+            <div className="w-[1px] h-4 bg-app-border" />
+            <label className="flex items-center gap-2">
+              <span className="text-app-text-muted">Edge Thr (P):</span>
+              <input type="range" min="0" max="0.5" step="0.01" value={threshold} onChange={e => setThreshold(parseFloat(e.target.value))} className="w-24 accent-app-accent" />
+              <span className="mono text-[11px] w-8">{threshold.toFixed(2)}</span>
+            </label>
+          </>
+        )}
       </div>
 
       <div className="flex-1 relative">
         {graphType === 'csbg' ? (
           <GraphViz data={csbgData || null} layout={layout} threshold={threshold} />
         ) : (
-          <div className="flex items-center justify-center h-full text-app-text-muted text-[13px]">
-            Knowledge Graph Visualization Not Implemented in this Mock
-          </div>
+          <SKGViz
+            triples={skgData ?? null}
+            speakerName={selectedSpeaker?.displayName ?? ''}
+            layout={layout}
+          />
         )}
       </div>
     </div>
