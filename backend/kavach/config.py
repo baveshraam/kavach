@@ -59,20 +59,50 @@ class Settings(BaseSettings):
 
     # ----------------------------------------------------------------- ASR
     whisper_model: str = "large-v3"
+    """Corpus annotation needs the large checkpoint. This is settled, not a
+    preference: `small` was run over the first returned session and degrades
+    on exactly the speech this project collects. On monolingual stretches it is
+    fine; at a code-switch boundary it emits fragments of unrelated languages
+    -- Vietnamese and Portuguese words appeared inside a Tamil-English answer
+    about a college timetable. Whisper's language head is competing with itself
+    mid-utterance, and a hallucinated token is worse here than a missing one,
+    because it enters the CSBG as a real observation in some class.
+
+    The live demo may use a smaller checkpoint: a verification attempt is
+    scored against an enrolled graph and a few wrong tokens move a
+    log-likelihood ratio slightly. An annotation error is permanent."""
+
     whisper_compute_type: str = "int8"
     """int8 keeps large-v3 viable on CPU. Use float16 on a GPU."""
 
     whisper_device: str = "auto"
     whisper_language: str | None = None
-    """None lets Whisper auto-detect. For code-mixed Tamil-English, forcing
-    'ta' generally produces better Tamil but can suppress English segments --
-    evaluate both on your own audio and report which you used."""
+    """None, so Whisper auto-detects. Also settled on real recordings.
+
+    Auto-detect returns `ta` on this population and -- importantly -- keeps the
+    English in Latin script while writing the Tamil in Tamil script. That split
+    is free evidence: `lid.rules` resolves script-unambiguous tokens without an
+    LLM call, so the auto setting is what makes the cheap stage of the LID
+    pipeline work at all. Forcing `ta` pushes English words into Tamil
+    transliteration and destroys it. `asr.compare_transcripts` measures the
+    damage if it needs re-checking on a new population."""
 
     suppress_numerals: bool = True
     """Emit number words rather than digits. Digits are language-neutral, so
     '5' loses the fact that the speaker chose English or Tamil to say it --
     and NUMBER is one of the most discriminative classes. See
-    lid.rules.tag_token."""
+    lid.rules.tag_token and WhisperASR._numeral_tokens.
+
+    Measured on the first real return, prompt 10 ("year of birth, a price, a
+    time" -- the prompt that exists to elicit numerals):
+
+        off:  "நான் 2004ல் பிறந்தேன் ... 10 Rs. ... 6.45க்கு"
+        on:   "நான் two-thousand and four-la பிறந்தேன் ... ten rupees
+               ... six-forty-fiveக்கு"
+
+    Off, that prompt contributes nothing to NUMBER, TIME_DATE or
+    MONEY_COMMERCE for any speaker. On, it recovers the speaker's actual
+    choice, which for that speaker was English on all three."""
 
     # ----------------------------------------------------- speaker embedding
     ecapa_model: str = "speechbrain/spkrec-ecapa-voxceleb"

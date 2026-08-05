@@ -83,6 +83,22 @@ class ExperimentConfig:
     cohort_norm: bool = True
     stability_budgets: tuple[int, ...] = (2, 5, 10, 20, 30)
 
+    allow_within_session: bool = False
+    """Split enrolment from probes inside one sitting for speakers who only
+    have one.
+
+    Off by default, and a run with it on is stamped unreportable. It exists
+    because the alternative during collection is worse: with a single session
+    per speaker `split_sessions` drops everybody, `run` raises, and a pilot
+    returns no number at all -- which reads as a broken pipeline rather than as
+    an incomplete corpus, and gives nobody anything to check the plumbing with.
+
+    What it buys is a smoke test. What it costs is the claim: enrolment and
+    probe speech from one sitting share a microphone, a room and a mood, so the
+    resulting EER measures how well the estimator memorises a recording session.
+    It is the flattering direction, so a number from this path may not be
+    compared against a cross-session number from any other."""
+
     simulate_branches: bool = False
     """Substitute documented stand-ins for the acoustic and knowledge branches.
 
@@ -104,6 +120,7 @@ class ExperimentConfig:
             "bootstrap": self.bootstrap,
             "max_veto_frr_cost": self.max_veto_frr_cost,
             "cohort_norm": self.cohort_norm,
+            "allow_within_session": self.allow_within_session,
             "stability_budgets": list(self.stability_budgets),
             "simulate_branches": self.simulate_branches,
             "figures": self.figures,
@@ -362,12 +379,20 @@ def run(config: ExperimentConfig) -> Results:
             "running an experiment:\n  - " + "\n  - ".join(problems)
         )
 
-    split = corpus_mod.split_sessions(corpus)
+    split = corpus_mod.split_sessions(
+        corpus, allow_within_session=config.allow_within_session
+    )
     if len(split.enrolment) < 4:
+        hint = (
+            ""
+            if config.allow_within_session
+            else " Every speaker in a first-sitting pilot has one session; "
+            "--within-session scores it anyway and stamps the run unreportable."
+        )
         raise ValueError(
             f"only {len(split.enrolment)} speakers survived the session split "
             f"(dropped {len(split.dropped_speakers)} for having one session). "
-            "The evaluation needs at least 4."
+            f"The evaluation needs at least 4.{hint}"
         )
 
     graphs = {
@@ -791,6 +816,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-cohort-norm", action="store_true")
     parser.add_argument("--no-figures", action="store_true")
     parser.add_argument(
+        "--within-session", action="store_true",
+        help="split enrolment from probes inside one sitting for speakers with "
+             "only one; marks the run unreportable. For a first-sitting pilot, "
+             "where the alternative is no number at all",
+    )
+    parser.add_argument(
         "--simulate-branches", action="store_true",
         help="stand-ins for the acoustic and knowledge branches; marks the run "
              "unreportable, and exists to exercise fusion without models",
@@ -807,6 +838,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         dev_fraction=args.dev_fraction,
         bootstrap=args.bootstrap,
         cohort_norm=not args.no_cohort_norm,
+        allow_within_session=args.within_session,
         figures=not args.no_figures,
         simulate_branches=args.simulate_branches,
         n_simulated_speakers=args.speakers,

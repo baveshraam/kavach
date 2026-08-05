@@ -126,6 +126,41 @@ class WhisperASR:
         self.suppress_numerals = suppress_numerals
         self.download_root = download_root
         self._model: Any = None
+        self._numeral_token_cache: list[int] | None = None
+
+    def _numeral_tokens(self) -> list[int]:
+        """Token ids that decode to digits, cached after the first call.
+
+        `suppress_tokens=[-1]` is faster-whisper's own default and suppresses a
+        set of *symbols*; it has nothing to do with numerals, so passing it was
+        the same as passing nothing. The digits have to be enumerated from the
+        tokenizer, which is what this does: every id whose decoded piece is
+        made only of `0`-`9`, about 400 of them.
+
+        Suppressing them is what forces Whisper to write "six thirty" instead
+        of "6.30", and that distinction is the entire NUMBER class. A digit is
+        language-neutral -- "500" records that the speaker said a number and
+        destroys the evidence of *which language they said it in*, which is the
+        only thing the CSBG reads. On real returns from this protocol, prompt
+        10 exists to elicit exactly three numerals and came back as digits.
+
+        `-1` is kept alongside so the default symbol suppression still applies.
+        """
+        if self._numeral_token_cache is not None:
+            return self._numeral_token_cache
+
+        tokenizer = getattr(self.model, "hf_tokenizer", None)
+        if tokenizer is None:  # pragma: no cover - depends on library version
+            self._numeral_token_cache = [-1]
+            return self._numeral_token_cache
+
+        ids = [-1]
+        for token_id in range(tokenizer.get_vocab_size()):
+            piece = tokenizer.decode([token_id]).strip()
+            if piece and all(character in "0123456789" for character in piece):
+                ids.append(token_id)
+        self._numeral_token_cache = ids
+        return ids
 
     @property
     def model(self) -> Any:
@@ -194,8 +229,8 @@ class WhisperASR:
             initial_prompt=initial_prompt if initial_prompt is not None else CODE_MIX_PROMPT,
             # Numerals as words, not digits: '5' is language-neutral and
             # loses the speaker's choice of English vs Tamil, and NUMBER is
-            # one of the most discriminative CSBG classes.
-            suppress_tokens=[-1] if self.suppress_numerals else None,
+            # one of the most discriminative CSBG classes. See _numeral_tokens.
+            suppress_tokens=self._numeral_tokens() if self.suppress_numerals else [-1],
         )
 
         words: list[Word] = []

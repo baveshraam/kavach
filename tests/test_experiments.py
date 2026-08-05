@@ -313,3 +313,110 @@ class TestCli:
         assert args.simulate_branches is False
         assert args.manifest is None
         assert args.out == Path("paper/results")
+
+
+# --------------------------------------------------------------------------
+# The within-session escape hatch
+# --------------------------------------------------------------------------
+
+
+def _single_session_corpus(n_speakers: int = 8, n_utterances: int = 14) -> C.Corpus:
+    """A first-sitting pilot: every speaker recorded once, nobody twice."""
+    from kavach.csbg.ontology import CLASS_ORDER
+
+    corpus = C.Corpus(name="pilot", provenance=C.Provenance.SCRIPTED)
+    for s in range(n_speakers):
+        sid = f"S{s:02d}"
+        corpus.speakers.append(
+            C.SpeakerRecord(speaker_id=sid, consent_ref=f"c/{sid}", script_id="ABCDEFGH"[s])
+        )
+        session_id = f"{sid}_s1"
+        corpus.sessions.append(C.SessionRecord(session_id=session_id, speaker_id=sid))
+        for u in range(n_utterances):
+            # Each speaker prefers a different language on a different class,
+            # which is what the scripts do and what makes the split scoreable.
+            tokens = [
+                Token(
+                    text=f"w{i}",
+                    language=Language.TA if (i + s) % 3 else Language.EN,
+                    semantic_class=CLASS_ORDER[(i + u) % len(CLASS_ORDER)],
+                )
+                for i in range(24)
+            ]
+            corpus.utterances.append(
+                C.UtteranceRecord(
+                    utterance_id=f"{session_id}_u{u:02d}",
+                    session_id=session_id,
+                    speaker_id=sid,
+                    duration_sec=30.0,
+                    tokens=tokens,
+                    annotation_source=C.AnnotationSource.SYNTHETIC,
+                )
+            )
+    return corpus
+
+
+class TestWithinSession:
+    def test_a_single_session_corpus_fails_by_default(self, tmp_path):
+        """Every speaker in a first sitting has one session, so the default
+        cross-session split drops all of them."""
+        path = C.save_manifest(_single_session_corpus(), tmp_path / "manifest.json")
+        with pytest.raises(ValueError, match="survived the session split"):
+            X.run(X.ExperimentConfig(manifest=path, bootstrap=5, figures=False))
+
+    def test_the_failure_names_the_flag_that_fixes_it(self, tmp_path):
+        """An error that does not say what to do next reads as a broken
+        pipeline rather than an incomplete corpus."""
+        path = C.save_manifest(_single_session_corpus(), tmp_path / "manifest.json")
+        with pytest.raises(ValueError, match="--within-session"):
+            X.run(X.ExperimentConfig(manifest=path, bootstrap=5, figures=False))
+
+    def test_within_session_produces_a_result(self, tmp_path):
+        path = C.save_manifest(_single_session_corpus(), tmp_path / "manifest.json")
+        results = X.run(
+            X.ExperimentConfig(
+                manifest=path,
+                bootstrap=5,
+                stability_budgets=(2,),
+                figures=False,
+                allow_within_session=True,
+            )
+        )
+        assert results.report.fitted.policy.threshold is not None
+
+    def test_and_stamps_the_run_unreportable_for_it(self, tmp_path):
+        """The flattering split must be visible in the results file, not only
+        in the command that produced it."""
+        path = C.save_manifest(_single_session_corpus(), tmp_path / "manifest.json")
+        results = X.run(
+            X.ExperimentConfig(
+                manifest=path,
+                bootstrap=5,
+                stability_budgets=(2,),
+                figures=False,
+                allow_within_session=True,
+            )
+        )
+        assert not results.reportable
+        assert any("within a session" in b for b in results.blockers)
+        assert results.to_dict()["config"]["allow_within_session"] is True
+
+    def test_the_flag_is_off_by_default_on_the_cli(self):
+        assert X.build_parser().parse_args([]).within_session is False
+        assert X.ExperimentConfig().allow_within_session is False
+
+    def test_cli_passes_the_flag_through(self, tmp_path):
+        path = C.save_manifest(_single_session_corpus(), tmp_path / "manifest.json")
+        code = X.main(
+            [
+                "--out", str(tmp_path / "out"),
+                "--manifest", str(path),
+                "--bootstrap", "5",
+                "--no-figures",
+                "--within-session",
+            ]
+        )
+        assert code == 0
+        written = json.loads((tmp_path / "out" / "results.json").read_text())
+        assert written["config"]["allow_within_session"] is True
+        assert written["reportable"] is False
