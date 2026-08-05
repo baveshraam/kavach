@@ -675,14 +675,24 @@ class TestOutputBudget:
     def test_it_scales_with_the_utterance(self):
         assert llm_mod.output_budget(100) > llm_mod.output_budget(50)
 
-    def test_the_real_utterance_that_broke_it_now_fits(self):
-        """S01_s1_p02_food is 64 words and consumed the whole 4096 budget."""
+    def test_the_real_utterances_that_broke_it_now_fit(self):
+        """Two overran in sequence: S01_s1_p02_food at 64 words against a flat
+        4096, then S01_s1_p10_numbers at *37* words against a 96/word budget
+        whose floor was still 4096. The second is why the constants are set
+        well above the arithmetic -- a thinking model spends output tokens
+        before it emits any JSON."""
+        assert llm_mod.output_budget(37) > 4096
         assert llm_mod.output_budget(64) > 4096
 
     def test_the_longest_utterance_in_the_corpus_fits(self):
         """S04_s1_p03_commute is 98 words. Tamil JSON-escapes to six characters
         per character, so the per-word cost is far above what ASCII suggests."""
-        assert llm_mod.output_budget(98) >= 96 * 98
+        assert llm_mod.output_budget(98) >= 320 * 98
+
+    def test_the_budget_is_a_ceiling_so_generosity_is_free(self):
+        """Billing and latency follow the tokens generated, not the cap. The
+        only failure mode with a price is the cap being too low."""
+        assert llm_mod.output_budget(1) >= 16384
 
     def test_it_never_returns_less_than_the_floor(self):
         assert all(llm_mod.output_budget(n) >= llm_mod.DEFAULT_MAX_TOKENS

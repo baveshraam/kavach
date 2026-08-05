@@ -9,7 +9,7 @@ That check cannot be automated away. The pipeline will happily produce an EER
 from transcripts that are fluent nonsense, tags that are all `OTHER`, or four
 speakers who code-switch identically -- and only the last of those is a result.
 
-Three views, each answering one question:
+Five views, each answering one question:
 
     --summary   (default) Do these speakers differ at all? Per-speaker CMI,
                 Tamil share and class coverage. This is the go/no-go read.
@@ -17,6 +17,10 @@ Three views, each answering one question:
     --tags      Did the tagger label them? Token tables with language and class.
     --translit  How much English did the ASR write in Tamil script? The
                 tokens behind `transliteration_recovered`, listed.
+    --acoustic  Are the recordings actually of the people they are labelled
+                as? Per-speaker ECAPA template self-consistency. Slow -- it
+                embeds every clip -- and the one check to run on a folder that
+                arrived from someone else.
 """
 
 from __future__ import annotations
@@ -280,6 +284,110 @@ def transliteration(corpus: Any) -> str:
 
 
 # --------------------------------------------------------------------------
+# Acoustic health
+# --------------------------------------------------------------------------
+
+#: Below this, a speaker's enrolment clips disagree about who they are.
+#:
+#: On this corpus healthy speakers sit at 0.85-0.95 across nine clips. A value
+#: well under that is almost never "an unusual voice": it is a clip filed under
+#: the wrong speaker, a second person audible in the room, or two recordings
+#: made on different devices months apart. All three are cheap to fix at ingest
+#: and expensive to diagnose later as unexplained EER.
+SELF_CONSISTENCY_FLOOR = 0.70
+
+
+def acoustic(corpus: Any, *, device: str = "cpu") -> str:
+    """Per-speaker ECAPA template health.
+
+    Deliberately *not* a verification result: no probes, no impostor trials, no
+    EER. It answers a narrower question that has to be settled first -- do this
+    speaker's own recordings agree that they are one person?
+    """
+    from .audio import AudioError, load_audio
+    from .embedding import ECAPAEmbedder
+
+    root = corpus.root or Path()
+    embedder = ECAPAEmbedder(device=device)
+
+    lines = [f"# Acoustic health -- {corpus.name}", ""]
+    rows: list[str] = []
+    problems: list[str] = []
+
+    by_speaker: dict[str, list[Any]] = {}
+    for u in corpus.utterances:
+        if u.audio_path:
+            by_speaker.setdefault(u.speaker_id, []).append(u)
+
+    if not by_speaker:
+        return "\n".join(lines + ["No utterance has an `audio_path`."])
+
+    for sid, utterances in sorted(by_speaker.items()):
+        clips, missing, unreadable = [], 0, 0
+        for u in utterances:
+            path = root / u.audio_path
+            if not path.exists():
+                missing += 1
+                continue
+            try:
+                clips.append(load_audio(path))
+            except (AudioError, OSError):
+                unreadable += 1
+
+        if not clips:
+            problems.append(f"{sid}: no usable audio ({missing} missing, "
+                            f"{unreadable} unreadable)")
+            rows.append(f"| {sid} | 0 | - | {missing} | {unreadable} |")
+            continue
+
+        try:
+            template = embedder.enrol(sid, clips)
+        except (AudioError, ValueError) as exc:
+            problems.append(f"{sid}: {exc}")
+            rows.append(f"| {sid} | {len(clips)} | - | {missing} | {unreadable} |")
+            continue
+
+        consistency = template.self_consistency
+        # The embedder skips clips too short to embed rather than failing, so
+        # the count that matters is what survived, not what was handed over.
+        used = len(template.embeddings)
+        flag = " **!**" if consistency < SELF_CONSISTENCY_FLOOR else ""
+        rows.append(
+            f"| {sid} | {used} | {consistency:.3f}{flag} | {missing} | {unreadable} |"
+        )
+        if consistency < SELF_CONSISTENCY_FLOOR:
+            problems.append(
+                f"{sid}: self-consistency {consistency:.3f} is below "
+                f"{SELF_CONSISTENCY_FLOOR}. Check for a clip filed under the "
+                "wrong speaker, a second voice in the room, or two devices."
+            )
+        if used < len(clips):
+            problems.append(
+                f"{sid}: {len(clips) - used} clips were too short to embed and "
+                "contribute nothing to this speaker's template."
+            )
+
+    lines += [
+        "Template self-consistency: mean pairwise similarity among a speaker's "
+        "own enrolment clips.",
+        "",
+        "| speaker | clips used | self-consistency | missing | unreadable |",
+        "|---|---|---|---|---|",
+        *rows,
+        "",
+    ]
+
+    if problems:
+        lines += ["## Problems", ""] + [f"- {p}" for p in problems]
+    else:
+        lines += [
+            "No problems. Every speaker's recordings agree they are one person, "
+            "and every file resolved and decoded.",
+        ]
+    return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------
 # CLI
 # --------------------------------------------------------------------------
 
@@ -302,6 +410,10 @@ def build_parser() -> argparse.ArgumentParser:
     view.add_argument("--tags", action="store_true", help="Token tables.")
     view.add_argument("--translit", action="store_true",
                       help="Tamil-script tokens tagged English.")
+    view.add_argument("--acoustic", action="store_true",
+                      help="Per-speaker ECAPA template self-consistency. Slow; "
+                           "run it on any folder that arrived from someone else.")
+    parser.add_argument("--device", default="cpu", help="--acoustic only.")
     return parser
 
 
@@ -317,6 +429,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         out = tags(corpus, speaker=args.speaker, limit=args.limit)
     elif args.translit:
         out = transliteration(corpus)
+    elif args.acoustic:
+        try:
+            out = acoustic(corpus, device=args.device)
+        except ImportError as exc:
+            print(
+                f"error: --acoustic needs speechbrain and torch: {exc}\n"
+                "Install with `pip install -r requirements.txt`.",
+                file=sys.stderr,
+            )
+            return 2
     else:
         out = summary(corpus)
 
@@ -333,7 +455,9 @@ if __name__ == "__main__":
 
 
 __all__ = [
+    "SELF_CONSISTENCY_FLOOR",
     "THIN_CLASS_TOKENS",
+    "acoustic",
     "build_parser",
     "main",
     "summary",

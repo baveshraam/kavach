@@ -248,3 +248,106 @@ class TestCLI:
         ):
             assert I.main(["--manifest", str(path), flag]) == 0
             assert marker in capsys.readouterr().out
+
+
+class TestAcoustic:
+    """Do a speaker's own recordings agree that they are one person?
+
+    Not a verification result -- no probes, no impostors, no EER. It settles a
+    narrower question first, and it is the check to run on a folder that
+    arrived from someone else: a clip filed under the wrong speaker, a second
+    voice in the room, and two devices months apart all look like unexplained
+    EER later and like a low number here.
+    """
+
+    class _Embedder:
+        """Templates whose self-consistency the test dictates."""
+
+        def __init__(self, consistency: dict[str, float], *, skip: int = 0) -> None:
+            self.consistency = consistency
+            self.skip = skip
+
+        def enrol(self, speaker_id, clips, **kw):
+            import types
+
+            n = max(1, len(clips) - self.skip)
+            return types.SimpleNamespace(
+                speaker_id=speaker_id,
+                embeddings=list(range(n)),
+                self_consistency=self.consistency.get(speaker_id, 0.9),
+            )
+
+    def _corpus_with_audio(self, tmp_path, missing: set[str] | None = None):
+        import wave
+
+        import numpy as np
+
+        corpus = C.Corpus(name="a", provenance=C.Provenance.RECORDED, root=tmp_path)
+        for s in range(2):
+            sid = f"S{s:02d}"
+            corpus.speakers.append(C.SpeakerRecord(speaker_id=sid, consent_ref="c"))
+            corpus.sessions.append(C.SessionRecord(session_id=f"{sid}_s1", speaker_id=sid))
+            for u in range(3):
+                uid = f"{sid}_s1_u{u}"
+                rel = f"audio/{uid}.wav"
+                if uid not in (missing or set()):
+                    path = tmp_path / rel
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    n = 16000 * 2
+                    tone = (0.3 * np.sin(2 * np.pi * 200 * np.arange(n) / 16000)
+                            * 32767).astype("<i2")
+                    with wave.open(str(path), "wb") as fh:
+                        fh.setnchannels(1); fh.setsampwidth(2); fh.setframerate(16000)
+                        fh.writeframes(tone.tobytes())
+                corpus.utterances.append(
+                    C.UtteranceRecord(utterance_id=uid, session_id=f"{sid}_s1",
+                                      speaker_id=sid, audio_path=rel)
+                )
+        return corpus
+
+    def _run(self, monkeypatch, corpus, embedder):
+        from kavach import embedding as E
+
+        monkeypatch.setattr(E, "ECAPAEmbedder", lambda **kw: embedder)
+        return I.acoustic(corpus)
+
+    def test_reports_self_consistency_per_speaker(self, tmp_path, monkeypatch):
+        out = self._run(monkeypatch, self._corpus_with_audio(tmp_path),
+                        self._Embedder({"S00": 0.94, "S01": 0.88}))
+        assert "0.940" in out and "0.880" in out
+        assert "No problems" in out
+
+    def test_flags_a_speaker_below_the_floor(self, tmp_path, monkeypatch):
+        out = self._run(monkeypatch, self._corpus_with_audio(tmp_path),
+                        self._Embedder({"S00": 0.41}))
+        assert "**!**" in out
+        assert "wrong speaker" in out and "second voice" in out
+
+    def test_counts_missing_files_without_crashing(self, tmp_path, monkeypatch):
+        corpus = self._corpus_with_audio(tmp_path, missing={"S00_s1_u1"})
+        out = self._run(monkeypatch, corpus, self._Embedder({}))
+        assert "| S00 | 2 |" in out
+
+    def test_a_speaker_with_no_usable_audio_is_a_problem_not_a_blank_row(
+        self, tmp_path, monkeypatch
+    ):
+        corpus = self._corpus_with_audio(
+            tmp_path, missing={"S00_s1_u0", "S00_s1_u1", "S00_s1_u2"}
+        )
+        out = self._run(monkeypatch, corpus, self._Embedder({}))
+        assert "S00: no usable audio" in out
+
+    def test_reports_clips_the_embedder_skipped(self, tmp_path, monkeypatch):
+        """`embed_many` drops clips too short to embed rather than failing, so
+        the count that matters is what survived, not what was handed over."""
+        out = self._run(monkeypatch, self._corpus_with_audio(tmp_path),
+                        self._Embedder({}, skip=1))
+        assert "too short to embed" in out
+
+    def test_a_corpus_with_no_audio_paths_says_so(self, tmp_path, monkeypatch):
+        corpus = _corpus()
+        out = self._run(monkeypatch, corpus, self._Embedder({}))
+        assert "No utterance has an `audio_path`" in out
+
+    def test_the_cli_exposes_it(self):
+        assert I.build_parser().parse_args(["--manifest", "m", "--acoustic"]).acoustic

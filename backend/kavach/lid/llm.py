@@ -56,29 +56,36 @@ DEFAULT_EFFORT = "low"
 
 #: Floor for a tagging response's output budget. Not the whole story -- see
 #: `output_budget`, which scales it with the input.
-DEFAULT_MAX_TOKENS = 4096
+DEFAULT_MAX_TOKENS = 16384
 
 #: Output tokens to allow per input word.
 #:
-#: Measured, not guessed, and the number is large for one reason: JSON escapes
-#: non-ASCII, so a Tamil word arrives as `நேத்து`
-#: -- six characters per character, before the surrounding object with its
-#: language, semantic_class and confidence fields. A real 64-word utterance
-#: from this corpus consumed the whole 4096-token budget and came back
-#: truncated mid-string, which surfaced as a pydantic "Invalid JSON" error
-#: rather than as "the response was cut off".
-OUTPUT_TOKENS_PER_WORD = 96
+#: **These are caps, not reservations.** Billing and latency follow the tokens
+#: actually generated, so an over-generous ceiling costs nothing and an
+#: under-generous one truncates the JSON mid-string and kills the run. They are
+#: therefore set well above the observed need, deliberately.
+#:
+#: Two things make tagging expensive per word here, and both were underestimated
+#: on the first attempt. JSON escapes non-ASCII, so a Tamil word arrives as
+#: `நேத்து` -- six characters per character,
+#: before the surrounding object with its language, semantic_class and
+#: confidence fields. And a thinking-capable model spends output tokens on
+#: reasoning before it emits any of that.
+#:
+#: Measured against this corpus: a 37-word utterance overran 4096, which is why
+#: 96/word (and its 4096 floor) was not enough.
+OUTPUT_TOKENS_PER_WORD = 320
 
 
 def output_budget(n_tokens: int) -> int:
     """Output token budget for tagging `n_tokens` words.
 
-    Scaled rather than fixed. A fixed budget is either wasteful on the short
-    utterances or too small on the long ones, and too small is the expensive
-    direction: the response truncates, the JSON does not parse, and the run
-    dies on an error that names neither the cause nor the fix.
+    Scaled rather than fixed, and generous in both terms. A fixed budget is
+    either wasteful on the short utterances or too small on the long ones, and
+    "wasteful" here costs nothing because the number is a ceiling: the response
+    truncating is the only failure mode with a price.
     """
-    return max(DEFAULT_MAX_TOKENS, OUTPUT_TOKENS_PER_WORD * n_tokens + 512)
+    return max(DEFAULT_MAX_TOKENS, OUTPUT_TOKENS_PER_WORD * n_tokens + 1024)
 
 #: Attempts per request before giving up.
 #:
