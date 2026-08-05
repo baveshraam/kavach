@@ -197,6 +197,18 @@ class AnnotationReport:
 
     tagger_model: str = ""
 
+    transliteration_recovered: int = 0
+    """Tamil-script tokens the model confidently called English, i.e. English
+    the ASR transliterated. **Report this.** Every one of them would otherwise
+    have been recorded as a Tamil choice the speaker did not make, and they
+    concentrate in NUMBER and TIME_DATE -- two of the most discriminative CSBG
+    classes. See `LIDPipeline.stats.transliteration_recovered`."""
+
+    retries: int = 0
+    """Transient API failures retried during the pass. Non-zero means the run
+    was fighting a rate limit; the labels are the same but a bigger corpus will
+    need pacing rather than luck."""
+
     @property
     def is_corpus_grade(self) -> bool:
         """The same rule `PipelineStats.is_corpus_grade` applies, restated
@@ -218,6 +230,25 @@ class AnnotationReport:
 
         if self.tagger:
             lines += [f"Tagged with **{self.tagger}** / `{self.tagger_model}`.", ""]
+
+        if self.transliteration_recovered:
+            lines += [
+                f"**{self.transliteration_recovered} tokens were English written in "
+                "Tamil script** by the ASR, and were recovered as English rather than "
+                "recorded as a Tamil choice the speaker did not make. They concentrate "
+                "in NUMBER and TIME_DATE. Report this number: without the recovery it "
+                "is a silent, one-directional bias on two of the most discriminative "
+                "CSBG classes.",
+                "",
+            ]
+
+        if self.retries:
+            lines += [
+                f"{self.retries} API calls were retried after a transient failure "
+                "(rate limit or server error). The labels are unaffected, but the pass "
+                "was fighting a rate limit -- a larger corpus needs pacing.",
+                "",
+            ]
 
         if not self.used_llm and self.tagged:
             lines += [
@@ -370,6 +401,7 @@ def tag_corpus(
     corpus: Corpus,
     *,
     force: bool = False,
+    resume: bool = False,
     limit: int | None = None,
     report: AnnotationReport | None = None,
     pipeline: LIDPipeline | None = None,
@@ -383,6 +415,12 @@ def tag_corpus(
     the result is unusable as a CSBG -- see the module docstring. It still
     runs, because the alternative is that nobody discovers the transcripts are
     empty until after paying for a tagging batch.
+
+    Args:
+        force: Re-tag everything, including utterances already LLM-tagged.
+        resume: Tag anything not already LLM-tagged. What to use after a run
+            died partway, and what to use over rules-only tokens left by a
+            smoke test. See `_needs_tagging`.
     """
     report = report or AnnotationReport()
     pipeline = pipeline if pipeline is not None else _default_pipeline(provider, model)
@@ -396,18 +434,47 @@ def tag_corpus(
     pending = [
         u
         for u in corpus.utterances
-        if u.transcript and (force or u.tokens is None)
+        if u.transcript and _needs_tagging(u, force=force, resume=resume)
     ]
     if limit is not None:
         pending = pending[:limit]
 
-    for utterance in pending:
+    def finish() -> AnnotationReport:
+        report.total_tokens = pipeline.stats.total_tokens
+        report.guessed_tokens = pipeline.stats.fallback_guesses
+        report.resolved_by_rules = pipeline.stats.resolved_by_rules
+        report.transliteration_recovered = pipeline.stats.transliteration_recovered
+        report.retries = getattr(pipeline.llm_tagger, "retries", 0)
+        if manifest_path:
+            save_manifest(corpus, manifest_path)
+        return report
+
+    for i, utterance in enumerate(pending, start=1):
         before = pipeline.stats.fallback_guesses
-        tagged = pipeline.tag_utterance(
-            utterance.transcript,
-            utterance_id=utterance.utterance_id,
-            speaker_id=utterance.speaker_id,
-        )
+        try:
+            tagged = pipeline.tag_utterance(
+                utterance.transcript,
+                utterance_id=utterance.utterance_id,
+                speaker_id=utterance.speaker_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - re-raised after saving
+            # Save what is already tagged before letting this propagate. A
+            # corpus pass against a free tier can die on the fiftieth
+            # utterance, and losing the first forty-nine turns a rate limit
+            # into an hour of re-tagging -- against the same rate limit.
+            finish()
+            raise RuntimeError(
+                f"Tagging failed on {utterance.utterance_id!r} after "
+                f"{report.tagged} of {len(pending)} utterances: {exc}\n"
+                + (
+                    f"The {report.tagged} already tagged are saved to "
+                    f"{manifest_path}. Re-run with `--stage tag --resume` to "
+                    "continue from here rather than starting over."
+                    if manifest_path
+                    else "Nothing was saved: no manifest path was given."
+                )
+            ) from exc
+
         utterance.tokens = list(tagged.tokens)
         utterance.n_guessed_tokens = pipeline.stats.fallback_guesses - before
         utterance.annotation_source = (
@@ -415,13 +482,30 @@ def tag_corpus(
         )
         report.tagged += 1
 
-    report.total_tokens = pipeline.stats.total_tokens
-    report.guessed_tokens = pipeline.stats.fallback_guesses
-    report.resolved_by_rules = pipeline.stats.resolved_by_rules
+        # Periodic checkpoint. Every utterance would rewrite the whole manifest
+        # 56 times for a pass this size; every tenth bounds the loss to nine
+        # utterances without making the write the slow part.
+        if manifest_path and i % 10 == 0:
+            save_manifest(corpus, manifest_path)
 
-    if manifest_path:
-        save_manifest(corpus, manifest_path)
-    return report
+    return finish()
+
+
+def _needs_tagging(utterance: UtteranceRecord, *, force: bool, resume: bool) -> bool:
+    """Whether this utterance should be sent to the tagger.
+
+    `resume` exists because `force` is too blunt after a partial run: the
+    utterances tagged before the failure carry `AnnotationSource.LLM`, and
+    re-running with `--force` sends them all back to the model against the same
+    rate limit that stopped it. Plain `--stage tag` is too blunt in the other
+    direction -- it skips anything with tokens, including the rules-only tokens
+    a no-key smoke test leaves behind, which are exactly what needs replacing.
+    """
+    if force:
+        return True
+    if resume:
+        return utterance.annotation_source is not AnnotationSource.LLM
+    return utterance.tokens is None
 
 
 def _default_pipeline(provider: str | None = None, model: str | None = None) -> LIDPipeline:
@@ -485,6 +569,13 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--force", action="store_true", help="Redo utterances that already have output."
     )
+    parser.add_argument(
+        "--resume", action="store_true",
+        help="Tag stage only: tag anything not already LLM-tagged. Use after a "
+             "run died partway (--force would re-send the ones that succeeded, "
+             "against the same rate limit that stopped it), and over rules-only "
+             "tokens left by a no-key smoke test.",
+    )
     parser.add_argument("--report", type=Path, help="Write the report as markdown.")
     return parser
 
@@ -527,6 +618,7 @@ def main(argv: list[str] | None = None) -> int:
             tag_corpus(
                 corpus,
                 force=args.force,
+                resume=args.resume,
                 limit=args.limit,
                 report=report,
                 manifest_path=args.manifest,
@@ -536,6 +628,11 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 2
+        except RuntimeError as exc:
+            # Already saved what it got -- the message says how far and how to
+            # resume. Still an error exit: the corpus is partially tagged.
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
 
     print()
     print(report.to_markdown())

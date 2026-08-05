@@ -491,3 +491,172 @@ class TestCostEstimate:
     def test_corpus_scale_is_affordable(self):
         """~30 speakers x 5 min is well under $100 -- the design premise."""
         assert estimate_cost(25_000)["total_usd_batch"] < 100.0
+
+
+# --------------------------------------------------------------------------
+# Retries
+# --------------------------------------------------------------------------
+
+
+class _Status(Exception):
+    """An SDK-shaped API error. Both anthropic and openai set `status_code`."""
+
+    def __init__(self, status: int, headers: dict | None = None) -> None:
+        super().__init__(f"status {status}")
+        self.status_code = status
+        if headers is not None:
+            self.response = type("R", (), {"headers": headers})()
+
+
+class TestIsTransient:
+    """Which failures are worth spending another request on.
+
+    Getting this wrong in either direction costs: retrying a deterministic
+    failure burns a free tier's quota to receive the same answer five more
+    times, and not retrying a 429 aborts a corpus pass partway.
+    """
+
+    def test_rate_limit_is_transient(self):
+        assert llm_mod.is_transient(_Status(429))
+
+    def test_server_errors_are_transient(self):
+        assert all(llm_mod.is_transient(_Status(s)) for s in (500, 502, 503, 504, 529))
+
+    def test_client_errors_are_not(self):
+        """A 401 will still be a 401 in eight seconds."""
+        assert not llm_mod.is_transient(_Status(401))
+        assert not llm_mod.is_transient(_Status(404))
+        assert not llm_mod.is_transient(_Status(400))
+
+    def test_a_timeout_is_not_retried_as_a_status(self):
+        """408 is deliberately absent: the request may have been served, and
+        re-sending a tagging call that succeeded costs quota for nothing."""
+        assert 408 not in llm_mod.RETRYABLE_STATUS
+        assert not llm_mod.is_transient(_Status(408))
+
+    def test_alignment_errors_are_not_transient(self):
+        """A token-count mismatch is deterministic. Retrying it five times gets
+        the same mismatch five times."""
+        assert not llm_mod.is_transient(ValueError("returned 4 tokens for 5 inputs"))
+
+    def test_sdk_exception_names_are_recognised_without_importing_them(self):
+        """The two SDKs raise different classes for the same condition, and
+        importing either here would undo the lazy import."""
+        for name in ("RateLimitError", "APITimeoutError", "APIConnectionError"):
+            exc = type(name, (Exception,), {})()
+            assert llm_mod.is_transient(exc), name
+
+
+class TestWithRetries:
+    def test_returns_on_first_success(self):
+        assert llm_mod.with_retries(lambda: "ok") == "ok"
+
+    def test_retries_until_it_succeeds(self):
+        calls = []
+
+        def flaky():
+            calls.append(1)
+            if len(calls) < 3:
+                raise _Status(429)
+            return "ok"
+
+        assert llm_mod.with_retries(flaky, sleep=lambda _: None) == "ok"
+        assert len(calls) == 3
+
+    def test_gives_up_and_raises_the_last_error(self):
+        with pytest.raises(_Status):
+            llm_mod.with_retries(
+                lambda: (_ for _ in ()).throw(_Status(429)),
+                attempts=3, sleep=lambda _: None,
+            )
+
+    def test_makes_exactly_the_allowed_number_of_attempts(self):
+        calls = []
+
+        def always_fails():
+            calls.append(1)
+            raise _Status(503)
+
+        with pytest.raises(_Status):
+            llm_mod.with_retries(always_fails, attempts=4, sleep=lambda _: None)
+        assert len(calls) == 4
+
+    def test_does_not_retry_a_deterministic_failure(self):
+        calls = []
+
+        def bad_alignment():
+            calls.append(1)
+            raise ValueError("token alignment")
+
+        with pytest.raises(ValueError):
+            llm_mod.with_retries(bad_alignment, sleep=lambda _: None)
+        assert len(calls) == 1
+
+    def test_backoff_grows(self):
+        slept: list[float] = []
+        with pytest.raises(_Status):
+            llm_mod.with_retries(
+                lambda: (_ for _ in ()).throw(_Status(429)),
+                attempts=5, sleep=slept.append,
+            )
+        assert len(slept) == 4
+        # Jittered, so compare the envelope rather than exact values.
+        assert slept[-1] > slept[0]
+
+    def test_jitter_makes_two_runs_differ(self):
+        """Without jitter, requests rate-limited together retry together, hit
+        the limit together, and the backoff accomplishes nothing."""
+        def collect() -> list[float]:
+            slept: list[float] = []
+            with pytest.raises(_Status):
+                llm_mod.with_retries(
+                    lambda: (_ for _ in ()).throw(_Status(429)),
+                    attempts=5, sleep=slept.append,
+                )
+            return slept
+
+        assert collect() != collect()
+
+    def test_honours_retry_after(self):
+        """The provider knows when its window resets; guessing shorter just
+        burns another attempt."""
+        slept: list[float] = []
+        with pytest.raises(_Status):
+            llm_mod.with_retries(
+                lambda: (_ for _ in ()).throw(_Status(429, {"retry-after": "7"})),
+                attempts=2, sleep=slept.append,
+            )
+        assert slept == [7.0]
+
+    def test_caps_an_absurd_retry_after(self):
+        """A provider asking for an hour should not hang the run for an hour."""
+        slept: list[float] = []
+        with pytest.raises(_Status):
+            llm_mod.with_retries(
+                lambda: (_ for _ in ()).throw(_Status(429, {"retry-after": "3600"})),
+                attempts=2, sleep=slept.append,
+            )
+        assert slept == [120.0]
+
+    def test_an_unparseable_retry_after_falls_back_to_the_schedule(self):
+        """HTTP-date form is legal and not worth parsing; the schedule is."""
+        slept: list[float] = []
+        with pytest.raises(_Status):
+            llm_mod.with_retries(
+                lambda: (_ for _ in ()).throw(
+                    _Status(429, {"retry-after": "Wed, 21 Oct 2026 07:28:00 GMT"})
+                ),
+                attempts=2, sleep=slept.append,
+            )
+        assert len(slept) == 1 and 0 < slept[0] <= llm_mod.RETRY_BASE_SECONDS
+
+    def test_on_retry_is_told_what_happened(self):
+        seen: list[tuple[int, float, str]] = []
+        with pytest.raises(_Status):
+            llm_mod.with_retries(
+                lambda: (_ for _ in ()).throw(_Status(429)),
+                attempts=3,
+                on_retry=lambda a, d, e: seen.append((a, d, type(e).__name__)),
+                sleep=lambda _: None,
+            )
+        assert [s[0] for s in seen] == [1, 2]

@@ -32,8 +32,10 @@ from __future__ import annotations
 
 import json
 import os
+import random
+import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -55,6 +57,106 @@ DEFAULT_EFFORT = "low"
 #: Max tokens for a tagging response. One utterance is at most ~40 tokens, and
 #: each produces a small JSON object, so this is generous.
 DEFAULT_MAX_TOKENS = 4096
+
+#: Attempts per request before giving up.
+#:
+#: Sized for the case this exists for: annotating a corpus one utterance at a
+#: time against a *free* tier. Those allow ten-odd requests a minute, a 56-
+#: utterance pass fires far faster than that, and a 429 partway through used to
+#: abort the run and discard everything already tagged.
+MAX_ATTEMPTS = 6
+
+#: Base for the exponential backoff, in seconds. 2, 4, 8, 16, 32 with jitter --
+#: the last of which is longer than most free-tier rate windows, which is the
+#: point.
+RETRY_BASE_SECONDS = 2.0
+
+#: HTTP statuses worth retrying. 429 is the rate limit; 5xx are the provider's
+#: problem and usually transient. **408 and 409 are deliberately absent**: a
+#: timeout may have been served and a conflict will not resolve itself.
+RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504, 529})
+
+_T = TypeVar("_T")
+
+
+def _retry_after(exc: BaseException) -> float | None:
+    """The provider's own `Retry-After`, in seconds, if it sent one.
+
+    Preferred over the backoff schedule whenever present: the provider knows
+    when its window resets and guessing shorter just burns another attempt.
+    """
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None)
+    if headers is None:
+        return None
+    for key in ("retry-after", "Retry-After", "x-ratelimit-reset-requests"):
+        raw = headers.get(key) if hasattr(headers, "get") else None
+        if raw is None:
+            continue
+        try:
+            seconds = float(str(raw).rstrip("s"))
+        except ValueError:
+            continue  # HTTP-date form; fall back to the schedule
+        if seconds >= 0:
+            return min(seconds, 120.0)
+    return None
+
+
+def is_transient(exc: BaseException) -> bool:
+    """True if `exc` is worth retrying.
+
+    Deliberately structural rather than a list of SDK exception classes: the
+    anthropic and openai clients raise different types for the same condition,
+    and importing either at module scope would undo the lazy-import that keeps
+    this module cheap. Both set `status_code` on API errors, and both name
+    their connection failures recognisably.
+
+    A token-alignment `ValueError` and a content refusal are **not** transient.
+    They are deterministic, and retrying them burns quota to get the same
+    answer five more times.
+    """
+    if isinstance(exc, (ValueError, TypeError, KeyError)):
+        return False
+    status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
+    if isinstance(status, int):
+        return status in RETRYABLE_STATUS
+    name = type(exc).__name__
+    return any(
+        marker in name
+        for marker in ("RateLimit", "Timeout", "Connection", "APIError", "InternalServer")
+    )
+
+
+def with_retries(
+    call: Callable[[], _T],
+    *,
+    attempts: int = MAX_ATTEMPTS,
+    on_retry: Callable[[int, float, BaseException], None] | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+) -> _T:
+    """Run `call`, retrying transient failures with exponential backoff.
+
+    Jitter is full-range rather than fixed: without it a batch of requests that
+    were rate-limited together retry together, hit the same limit together, and
+    the backoff accomplishes nothing.
+
+    Raises:
+        The last exception, once attempts are exhausted or it is not transient.
+    """
+    for attempt in range(1, attempts + 1):
+        try:
+            return call()
+        except Exception as exc:  # noqa: BLE001 - re-raised below unless transient
+            if attempt >= attempts or not is_transient(exc):
+                raise
+            delay = _retry_after(exc)
+            if delay is None:
+                delay = RETRY_BASE_SECONDS * (2 ** (attempt - 1))
+                delay = random.uniform(delay / 2, delay)
+            if on_retry is not None:
+                on_retry(attempt, delay, exc)
+            sleep(delay)
+    raise AssertionError("unreachable: the loop either returns or raises")
 
 
 class TaggedToken(BaseModel):
@@ -329,7 +431,8 @@ class LLMTagger:
         if not tokens:
             return []
 
-        response = self.client.messages.create(**self._request_params(tokens, context))
+        params = self._request_params(tokens, context)
+        response = with_retries(lambda: self.client.messages.create(**params))
         self.stats.record(response.usage)
 
         if response.stop_reason == "refusal":
@@ -555,6 +658,29 @@ class OpenAICompatibleTagger:
         self._client: Any = None
         self.stats = TaggingStats()
         self._system_prompt = build_system_prompt()
+        self.retries = 0
+        """Transient failures retried over this tagger's life. **Report this
+        for a corpus run.** A pass that needed forty retries took its labels
+        from the same model as one that needed none, but it also means the run
+        was fighting a rate limit, and a future pass on a bigger corpus will
+        need pacing rather than luck."""
+        self.retry_seconds = 0.0
+
+    def _note_retry(self, attempt: int, delay: float, exc: BaseException) -> None:
+        """Count and announce a retry.
+
+        Printed rather than silent: a corpus pass that stalls for thirty
+        seconds with no output looks hung, and the operator's next move is to
+        kill it -- which is exactly the wrong move.
+        """
+        self.retries += 1
+        self.retry_seconds += delay
+        status = getattr(exc, "status_code", None) or type(exc).__name__
+        print(
+            f"  [{self.provider.name}] {status}; retrying in {delay:.1f}s "
+            f"(attempt {attempt}/{MAX_ATTEMPTS})",
+            flush=True,
+        )
 
     supports_batch = False
     """No batch API. `LIDPipeline.tag_corpus` checks this and loops instead."""
@@ -593,25 +719,31 @@ class OpenAICompatibleTagger:
         if not tokens:
             return []
 
-        response = self.client.chat.completions.create(
-            model=self.model,
-            max_tokens=self.max_tokens,
-            temperature=self.temperature,
-            messages=[
-                {"role": "system", "content": self._system_prompt},
-                {
-                    "role": "user",
-                    "content": LLMTagger._user_content(tokens, context),
+        # Retried, because this is the path a free-tier key takes and
+        # `tag_corpus` drives it once per utterance with no pacing. See
+        # `with_retries`.
+        response = with_retries(
+            lambda: self.client.chat.completions.create(
+                model=self.model,
+                max_tokens=self.max_tokens,
+                temperature=self.temperature,
+                messages=[
+                    {"role": "system", "content": self._system_prompt},
+                    {
+                        "role": "user",
+                        "content": LLMTagger._user_content(tokens, context),
+                    },
+                ],
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "tagging_response",
+                        "strict": True,
+                        "schema": _json_schema(),
+                    },
                 },
-            ],
-            response_format={
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "tagging_response",
-                    "strict": True,
-                    "schema": _json_schema(),
-                },
-            },
+            ),
+            on_retry=self._note_retry,
         )
         self.stats.record(_usage_adapter(response.usage))
 
@@ -808,5 +940,9 @@ __all__ = [
     "build_system_prompt",
     "to_tokens",
     "estimate_cost",
+    "is_transient",
+    "with_retries",
     "DEFAULT_MODEL",
+    "MAX_ATTEMPTS",
+    "RETRYABLE_STATUS",
 ]

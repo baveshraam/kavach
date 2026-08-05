@@ -210,3 +210,182 @@ class TestReportRoundTrip:
         corpus = _corpus_with_references(tmp_path)
         path = C.save_manifest(corpus, tmp_path / "manifest.json")
         assert C.load_manifest(path).utterances[0].asr_wer is None
+
+
+# --------------------------------------------------------------------------
+# Partial runs
+# --------------------------------------------------------------------------
+
+
+def _taggable_corpus(n: int = 25) -> C.Corpus:
+    corpus = C.Corpus(name="t", provenance=C.Provenance.RECORDED)
+    corpus.speakers.append(C.SpeakerRecord(speaker_id="S00", consent_ref="c/S00"))
+    corpus.sessions.append(C.SessionRecord(session_id="S00_s1", speaker_id="S00"))
+    for i in range(n):
+        corpus.utterances.append(
+            C.UtteranceRecord(
+                utterance_id=f"u{i:02d}", session_id="S00_s1", speaker_id="S00",
+                transcript="நான் morning six மணிக்கு",
+            )
+        )
+    return corpus
+
+
+class _CountingTagger:
+    """Tags plausibly, and optionally dies on the Nth call."""
+
+    supports_batch = False
+
+    def __init__(self, fail_at: int | None = None) -> None:
+        self.calls = 0
+        self.fail_at = fail_at
+        self.retries = 0
+
+    def tag(self, tokens, *, context=None):
+        from kavach.lid.llm import TaggedToken
+
+        self.calls += 1
+        if self.fail_at is not None and self.calls == self.fail_at:
+            raise RuntimeError("429 rate limit")
+        return [
+            TaggedToken(
+                text=t,
+                language=Language.EN if t.isascii() else Language.TA,
+                semantic_class=SemanticClass.OTHER,
+                confidence=0.9,
+            )
+            for t in tokens
+        ]
+
+
+def _pipeline(tagger):
+    from kavach.lid.pipeline import LIDPipeline
+
+    return LIDPipeline(llm_tagger=tagger)
+
+
+class TestPartialTaggingRuns:
+    """A corpus pass against a free tier can die on the fiftieth utterance.
+
+    Losing the first forty-nine turns a rate limit into an hour of re-tagging
+    against the same rate limit, so what is already tagged has to survive the
+    failure and there has to be a way to pick up from it.
+    """
+
+    def test_a_failure_saves_what_was_already_tagged(self, tmp_path):
+        corpus = _taggable_corpus(25)
+        path = C.save_manifest(corpus, tmp_path / "manifest.json")
+        tagger = _CountingTagger(fail_at=15)
+
+        with pytest.raises(RuntimeError):
+            A.tag_corpus(corpus, pipeline=_pipeline(tagger), manifest_path=path)
+
+        reloaded = C.load_manifest(path)
+        tagged = [u for u in reloaded.utterances if u.tokens]
+        assert len(tagged) == 14
+
+    def test_the_failure_says_how_far_it_got_and_how_to_resume(self, tmp_path):
+        corpus = _taggable_corpus(25)
+        path = C.save_manifest(corpus, tmp_path / "manifest.json")
+        with pytest.raises(RuntimeError, match=r"14 of 25"):
+            A.tag_corpus(
+                corpus, pipeline=_pipeline(_CountingTagger(fail_at=15)),
+                manifest_path=path,
+            )
+
+    def test_the_failure_names_the_resume_flag(self, tmp_path):
+        corpus = _taggable_corpus(25)
+        path = C.save_manifest(corpus, tmp_path / "manifest.json")
+        with pytest.raises(RuntimeError, match=r"--resume"):
+            A.tag_corpus(
+                corpus, pipeline=_pipeline(_CountingTagger(fail_at=15)),
+                manifest_path=path,
+            )
+
+    def test_resume_only_retags_what_is_not_llm_tagged(self, tmp_path):
+        """--force would re-send the ones that succeeded, against the same rate
+        limit that stopped the run."""
+        corpus = _taggable_corpus(25)
+        path = C.save_manifest(corpus, tmp_path / "manifest.json")
+        with pytest.raises(RuntimeError):
+            A.tag_corpus(
+                corpus, pipeline=_pipeline(_CountingTagger(fail_at=15)),
+                manifest_path=path,
+            )
+
+        resumed = C.load_manifest(path)
+        second = _CountingTagger()
+        report = A.tag_corpus(
+            resumed, resume=True, pipeline=_pipeline(second), manifest_path=path
+        )
+        assert report.tagged == 11
+        assert second.calls == 11
+
+    def test_resume_leaves_nothing_untagged(self, tmp_path):
+        corpus = _taggable_corpus(25)
+        path = C.save_manifest(corpus, tmp_path / "manifest.json")
+        with pytest.raises(RuntimeError):
+            A.tag_corpus(
+                corpus, pipeline=_pipeline(_CountingTagger(fail_at=15)),
+                manifest_path=path,
+            )
+        resumed = C.load_manifest(path)
+        A.tag_corpus(resumed, resume=True, pipeline=_pipeline(_CountingTagger()),
+                     manifest_path=path)
+        final = C.load_manifest(path)
+        assert all(u.tokens for u in final.utterances)
+        assert all(
+            u.annotation_source is C.AnnotationSource.LLM for u in final.utterances
+        )
+
+    def test_resume_replaces_rules_only_tokens_from_a_smoke_test(self, tmp_path):
+        """Plain `--stage tag` skips anything with tokens, and rules-only
+        tokens from a no-key smoke test are exactly what needs replacing."""
+        corpus = _taggable_corpus(3)
+        for u in corpus.utterances:
+            u.tokens = [Token(text="x", language=Language.TA,
+                              semantic_class=SemanticClass.OTHER)]
+            u.annotation_source = C.AnnotationSource.RULES
+
+        skipped = _CountingTagger()
+        A.tag_corpus(corpus, pipeline=_pipeline(skipped))
+        assert skipped.calls == 0
+
+        retagged = _CountingTagger()
+        A.tag_corpus(corpus, resume=True, pipeline=_pipeline(retagged))
+        assert retagged.calls == 3
+
+    def test_force_still_retags_everything(self, tmp_path):
+        corpus = _taggable_corpus(5)
+        A.tag_corpus(corpus, pipeline=_pipeline(_CountingTagger()))
+        again = _CountingTagger()
+        A.tag_corpus(corpus, force=True, pipeline=_pipeline(again))
+        assert again.calls == 5
+
+    def test_a_clean_run_still_saves_once_at_the_end(self, tmp_path):
+        corpus = _taggable_corpus(3)
+        path = C.save_manifest(corpus, tmp_path / "manifest.json")
+        A.tag_corpus(corpus, pipeline=_pipeline(_CountingTagger()), manifest_path=path)
+        assert all(u.tokens for u in C.load_manifest(path).utterances)
+
+    def test_no_manifest_path_says_nothing_was_saved(self, tmp_path):
+        """Silently losing the work would be worse than saying so."""
+        corpus = _taggable_corpus(25)
+        with pytest.raises(RuntimeError, match="Nothing was saved"):
+            A.tag_corpus(corpus, pipeline=_pipeline(_CountingTagger(fail_at=15)))
+
+    def test_the_report_carries_the_retry_count(self, tmp_path):
+        corpus = _taggable_corpus(3)
+        tagger = _CountingTagger()
+        tagger.retries = 7
+        report = A.tag_corpus(corpus, pipeline=_pipeline(tagger))
+        assert report.retries == 7
+        assert "fighting a rate limit" in report.to_markdown()
+
+    def test_the_report_carries_the_transliteration_count(self, tmp_path):
+        """It is the size of a silent one-directional bias; it has to reach the
+        report, not just the pipeline's stats object."""
+        corpus = _taggable_corpus(2)
+        pipeline = _pipeline(_CountingTagger())
+        report = A.tag_corpus(corpus, pipeline=pipeline)
+        assert report.transliteration_recovered == pipeline.stats.transliteration_recovered
