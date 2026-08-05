@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type cytoscape from 'cytoscape';
 import { useQuery } from '@tanstack/react-query';
 import { apiClient } from '../api/client';
 import { PageHeader } from '../components/layout/PageHeader';
@@ -42,13 +43,37 @@ export function GraphExplorer() {
 
   const selectedSpeaker = speakers?.find(s => s.id === selectedSpeakerId);
 
+  // The rendered cytoscape instance, handed up by whichever graph is showing.
+  const cyRef = useRef<cytoscape.Core | null>(null);
+  const handleReady = useCallback((cy: cytoscape.Core | null) => {
+    cyRef.current = cy;
+  }, []);
+
+  // The button used to do nothing. It exports PNG rather than SVG: cytoscape
+  // renders to canvas and SVG needs the `cytoscape-svg` extension, and a
+  // button labelled SVG that hands over a raster is worse than one labelled
+  // honestly. `full: true` exports the whole graph rather than the visible
+  // viewport, and scale 3 is enough to survive a two-column figure.
+  const exportPng = () => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    const uri = cy.png({ full: true, scale: 3, bg: getComputedStyle(document.documentElement).getPropertyValue('--app-bg').trim() || '#FAFAF9' });
+    const link = document.createElement('a');
+    link.href = uri;
+    link.download = `${graphType}_${selectedSpeaker?.displayName || selectedSpeakerId || 'graph'}.png`;
+    link.click();
+  };
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
       <PageHeader 
         title="Graph Explorer" 
         actions={
-          <button className="h-8 px-3 border border-app-border text-[11px] uppercase tracking-wider text-app-text flex items-center gap-2 hover:bg-app-bg transition-colors">
-            <Download className="w-3.5 h-3.5" /> Export SVG
+          <button
+            onClick={exportPng}
+            className="h-8 px-3 border border-app-border text-[11px] uppercase tracking-wider text-app-text flex items-center gap-2 hover:bg-app-bg transition-colors"
+          >
+            <Download className="w-3.5 h-3.5" /> Export PNG
           </button>
         }
       />
@@ -101,12 +126,13 @@ export function GraphExplorer() {
 
       <div className="flex-1 relative">
         {graphType === 'csbg' ? (
-          <GraphViz data={csbgData || null} layout={layout} threshold={threshold} />
+          <GraphViz data={csbgData || null} layout={layout} threshold={threshold} onReady={handleReady} />
         ) : (
           <SKGViz
             triples={skgData ?? null}
             speakerName={selectedSpeaker?.displayName ?? ''}
             layout={layout}
+            onReady={handleReady}
           />
         )}
       </div>

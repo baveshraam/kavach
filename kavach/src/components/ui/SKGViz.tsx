@@ -6,6 +6,7 @@ interface SKGVizProps {
   triples: Triple[] | null;
   speakerName: string;
   layout: string;
+  onReady?: (cy: cytoscape.Core | null) => void;
 }
 
 /**
@@ -21,7 +22,7 @@ interface SKGVizProps {
  * worse than no class: this page is what an operator checks a speaker's
  * enrolment against.
  */
-export function SKGViz({ triples, speakerName, layout }: SKGVizProps) {
+export function SKGViz({ triples, speakerName, layout, onReady }: SKGVizProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
 
@@ -129,7 +130,9 @@ export function SKGViz({ triples, speakerName, layout }: SKGVizProps) {
     });
 
     cyRef.current = cy;
+    onReady?.(cy);
     return () => {
+      onReady?.(null);
       cy.destroy();
       cyRef.current = null;
     };

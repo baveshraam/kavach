@@ -6,9 +6,10 @@ interface GraphVizProps {
   data: CSBG | null;
   layout: string;
   threshold: number;
+  onReady?: (cy: cytoscape.Core | null) => void;
 }
 
-export function GraphViz({ data, layout, threshold }: GraphVizProps) {
+export function GraphViz({ data, layout, threshold, onReady }: GraphVizProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
 
@@ -92,7 +93,7 @@ export function GraphViz({ data, layout, threshold }: GraphVizProps) {
           }
         }
       ],
-      layout: { name: layout, padding: 30 } as any
+      layout: layoutOptions(layout)
     });
 
     cy.on('mouseover', 'edge', (e) => {
@@ -102,11 +103,46 @@ export function GraphViz({ data, layout, threshold }: GraphVizProps) {
     });
 
     cyRef.current = cy;
+    onReady?.(cy);
 
     return () => {
+      onReady?.(null);
       cy.destroy();
     };
   }, [data, layout, threshold]);
 
   return <div ref={containerRef} className="w-full h-full bg-app-bg" />;
+}
+
+/**
+ * The CSBG is 21 class nodes and 2 language nodes, and every class node carries
+ * its name as a label above a 12px box. Concentric's default `minNodeSpacing`
+ * of 10 spaces the *boxes*, not the labels, so at any normal window size the
+ * class names overlap into an unreadable band -- this is the one page that did
+ * not screenshot well, and a figure is where it would have shown up.
+ *
+ * Two changes fix it: space by roughly the label width, and rank the two
+ * language nodes into the middle. Without the ranking, concentric's default
+ * (node degree) puts the two highest-degree nodes -- the languages -- on the
+ * inner ring anyway *most* of the time, which is worse than doing it on
+ * purpose: it silently reorders whenever the edge threshold moves.
+ */
+function layoutOptions(layout: string): cytoscape.LayoutOptions {
+  if (layout === 'concentric') {
+    return {
+      name: 'concentric',
+      padding: 40,
+      minNodeSpacing: 55,
+      avoidOverlap: true,
+      concentric: (node: any) => (node.data('kind') === 'language' ? 10 : 1),
+      levelWidth: () => 1,
+    } as cytoscape.LayoutOptions;
+  }
+  if (layout === 'circle') {
+    return { name: 'circle', padding: 40, avoidOverlap: true, spacingFactor: 1.4 } as cytoscape.LayoutOptions;
+  }
+  if (layout === 'grid') {
+    return { name: 'grid', padding: 40, avoidOverlap: true, spacingFactor: 1.3 } as cytoscape.LayoutOptions;
+  }
+  return { name: layout, padding: 40 } as cytoscape.LayoutOptions;
 }
