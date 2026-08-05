@@ -212,7 +212,11 @@ class TaggingStats:
 
 
 class LLMTagger:
-    """Anthropic-backed token tagger.
+    """Anthropic-backed token tagger, with prompt caching and the Batch API.
+
+    See `OpenAICompatibleTagger` for the free-tier path (Gemini, Groq, or a
+    local Ollama), which shares this class's system prompt, JSON schema and
+    alignment check and differs only in transport.
 
     The `anthropic` package is imported lazily so the CSBG core stays
     installable and testable without it.
@@ -433,6 +437,257 @@ class LLMTagger:
         return successes, failures
 
 
+# --------------------------------------------------------------------------
+# OpenAI-compatible providers
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class Provider:
+    """An OpenAI-compatible chat-completions endpoint.
+
+    Gemini and Groq both publish one, which is what makes a single adapter
+    enough. They are not equivalent for this task -- see `PROVIDERS`.
+    """
+
+    name: str
+    base_url: str
+    default_model: str
+    env_keys: tuple[str, ...]
+    signup: str
+
+    def api_key(self) -> str | None:
+        for key in self.env_keys:
+            value = os.environ.get(key)
+            if value:
+                return value
+        return None
+
+
+#: Providers this tagger can drive, in the order `resolve_provider` tries them.
+#:
+#: **Gemini first, and the ordering is a judgement about Tamil.** The task is
+#: word-level language ID on romanised Tamil mixed with English -- deciding
+#: whether "veetla" is Tamil and "family" is English inside one sentence. That
+#: is a low-resource multilingual judgement, not a reasoning task, and the
+#: models differ on it far more than they differ on benchmarks. Gemini Flash
+#: has substantially more Tamil in its training mix than the Llama models Groq
+#: serves. Groq is kept because it is fast and free and worth having when
+#: Gemini's daily quota runs out mid-corpus.
+#:
+#: A wrong tag here is not noise. It moves a token into the wrong language for
+#: a semantic class, which is precisely the quantity the CSBG measures, so
+#: tagging quality bounds every number downstream.
+PROVIDERS: tuple[Provider, ...] = (
+    Provider(
+        name="gemini",
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+        default_model="gemini-2.5-flash",
+        env_keys=("GEMINI_API_KEY", "GOOGLE_API_KEY"),
+        signup="https://aistudio.google.com/apikey",
+    ),
+    Provider(
+        name="groq",
+        base_url="https://api.groq.com/openai/v1",
+        default_model="llama-3.3-70b-versatile",
+        env_keys=("GROQ_API_KEY",),
+        signup="https://console.groq.com/keys",
+    ),
+    Provider(
+        name="openai",
+        base_url="https://api.openai.com/v1",
+        default_model="gpt-4o-mini",
+        env_keys=("OPENAI_API_KEY",),
+        signup="https://platform.openai.com/api-keys",
+    ),
+    Provider(
+        name="ollama",
+        base_url="http://localhost:11434/v1",
+        default_model="qwen2.5:7b",
+        env_keys=("OLLAMA_API_KEY",),
+        signup="https://ollama.com/download",
+    ),
+)
+
+PROVIDERS_BY_NAME: dict[str, Provider] = {p.name: p for p in PROVIDERS}
+
+
+class OpenAICompatibleTagger:
+    """Token tagger against any OpenAI-compatible chat-completions endpoint.
+
+    Exists so the corpus can be annotated on a free tier. `LLMTagger` uses the
+    Anthropic Batch API and prompt caching, which halve the cost of a large
+    corpus and are worth having -- but a paid key is a hard blocker on a
+    student project, and this annotation is the one step nothing downstream
+    works without.
+
+    What is shared with `LLMTagger` and must stay shared: the system prompt,
+    the JSON schema, and `_check_alignment`. Two taggers that drifted on any of
+    those would produce a corpus annotated under two different instructions
+    with no record of which token came from which.
+
+    What is not available here: prompt caching and the batch API. Both are
+    provider-specific. `TaggingStats.cache_hit_rate` therefore reads 0.0 on
+    this path and that is correct rather than broken, so do not go looking for
+    the leak that `llm.py`'s module docstring warns about.
+    """
+
+    def __init__(
+        self,
+        *,
+        provider: Provider | str = "gemini",
+        model: str | None = None,
+        api_key: str | None = None,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+        temperature: float = 0.0,
+    ) -> None:
+        self.provider = (
+            provider if isinstance(provider, Provider) else PROVIDERS_BY_NAME[provider]
+        )
+        self.model = model or self.provider.default_model
+        self.max_tokens = max_tokens
+        self.temperature = temperature
+        self._api_key = api_key
+        self._client: Any = None
+        self.stats = TaggingStats()
+        self._system_prompt = build_system_prompt()
+
+    supports_batch = False
+    """No batch API. `LIDPipeline.tag_corpus` checks this and loops instead."""
+
+    @property
+    def client(self) -> Any:
+        if self._client is None:
+            try:
+                from openai import OpenAI
+            except ImportError as exc:  # pragma: no cover - environment issue
+                raise ImportError(
+                    "The openai package is required for OpenAI-compatible providers. "
+                    "Install with `pip install openai` -- it is the client library, "
+                    "not a dependency on OpenAI the service, and is what Gemini and "
+                    "Groq's compatibility endpoints expect."
+                ) from exc
+
+            key = self._api_key or self.provider.api_key()
+            if not key:
+                raise RuntimeError(
+                    f"No API key for provider {self.provider.name!r}. Set "
+                    f"{' or '.join(self.provider.env_keys)}; free keys at "
+                    f"{self.provider.signup}"
+                )
+            self._client = OpenAI(api_key=key, base_url=self.provider.base_url)
+        return self._client
+
+    def tag(self, tokens: list[str], *, context: str | None = None) -> list[TaggedToken]:
+        """Tag one utterance's tokens. Same contract as `LLMTagger.tag`.
+
+        Raises:
+            ValueError: If the model returns a different number of tokens.
+                Hard failure by design -- padding or truncating would attach
+                every tag to the wrong surface form.
+        """
+        if not tokens:
+            return []
+
+        response = self.client.chat.completions.create(
+            model=self.model,
+            max_tokens=self.max_tokens,
+            temperature=self.temperature,
+            messages=[
+                {"role": "system", "content": self._system_prompt},
+                {
+                    "role": "user",
+                    "content": LLMTagger._user_content(tokens, context),
+                },
+            ],
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "tagging_response",
+                    "strict": True,
+                    "schema": _json_schema(),
+                },
+            },
+        )
+        self.stats.record(_usage_adapter(response.usage))
+
+        text = response.choices[0].message.content
+        if not text:
+            raise RuntimeError(
+                f"{self.provider.name} returned an empty tagging response "
+                f"(finish_reason={response.choices[0].finish_reason!r})."
+            )
+
+        parsed = TaggingResponse.model_validate_json(text)
+        LLMTagger._check_alignment(tokens, parsed.tokens)
+        return parsed.tokens
+
+
+@dataclass(frozen=True, slots=True)
+class _Usage:
+    """Anthropic-shaped usage, so `TaggingStats.record` needs no branch."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+    cache_read_input_tokens: int = 0
+
+
+def _usage_adapter(usage: Any) -> _Usage:
+    """Map an OpenAI-style usage object onto the Anthropic field names."""
+    if usage is None:
+        return _Usage()
+    cached = 0
+    details = getattr(usage, "prompt_tokens_details", None)
+    if details is not None:
+        cached = getattr(details, "cached_tokens", 0) or 0
+    return _Usage(
+        input_tokens=(getattr(usage, "prompt_tokens", 0) or 0) - cached,
+        output_tokens=getattr(usage, "completion_tokens", 0) or 0,
+        cache_read_input_tokens=cached,
+    )
+
+
+def available_providers() -> list[Provider]:
+    """Providers with a key present in the environment, in preference order."""
+    return [p for p in PROVIDERS if p.api_key()]
+
+
+def make_tagger(
+    provider: str | None = None, *, model: str | None = None
+) -> LLMTagger | OpenAICompatibleTagger | None:
+    """Build whichever tagger the environment can support.
+
+    Args:
+        provider: Force one of `PROVIDERS_BY_NAME`, or "anthropic". None picks
+            the first provider with a key present, Anthropic first.
+        model: Override the provider default.
+
+    Returns:
+        A tagger, or None when no key is available anywhere. None is not an
+        error -- it is the normal state on a fresh machine, and the caller
+        (`annotate._default_pipeline`) degrades to rules-only and says so.
+    """
+    if provider == "anthropic" or (
+        provider is None
+        and (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"))
+    ):
+        return LLMTagger(model=model or DEFAULT_MODEL)
+
+    if provider is not None:
+        if provider not in PROVIDERS_BY_NAME:
+            raise ValueError(
+                f"unknown provider {provider!r}; choose from "
+                f"{['anthropic', *PROVIDERS_BY_NAME]}"
+            )
+        return OpenAICompatibleTagger(provider=provider, model=model)
+
+    found = available_providers()
+    if not found:
+        return None
+    return OpenAICompatibleTagger(provider=found[0], model=model)
+
+
 def to_tokens(
     tagged: list[TaggedToken], *, timings: list[tuple[int, int]] | None = None
 ) -> list[Token]:
@@ -508,6 +763,12 @@ __all__ = [
     "TaggingResponse",
     "TaggingStats",
     "LLMTagger",
+    "OpenAICompatibleTagger",
+    "Provider",
+    "PROVIDERS",
+    "PROVIDERS_BY_NAME",
+    "available_providers",
+    "make_tagger",
     "build_system_prompt",
     "to_tokens",
     "estimate_cost",

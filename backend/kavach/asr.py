@@ -34,6 +34,26 @@ from .audio import Audio
 #: Common Tamil-English function words. Passed to Whisper as an initial
 #: prompt to bias it toward code-mixed output rather than snapping to a
 #: single language. A hint, not a guarantee.
+#: Biasing context prepended to every transcription. **Load-bearing. Do not
+#: remove it to "let the model decide".**
+#:
+#: Measured on large-v3 against a real recording of prompt 10:
+#:
+#:   with:    "நான் two thousand and fourல பிறந்தேன். எங்க ஏரியால ஒரு
+#:             plate idli ten rupees ... morning six forty fiveக்கு எழுந்தேன்"
+#:   without: "I was born in the year of two thousand and four. One plate of
+#:             idli in our area is ten rupees ... I woke up at six forty-five"
+#:
+#: Unprompted, Whisper *translates* the Tamil rather than transcribing it. The
+#: output is fluent, plausible English and every code-switch in the utterance
+#: is gone -- which is the entire measurement. A translated corpus would score
+#: as a corpus of monolingual English speakers and the CSBG would separate
+#: nobody, for a reason invisible in the manifest.
+#:
+#: The romanised Tamil in the prompt looks like it should push the model toward
+#: romanised output, and it does not; it establishes "this audio is mixed, keep
+#: both languages" and the model still writes Tamil in Tamil script. That split
+#: is what `lid.rules` resolves for free.
 CODE_MIX_PROMPT = (
     "This is a conversation in Tamil and English mixed together. "
     "naan enna panren, romba nalla irukku, college la, office ku, "

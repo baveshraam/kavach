@@ -36,7 +36,12 @@ indic-transliteration>=2.3
 regex>=2024.4
 
 # ---- LLM (word-level LID, semantic tagging, challenge generation) ----
+# Either client is enough; the tagger picks whichever key is in the
+# environment. `openai` is the client library, not a dependency on OpenAI the
+# service -- it is what Gemini's and Groq's compatibility endpoints speak, and
+# both of those have a free tier that covers a corpus this size.
 anthropic>=0.49
+openai>=1.40
 
 # ---- Evaluation ----
 scikit-learn>=1.4

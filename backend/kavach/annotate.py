@@ -42,7 +42,6 @@ utterance because the interesting variation is per prompt.
 from __future__ import annotations
 
 import argparse
-import os
 import re
 import sys
 import unicodedata
@@ -191,6 +190,12 @@ class AnnotationReport:
     guessed_tokens: int = 0
     resolved_by_rules: int = 0
     used_llm: bool = False
+    tagger: str = ""
+    """Which provider tagged. Recorded because tagging quality bounds every
+    number downstream, so "annotated with Gemini Flash" and "annotated with
+    Llama 3.3 on Groq" are different corpora and the paper has to say which."""
+
+    tagger_model: str = ""
 
     @property
     def is_corpus_grade(self) -> bool:
@@ -211,13 +216,22 @@ class AnnotationReport:
         )
         lines.append("")
 
+        if self.tagger:
+            lines += [f"Tagged with **{self.tagger}** / `{self.tagger_model}`.", ""]
+
         if not self.used_llm and self.tagged:
             lines += [
                 "> **Not corpus-grade.** No LLM tagger was configured, so every",
                 "> token carries `SemanticClass.OTHER` and the CSBG has one class",
                 "> containing everything. Every speaker's graph is identical and",
-                "> every log-likelihood ratio is zero. Set `ANTHROPIC_API_KEY` and",
-                "> re-run `--stage tag`; the transcripts do not need redoing.",
+                "> every log-likelihood ratio is zero.",
+                ">",
+                "> Set any one of these and re-run `--stage tag`; the transcripts",
+                "> do not need redoing:",
+                ">",
+                "> - `GEMINI_API_KEY` — free, https://aistudio.google.com/apikey",
+                "> - `GROQ_API_KEY` — free, https://console.groq.com/keys",
+                "> - `ANTHROPIC_API_KEY` — paid, adds prompt caching and the batch API",
                 "",
             ]
         elif self.guessed_tokens:
@@ -360,6 +374,8 @@ def tag_corpus(
     report: AnnotationReport | None = None,
     pipeline: LIDPipeline | None = None,
     manifest_path: Path | None = None,
+    provider: str | None = None,
+    model: str | None = None,
 ) -> AnnotationReport:
     """Stage 2. Fill in `tokens`, `annotation_source` and `n_guessed_tokens`.
 
@@ -369,8 +385,13 @@ def tag_corpus(
     empty until after paying for a tagging batch.
     """
     report = report or AnnotationReport()
-    pipeline = pipeline if pipeline is not None else _default_pipeline()
+    pipeline = pipeline if pipeline is not None else _default_pipeline(provider, model)
     report.used_llm = pipeline.llm_tagger is not None
+    if pipeline.llm_tagger is not None:
+        report.tagger = getattr(
+            getattr(pipeline.llm_tagger, "provider", None), "name", "anthropic"
+        )
+        report.tagger_model = getattr(pipeline.llm_tagger, "model", "")
 
     pending = [
         u
@@ -403,22 +424,19 @@ def tag_corpus(
     return report
 
 
-def _default_pipeline() -> LIDPipeline:
-    """An LLM-backed pipeline when a key is present, rules-only otherwise.
+def _default_pipeline(provider: str | None = None, model: str | None = None) -> LIDPipeline:
+    """An LLM-backed pipeline when any provider key is present, rules-only
+    otherwise.
 
     Absence of a key is not an error here. It is the normal state on a laptop,
     and the run that follows is honestly labelled rather than refused.
     """
-    if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
-        return LIDPipeline()
     try:
-        from .config import get_settings
-        from .lid.llm import LLMTagger
+        from .lid.llm import make_tagger
 
-        settings = get_settings()
-        return LIDPipeline(
-            llm_tagger=LLMTagger(model=settings.llm_model, effort=settings.llm_tagging_effort)
-        )
+        return LIDPipeline(llm_tagger=make_tagger(provider, model=model))
+    except ValueError:
+        raise
     except Exception:  # noqa: BLE001 - a missing package is not a reason to stop
         return LIDPipeline()
 
@@ -436,9 +454,14 @@ def _build_parser() -> argparse.ArgumentParser:
         epilog=(
             "Stages are separable because they fail differently:\n"
             "  --stage asr   slow, offline, free; re-run only if the audio changes\n"
-            "  --stage tag   fast, needs ANTHROPIC_API_KEY; re-run on any ontology change\n"
+            "  --stage tag   fast, needs a provider key; re-run on any ontology change\n"
             "\n"
-            "Without a key the tagging stage assigns OTHER to every token and the\n"
+            "Tagging providers, first with a key present wins:\n"
+            "  GEMINI_API_KEY  free   https://aistudio.google.com/apikey\n"
+            "  GROQ_API_KEY    free   https://console.groq.com/keys\n"
+            "  ANTHROPIC_API_KEY      adds prompt caching and the batch API\n"
+            "\n"
+            "Without any key the tagging stage assigns OTHER to every token and the\n"
             "CSBG has one class containing everything. The run is labelled, not refused."
         ),
     )
@@ -447,6 +470,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "--stage", default="both", choices=("asr", "tag", "both")
     )
     parser.add_argument("--model", default=None, help="Whisper checkpoint (default: from Settings).")
+    parser.add_argument(
+        "--provider",
+        default=None,
+        help="Tagging provider: gemini, groq, openai, ollama or anthropic. "
+        "Default picks the first one with a key in the environment.",
+    )
+    parser.add_argument(
+        "--tagger-model", default=None, help="Override the provider's default model."
+    )
     parser.add_argument("--device", default=None)
     parser.add_argument("--language", default=None, help="Force an ISO code; default auto-detect.")
     parser.add_argument("--limit", type=int, default=None, help="Only this many utterances.")
@@ -491,13 +523,19 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     if args.stage in ("tag", "both"):
-        tag_corpus(
-            corpus,
-            force=args.force,
-            limit=args.limit,
-            report=report,
-            manifest_path=args.manifest,
-        )
+        try:
+            tag_corpus(
+                corpus,
+                force=args.force,
+                limit=args.limit,
+                report=report,
+                manifest_path=args.manifest,
+                provider=args.provider,
+                model=args.tagger_model,
+            )
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
 
     print()
     print(report.to_markdown())

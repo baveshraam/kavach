@@ -175,6 +175,18 @@ class LIDPipeline:
         """
         speaker_ids = speaker_ids or {}
 
+        # A tagger without a batch API (Gemini, Groq, Ollama -- anything on the
+        # OpenAI-compatible path) is driven one utterance at a time. The saving
+        # the batch API buys is halved cost, and a provider whose whole appeal
+        # is a free tier has nothing to halve.
+        if self.llm_tagger is not None and not getattr(self.llm_tagger, "supports_batch", True):
+            return {
+                uid: self.tag_utterance(
+                    text, utterance_id=uid, speaker_id=speaker_ids.get(uid)
+                )
+                for uid, text in transcripts.items()
+            }
+
         if self.llm_tagger is None:
             return {
                 uid: self.tag_utterance(
