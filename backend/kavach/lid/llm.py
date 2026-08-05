@@ -54,9 +54,31 @@ from ..csbg.tokens import Token
 DEFAULT_MODEL = "claude-opus-5"
 DEFAULT_EFFORT = "low"
 
-#: Max tokens for a tagging response. One utterance is at most ~40 tokens, and
-#: each produces a small JSON object, so this is generous.
+#: Floor for a tagging response's output budget. Not the whole story -- see
+#: `output_budget`, which scales it with the input.
 DEFAULT_MAX_TOKENS = 4096
+
+#: Output tokens to allow per input word.
+#:
+#: Measured, not guessed, and the number is large for one reason: JSON escapes
+#: non-ASCII, so a Tamil word arrives as `நேத்து`
+#: -- six characters per character, before the surrounding object with its
+#: language, semantic_class and confidence fields. A real 64-word utterance
+#: from this corpus consumed the whole 4096-token budget and came back
+#: truncated mid-string, which surfaced as a pydantic "Invalid JSON" error
+#: rather than as "the response was cut off".
+OUTPUT_TOKENS_PER_WORD = 96
+
+
+def output_budget(n_tokens: int) -> int:
+    """Output token budget for tagging `n_tokens` words.
+
+    Scaled rather than fixed. A fixed budget is either wasteful on the short
+    utterances or too small on the long ones, and too small is the expensive
+    direction: the response truncates, the JSON does not parse, and the run
+    dies on an error that names neither the cause nor the fix.
+    """
+    return max(DEFAULT_MAX_TOKENS, OUTPUT_TOKENS_PER_WORD * n_tokens + 512)
 
 #: Attempts per request before giving up.
 #:
@@ -398,11 +420,13 @@ class LLMTagger:
 
         Kept in one place so the two paths cannot drift -- a divergence would
         mean batch-annotated and login-annotated tokens were produced under
-        different instructions, silently corrupting the corpus.
+        different instructions, silently corrupting the corpus. That includes
+        the output budget, which scales with the utterance: see
+        `output_budget`.
         """
         return {
             "model": self.model,
-            "max_tokens": self.max_tokens,
+            "max_tokens": max(self.max_tokens, output_budget(len(tokens))),
             "system": self._system_blocks(),
             "output_config": self._output_config(),
             "messages": [{"role": "user", "content": self._user_content(tokens, context)}],
@@ -440,6 +464,18 @@ class LLMTagger:
                 f"Tagging request refused (category="
                 f"{getattr(response.stop_details, 'category', None)}). "
                 "This should not occur for linguistic annotation; inspect the input."
+            )
+
+        if response.stop_reason == "max_tokens":
+            # Same trap as the OpenAI-compatible path: a truncated response is
+            # valid text and invalid JSON, and the parser's error names the
+            # line number rather than the cause.
+            raise RuntimeError(
+                f"Hit the output limit tagging {len(tokens)} words, so the JSON "
+                f"is truncated. The budget was "
+                f"{max(self.max_tokens, output_budget(len(tokens)))} tokens; "
+                "non-ASCII is JSON-escaped at six characters per character, so "
+                "Tamil is expensive here -- raise OUTPUT_TOKENS_PER_WORD."
             )
 
         text = next((b.text for b in response.content if b.type == "text"), None)
@@ -725,7 +761,7 @@ class OpenAICompatibleTagger:
         response = with_retries(
             lambda: self.client.chat.completions.create(
                 model=self.model,
-                max_tokens=self.max_tokens,
+                max_tokens=max(self.max_tokens, output_budget(len(tokens))),
                 temperature=self.temperature,
                 messages=[
                     {"role": "system", "content": self._system_prompt},
@@ -747,11 +783,25 @@ class OpenAICompatibleTagger:
         )
         self.stats.record(_usage_adapter(response.usage))
 
-        text = response.choices[0].message.content
+        choice = response.choices[0]
+        text = choice.message.content
         if not text:
             raise RuntimeError(
                 f"{self.provider.name} returned an empty tagging response "
-                f"(finish_reason={response.choices[0].finish_reason!r})."
+                f"(finish_reason={choice.finish_reason!r})."
+            )
+
+        # Caught here rather than left to the JSON parser. A truncated response
+        # is valid text and invalid JSON, so pydantic reports "EOF while
+        # parsing a string at line 106" -- which names neither the cause nor
+        # anything the operator can act on.
+        if choice.finish_reason == "length":
+            raise RuntimeError(
+                f"{self.provider.name} hit the output limit tagging "
+                f"{len(tokens)} words, so the JSON is truncated. The budget was "
+                f"{max(self.max_tokens, output_budget(len(tokens)))} tokens. "
+                "Non-ASCII is JSON-escaped at six characters per character, so "
+                "Tamil is expensive here -- raise OUTPUT_TOKENS_PER_WORD."
             )
 
         parsed = TaggingResponse.model_validate_json(text)
@@ -943,6 +993,8 @@ __all__ = [
     "is_transient",
     "with_retries",
     "DEFAULT_MODEL",
+    "OUTPUT_TOKENS_PER_WORD",
+    "output_budget",
     "MAX_ATTEMPTS",
     "RETRYABLE_STATUS",
 ]

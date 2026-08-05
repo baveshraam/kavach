@@ -660,3 +660,30 @@ class TestWithRetries:
                 sleep=lambda _: None,
             )
         assert [s[0] for s in seen] == [1, 2]
+
+
+class TestOutputBudget:
+    """A tagging response that runs out of output tokens is valid text and
+    invalid JSON. The parser then reports "EOF while parsing a string at line
+    106", which names neither the cause nor anything to do about it -- and this
+    killed a real 56-utterance corpus pass on the second utterance."""
+
+    def test_short_utterances_get_the_floor(self):
+        assert llm_mod.output_budget(1) == llm_mod.DEFAULT_MAX_TOKENS
+        assert llm_mod.output_budget(10) == llm_mod.DEFAULT_MAX_TOKENS
+
+    def test_it_scales_with_the_utterance(self):
+        assert llm_mod.output_budget(100) > llm_mod.output_budget(50)
+
+    def test_the_real_utterance_that_broke_it_now_fits(self):
+        """S01_s1_p02_food is 64 words and consumed the whole 4096 budget."""
+        assert llm_mod.output_budget(64) > 4096
+
+    def test_the_longest_utterance_in_the_corpus_fits(self):
+        """S04_s1_p03_commute is 98 words. Tamil JSON-escapes to six characters
+        per character, so the per-word cost is far above what ASCII suggests."""
+        assert llm_mod.output_budget(98) >= 96 * 98
+
+    def test_it_never_returns_less_than_the_floor(self):
+        assert all(llm_mod.output_budget(n) >= llm_mod.DEFAULT_MAX_TOKENS
+                   for n in range(0, 200, 7))
