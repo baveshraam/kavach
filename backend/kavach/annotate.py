@@ -408,6 +408,7 @@ def tag_corpus(
     manifest_path: Path | None = None,
     provider: str | None = None,
     model: str | None = None,
+    on_progress=None,
 ) -> AnnotationReport:
     """Stage 2. Fill in `tokens`, `annotation_source` and `n_guessed_tokens`.
 
@@ -421,6 +422,11 @@ def tag_corpus(
         resume: Tag anything not already LLM-tagged. What to use after a run
             died partway, and what to use over rules-only tokens left by a
             smoke test. See `_needs_tagging`.
+        on_progress: Called with (index, total, utterance) before each request.
+            The ASR stage has had this since it was written; the tag stage
+            needs it for the same reason. A 56-utterance pass against a free
+            tier runs for minutes with a stall on every rate limit, and a
+            silent process is one an operator kills.
     """
     report = report or AnnotationReport()
     pipeline = pipeline if pipeline is not None else _default_pipeline(provider, model)
@@ -450,6 +456,8 @@ def tag_corpus(
         return report
 
     for i, utterance in enumerate(pending, start=1):
+        if on_progress is not None:
+            on_progress(i, len(pending), utterance)
         before = pipeline.stats.fallback_guesses
         try:
             tagged = pipeline.tag_utterance(
@@ -596,10 +604,12 @@ def main(argv: list[str] | None = None) -> int:
     settings = get_settings()
     report = AnnotationReport()
 
-    if args.stage in ("asr", "both"):
-        def progress(i: int, total: int, utterance: UtteranceRecord) -> None:
-            print(f"[{i}/{total}] {utterance.utterance_id}", flush=True)
+    # Shared by both stages: `--stage tag` alone would otherwise print nothing
+    # for minutes.
+    def progress(i: int, total: int, utterance: UtteranceRecord) -> None:
+        print(f"[{i}/{total}] {utterance.utterance_id}", flush=True)
 
+    if args.stage in ("asr", "both"):
         transcribe_corpus(
             corpus,
             model_size=args.model or settings.whisper_model,
@@ -624,6 +634,7 @@ def main(argv: list[str] | None = None) -> int:
                 manifest_path=args.manifest,
                 provider=args.provider,
                 model=args.tagger_model,
+                on_progress=progress,
             )
         except ValueError as exc:
             print(f"error: {exc}", file=sys.stderr)
