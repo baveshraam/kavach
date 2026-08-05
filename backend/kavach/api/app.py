@@ -419,6 +419,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def list_attacks(store: StoreDep) -> list[schemas.AttackRun]:
         return [schemas.AttackRun.model_validate(r) for r in store.list_attacks()]
 
+    @app.get("/api/attacks/per-speaker", response_model=schemas.PerSpeakerIapmr)
+    def attacks_per_speaker(store: StoreDep) -> schemas.PerSpeakerIapmr:
+        """Attack success rate per speaker, over every recorded run.
+
+        The mean hides the case that matters: a system that stops every attack
+        on 24 speakers and none on the 25th reports 96%, and one person is
+        completely unprotected. §5.1.3 asks for this breakdown by name.
+
+        Enrolled speakers with no attack run are returned in
+        `unmeasuredSpeakerIds` rather than omitted -- an unmeasured speaker is
+        not a protected one.
+        """
+        from .attacks import per_speaker_iapmr
+
+        return per_speaker_iapmr(store)
+
     # ------------------------------------------------------------ evaluation
 
     @app.get("/api/evaluation", response_model=schemas.EvalMetrics)

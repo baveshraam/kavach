@@ -120,6 +120,34 @@ export interface AttackRun {
   generatedAt: string;
 }
 
+export interface SpeakerIapmr {
+  speakerId: string;
+  name: string;
+  trials: number;
+  iapmr: number;
+  iapmrByConfig: Record<string, number>;
+  ciLow: number;
+  ciHigh: number;
+  belowMinTrials: boolean;
+  attackTypes: AttackType[];
+}
+
+// Attack success per speaker. The mean hides the case that matters: a system
+// stopping every attack on 24 speakers and none on the 25th reports 96% while
+// one person is completely unprotected.
+export interface PerSpeakerIapmr {
+  speakers: SpeakerIapmr[];
+  worstSpeakerId: string;
+  // null, not 0, when nothing has been measured. A rate of zero is the value
+  // that looks like the defence working perfectly.
+  meanIapmr: number | null;
+  // Enrolled speakers with no attack run. Unmeasured is not protected.
+  unmeasuredSpeakerIds: string[];
+  minTrialsPerCell: number;
+  simulated: boolean;
+  notes: string[];
+}
+
 export interface EvalMetrics {
   configurations: Array<{
     name: string;

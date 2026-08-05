@@ -14,6 +14,12 @@ rdflib>=7.0
 python-dotenv>=1.0
 scikit-learn>=1.4
 
+# ---- Figures ----
+# Here rather than in the heavy tier: the paper's figures come out of eval/,
+# which is core, and matplotlib installs in seconds without torch. Imported
+# only inside kavach.eval.figures, so nothing else pays for it.
+matplotlib>=3.8
+
 # ---- API ----
 fastapi>=0.110
 uvicorn[standard]>=0.29

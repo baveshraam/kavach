@@ -56,13 +56,19 @@ an attacker needs to steal one.
 from __future__ import annotations
 
 import random
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any
 
 from ..attacks import AttackType, StyleSource
 from ..attacks.clone import CloneBatchStats
 from ..attacks.splice import SpliceConfig, splice_segments
-from ..attacks.suite import AttackSuite, AttackTrial
+from ..attacks.suite import (
+    MIN_TRIALS_PER_CELL,
+    AttackSuite,
+    AttackTrial,
+    wilson_interval,
+)
 from ..audio import Audio, AudioError, load_audio
 from ..csbg.graph import CSBG
 from ..csbg.ontology import CHOICE_LANGUAGES, Language
@@ -73,7 +79,7 @@ from ..integrity import INTEGRITY_FLOOR
 from . import converters as conv
 from . import schemas
 from .pipeline import MIN_COHORT, Pipeline
-from .store import Store, StoreError
+from .store import Store, StoreError, new_id
 
 #: Seconds of the victim's public speech the A5 attacker is assumed to have
 #: overheard. Chosen as a plausible social-media clip, not fitted. Sweeping it
@@ -370,8 +376,14 @@ def run_attack(
     notes.extend(_integrity_notes(attack, built, suite, ungated))
 
     table = suite.table()
+    # The id comes from `new_id`, not from `rng`. `rng` is deliberately seeded
+    # so the *scores* reproduce, and an id drawn from it reproduces too -- so
+    # running the same attack type against a second speaker minted a duplicate
+    # id and `record_attack` failed the primary key, which is a 500 on the one
+    # workflow the Attack Lab exists for. Reproducible scores are the property
+    # worth having; a reproducible identifier is a collision.
     run = conv.attack_run_to_wire(
-        run_id=f"atk_{attack.value}_{int(rng.random() * 1e6):06d}",
+        run_id=new_id(f"atk_{attack.value}"),
         attack=attack,
         target_speaker_id=speaker_id,
         table=table,
@@ -449,6 +461,121 @@ def _worst_iapmr(suite: AttackSuite, attack: AttackType) -> float | None:
         if atk is attack and cell.n_trials
     ]
     return min(rates) if rates else None
+
+
+#: The wire key for full fusion in `AttackRun.success_rate_by_config`. Named
+#: once here rather than spelled at each use, because a typo would silently
+#: read a missing key as an IAPMR of zero -- which is the value that looks
+#: like the defence working perfectly.
+FULL_FUSION_KEY = "full_fusion"
+
+
+def per_speaker_iapmr(store: Store) -> schemas.PerSpeakerIapmr:
+    """Attack success per speaker, aggregated over every recorded run.
+
+    **The mean is what hides the finding.** A system that stops every attack on
+    24 speakers and none on the 25th reports 96% and leaves one person
+    completely unprotected. `AttackSuite.per_speaker_breakdown` says so in its
+    own docstring; this is the route that lets anyone see it.
+
+    Two things this does that a naive group-by would not:
+
+    **Enrolled speakers with no attack run are listed, not omitted.** An
+    unmeasured speaker is not a protected speaker, and a table that silently
+    contained only the speakers someone happened to click on would read as a
+    complete study of a smaller population.
+
+    **The mean is `None` when nothing was measured, not 0.0.** A rate of zero
+    is the value that looks like total success, and it is exactly what an empty
+    study would otherwise report.
+
+    Rates are re-derived as counts before aggregating: a speaker with 40 trials
+    and one with 2 cannot be averaged as two equal rates, and doing so is how a
+    two-trial speaker comes to dominate a summary.
+    """
+    runs = store.list_attacks(limit=10_000)
+
+    successes: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    totals: dict[str, int] = defaultdict(int)
+    attack_types: dict[str, set[str]] = defaultdict(set)
+    simulated = False
+
+    for run in runs:
+        speaker_id = run.get("targetSpeakerId") or ""
+        n = int(run.get("trials") or 0)
+        if not speaker_id or n <= 0:
+            continue
+        totals[speaker_id] += n
+        attack_types[speaker_id].add(str(run.get("attackType", "")))
+        simulated = simulated or bool(run.get("simulated", True))
+        for config, rate in (run.get("successRateByConfig") or {}).items():
+            successes[speaker_id][config] += int(round(float(rate) * n))
+
+    rows: list[schemas.SpeakerIapmr] = []
+    for row in store.list_speakers():
+        speaker_id = row["id"]
+        n = totals.get(speaker_id, 0)
+        if n == 0:
+            continue
+        hits = successes[speaker_id]
+        full = hits.get(FULL_FUSION_KEY, 0)
+        lo, hi = wilson_interval(full, n)
+        rows.append(
+            schemas.SpeakerIapmr(
+                speaker_id=speaker_id,
+                name=row.get("display_name", "") or "",
+                trials=n,
+                iapmr=full / n,
+                iapmr_by_config={k: v / n for k, v in sorted(hits.items())},
+                ci_low=lo,
+                ci_high=hi,
+                below_min_trials=n < MIN_TRIALS_PER_CELL,
+                attack_types=sorted(a for a in attack_types[speaker_id] if a),
+            )
+        )
+
+    rows.sort(key=lambda r: (-r.iapmr, r.speaker_id))
+    unmeasured = [r["id"] for r in store.list_speakers() if totals.get(r["id"], 0) == 0]
+
+    comparable = [r for r in rows if not r.below_min_trials]
+    total_trials = sum(r.trials for r in rows)
+    mean = (
+        sum(r.iapmr * r.trials for r in rows) / total_trials if total_trials else None
+    )
+
+    notes: list[str] = []
+    if not rows:
+        notes.append(
+            "No attack has been run against any speaker, so there is no per-speaker "
+            "rate. That is not a rate of zero."
+        )
+    if unmeasured:
+        notes.append(
+            f"{len(unmeasured)} enrolled speakers have no attack run. They are "
+            "unmeasured, not protected, and the mean below does not cover them."
+        )
+    if rows and not comparable:
+        notes.append(
+            f"Every speaker has fewer than {MIN_TRIALS_PER_CELL} trials, so no "
+            "speaker's rate has an interval tight enough to compare against "
+            "another's. Ranking them here would invite a conclusion the counts "
+            "cannot support."
+        )
+    if simulated:
+        notes.append(
+            "These attacks are simulated. `AttackTable.paper_ready()` refuses "
+            "every row built this way; the rates are for the demo, not the paper."
+        )
+
+    return schemas.PerSpeakerIapmr(
+        speakers=rows,
+        worst_speaker_id=comparable[0].speaker_id if comparable else "",
+        mean_iapmr=mean,
+        unmeasured_speaker_ids=unmeasured,
+        min_trials_per_cell=MIN_TRIALS_PER_CELL,
+        simulated=simulated,
+        notes=notes,
+    )
 
 
 def _victim_audio(store: Store, speaker_id: str, *, limit: int = 6) -> list[Audio]:
@@ -671,6 +798,8 @@ __all__ = [
     "ACOUSTIC_MODEL",
     "DEFAULT_SEED",
     "DEFEATED_BY",
+    "FULL_FUSION_KEY",
     "AcousticModel",
+    "per_speaker_iapmr",
     "run_attack",
 ]

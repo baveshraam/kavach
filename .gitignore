@@ -79,3 +79,10 @@ paper/*.blg
 paper/*.synctex.gz
 paper/*.fls
 paper/*.fdb_latexmk
+
+# ---- Generated figures ----
+# `python -m kavach.experiments` regenerates these from results.json on every
+# run, so the binaries are churn. results.json and tables/*.tex are NOT ignored:
+# they are the numbers the paper reads, and a reviewer asking "which commit
+# produced table 3" is answered by having them in the history.
+paper/results/figures/

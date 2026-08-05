@@ -321,6 +321,8 @@ class TestFrontendContract:
             # keys, and omitting them would let the Attack Lab's simulated
             # numbers be screenshotted without their caveats.
             ("AttackRun", schemas.AttackRun, {"simulated", "yieldRate", "notes"}),
+            ("SpeakerIapmr", schemas.SpeakerIapmr, set()),
+            ("PerSpeakerIapmr", schemas.PerSpeakerIapmr, set()),
         ],
     )
     def test_schema_matches_interface(
@@ -1111,3 +1113,137 @@ class TestAttackLab:
             json={"attackType": "A9_MIND_READING", "targetSpeakerId": victim, "trials": 10},
         )
         assert response.status_code == 422 or response.status_code == 400
+
+
+class TestPerSpeakerIapmr:
+    """§5.1.3: report per-speaker IAPMR, not just the mean.
+
+    A system that stops every attack on 24 speakers and none on the 25th
+    reports 96% and leaves one person completely unprotected. Everything here
+    is about that number being impossible to hide.
+    """
+
+    def _corpus(self, store: Store) -> str:
+        victim = store.create_speaker({"display_name": "Victim"})["id"]
+        enrol_tokens(store, victim, speaker_utterances(TAMIL_NUMBERS, n=10))
+        for i in range(3):
+            other = store.create_speaker({"display_name": f"Other{i}"})["id"]
+            enrol_tokens(store, other, speaker_utterances(ENGLISH_NUMBERS, n=10))
+        return victim
+
+    def _attack(self, client: TestClient, speaker_id: str, trials: int = 40) -> None:
+        response = client.post(
+            "/api/attacks/generate",
+            json={
+                "attackType": "A4_CLONE_KNOWLEDGE",
+                "targetSpeakerId": speaker_id,
+                "trials": trials,
+            },
+        )
+        assert response.status_code == 200, response.text
+
+    def test_empty_study_reports_no_mean_rather_than_zero(
+        self, client: TestClient, store: Store
+    ) -> None:
+        """0% is the value that looks like the defence working perfectly."""
+        self._corpus(store)
+        body = client.get("/api/attacks/per-speaker").json()
+        assert body["speakers"] == []
+        assert body["meanIapmr"] is None
+        assert any("not a rate of zero" in n for n in body["notes"])
+
+    def test_unattacked_speakers_are_listed_not_omitted(
+        self, client: TestClient, store: Store
+    ) -> None:
+        """An unmeasured speaker is not a protected speaker.
+
+        Omitting them makes a partial study look like a complete one over a
+        smaller population.
+        """
+        victim = self._corpus(store)
+        self._attack(client, victim)
+
+        body = client.get("/api/attacks/per-speaker").json()
+        assert [s["speakerId"] for s in body["speakers"]] == [victim]
+        assert len(body["unmeasuredSpeakerIds"]) == 3
+        assert any("unmeasured, not protected" in n for n in body["notes"])
+
+    def test_reports_the_speaker_name_and_trial_count(
+        self, client: TestClient, store: Store
+    ) -> None:
+        victim = self._corpus(store)
+        self._attack(client, victim, trials=40)
+        row = client.get("/api/attacks/per-speaker").json()["speakers"][0]
+        assert row["name"] == "Victim"
+        assert row["trials"] > 0
+        assert row["attackTypes"] == ["A4_CLONE_KNOWLEDGE"]
+
+    def test_rates_are_bounded_and_carry_a_wilson_interval(
+        self, client: TestClient, store: Store
+    ) -> None:
+        """Wilson, not the normal approximation: these rates sit at 0 and 1,
+        where the normal interval runs outside [0, 1]."""
+        victim = self._corpus(store)
+        self._attack(client, victim)
+        row = client.get("/api/attacks/per-speaker").json()["speakers"][0]
+        assert 0.0 <= row["iapmr"] <= 1.0
+        assert 0.0 <= row["ciLow"] <= row["ciHigh"] <= 1.0
+
+    def test_runs_accumulate_by_trial_count_not_by_averaging_rates(
+        self, client: TestClient, store: Store
+    ) -> None:
+        """A 2-trial run and a 40-trial run are not two equal opinions.
+
+        Averaging their rates lets the 2-trial run dominate the summary.
+        """
+        victim = self._corpus(store)
+        self._attack(client, victim, trials=40)
+        first = client.get("/api/attacks/per-speaker").json()["speakers"][0]["trials"]
+        self._attack(client, victim, trials=30)
+        second = client.get("/api/attacks/per-speaker").json()["speakers"][0]["trials"]
+        assert second > first
+
+    def test_thin_evidence_is_flagged(self, client: TestClient, store: Store) -> None:
+        victim = self._corpus(store)
+        self._attack(client, victim, trials=3)
+        body = client.get("/api/attacks/per-speaker").json()
+        assert body["speakers"][0]["belowMinTrials"] is True
+        assert body["worstSpeakerId"] == ""
+        assert any("interval tight enough" in n for n in body["notes"])
+
+    def test_speakers_are_ordered_worst_first(
+        self, client: TestClient, store: Store
+    ) -> None:
+        """The unprotected speaker is the point of the table, so it goes first."""
+        victim = self._corpus(store)
+        for row in store.list_speakers():
+            self._attack(client, row["id"], trials=40)
+        body = client.get("/api/attacks/per-speaker").json()
+        rates = [s["iapmr"] for s in body["speakers"]]
+        assert rates == sorted(rates, reverse=True)
+        assert body["worstSpeakerId"] == body["speakers"][0]["speakerId"]
+        assert victim in {s["speakerId"] for s in body["speakers"]}
+
+    def test_declares_itself_simulated(self, client: TestClient, store: Store) -> None:
+        victim = self._corpus(store)
+        self._attack(client, victim)
+        body = client.get("/api/attacks/per-speaker").json()
+        assert body["simulated"] is True
+        assert any("paper_ready()" in n for n in body["notes"])
+
+    def test_response_validates_against_the_schema(
+        self, client: TestClient, store: Store
+    ) -> None:
+        victim = self._corpus(store)
+        self._attack(client, victim)
+        body = client.get("/api/attacks/per-speaker").json()
+        assert schemas.PerSpeakerIapmr.model_validate(body)
+
+    def test_the_route_does_not_shadow_the_attack_list(
+        self, client: TestClient, store: Store
+    ) -> None:
+        """`/api/attacks/per-speaker` must not be parsed as an attack id."""
+        victim = self._corpus(store)
+        self._attack(client, victim)
+        assert client.get("/api/attacks").status_code == 200
+        assert client.get("/api/attacks/per-speaker").status_code == 200

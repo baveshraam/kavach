@@ -336,6 +336,15 @@ def bootstrap_eer_ci(
     With 25-30 speakers the interval is typically several percentage points
     wide, and reporting a bare point estimate would overstate precision.
 
+    Args:
+        n_resamples: Bootstrap draws. **0 means "point estimate only"** and
+            returns NaN bounds -- callers that genuinely do not want an
+            interval (ablation rows, which report EER deltas and no CI) would
+            otherwise pay for hundreds of resamples per row. NaN rather than
+            the point estimate repeated, because a zero-width interval is a
+            claim of infinite precision, and `format_rate` already renders NaN
+            as "n/a" everywhere it reaches a table.
+
     Returns:
         (point_estimate, ci_low, ci_high).
     """
@@ -344,6 +353,8 @@ def bootstrap_eer_ci(
     impostor = np.asarray(impostor_scores, dtype=np.float64)
 
     point, _ = compute_eer(genuine, impostor)
+    if n_resamples <= 0:
+        return point, math.nan, math.nan
 
     samples = np.empty(n_resamples, dtype=np.float64)
     for i in range(n_resamples):

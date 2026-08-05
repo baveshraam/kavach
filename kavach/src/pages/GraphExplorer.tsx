@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { apiClient } from '../api/client';
 import { PageHeader } from '../components/layout/PageHeader';
@@ -7,7 +7,22 @@ import { Download } from 'lucide-react';
 
 export function GraphExplorer() {
   const { data: speakers } = useQuery({ queryKey: ['speakers'], queryFn: apiClient.getSpeakers });
-  const [selectedSpeakerId, setSelectedSpeakerId] = useState('spk_001');
+  // Starts empty and adopts the first real speaker once they load. It used to
+  // default to the mock id 'spk_001', which no real backend issues: the CSBG
+  // fetch 404'd, GraphViz got null and never initialised cytoscape, and the
+  // page rendered an empty canvas -- while the <select> showed a name, because
+  // a value matching no option makes the browser display the first one. A
+  // blank graph under an apparently-chosen speaker is the demo failure this
+  // page would have had.
+  const [selectedSpeakerId, setSelectedSpeakerId] = useState('');
+
+  useEffect(() => {
+    if (!speakers?.length) return;
+    if (!speakers.some(s => s.id === selectedSpeakerId)) {
+      setSelectedSpeakerId(speakers[0].id);
+    }
+  }, [speakers, selectedSpeakerId]);
+
   const [graphType, setGraphType] = useState('csbg');
   const [layout, setLayout] = useState('concentric');
   const [threshold, setThreshold] = useState(0.05);

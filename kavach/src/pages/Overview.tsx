@@ -19,6 +19,7 @@ export function Overview() {
   const { data: utterances } = useQuery({ queryKey: ['utterances'], queryFn: apiClient.getUtterances });
   const { data: authHistory } = useQuery({ queryKey: ['authHistory'], queryFn: apiClient.getAuthHistory });
   const { data: evalMetrics } = useQuery({ queryKey: ['evalMetrics'], queryFn: apiClient.getEvaluation });
+  const { data: perSpeaker } = useQuery({ queryKey: ['attacks', 'per-speaker'], queryFn: apiClient.getPerSpeakerIapmr });
 
   const enrolledCount = speakers?.length || 0;
   const utteranceCount = utterances?.length || 0;
@@ -28,6 +29,40 @@ export function Overview() {
     const m = Math.floor((sec % 3600) / 60);
     return `${h}h ${m}m`;
   };
+
+  /*
+    Every tile below is derived from the API, and anything the backend has not
+    measured reads "not measured" rather than a number.
+
+    This panel used to hard-code `System EER 3.12%` and `Attack Rejection
+    98.4%`, plus deltas like "+12 this week" and "380 success" -- the latter
+    sitting beside a real trial count of 0. Those are the numbers a progress
+    slide gets screenshotted from, and this repository is arranged end to end
+    so that a figure which was not measured cannot be mistaken for one that
+    was. `AttackTable.paper_ready()` refuses unearned rows and
+    `eval.metrics.format_rate` renders an unattainable operating point as
+    "n/a"; a dashboard that invents both is the one place that convention was
+    not being kept.
+
+    These remain *demo* numbers even when real: the EER comes from whatever
+    logins happened to be clicked through, with no trial design and no
+    dev/test split, and the attack rates are simulated. `eval/ablation.py`
+    produces the reportable ones offline.
+  */
+  const annotatedCount = utterances?.filter(u => u.annotated).length ?? 0;
+  const acceptCount = authHistory?.filter(a => a.decision === 'ACCEPT').length ?? 0;
+  const meanSecPerUtt = utteranceCount ? corpusDurationSec / utteranceCount : 0;
+
+  const fullFusion = evalMetrics?.configurations.find(c => /full/i.test(c.name))
+    ?? evalMetrics?.configurations[evalMetrics.configurations.length - 1];
+  const eerLabel = fullFusion && Number.isFinite(fullFusion.eer)
+    ? `${(fullFusion.eer * 100).toFixed(2)}%`
+    : 'n/a';
+
+  const rejection = perSpeaker?.meanIapmr;
+  const rejectionLabel = rejection === null || rejection === undefined
+    ? 'n/a'
+    : `${((1 - rejection) * 100).toFixed(1)}%`;
 
   const fusedHist = evalMetrics?.scoreDistributions.find(d => d.branch === 'Fused');
   
@@ -61,12 +96,12 @@ export function Overview() {
         
         {/* Stat Tiles */}
         <div className="grid grid-cols-6 border border-app-border bg-app-surface">
-          <StatTile label="Enrolled Speakers" value={enrolledCount} delta="+12 this week" deltaClass="text-app-accept" />
-          <StatTile label="Total Utterances" value={utteranceCount} delta="85.2GB total" />
-          <StatTile label="Corpus Duration" value={formatDuration(corpusDurationSec)} delta="Avg 13.1s/utt" />
-          <StatTile label="Auth Trials (7d)" value={authHistory?.length || 0} delta="380 success" />
-          <StatTile label="System EER" value="3.12%" delta="+0.04% vs v0.0.9" deltaClass="text-app-reject" />
-          <StatTile label="Attack Rejection" value="98.4%" delta="Strong (A1-A3)" deltaClass="text-app-accept" />
+          <StatTile label="Enrolled Speakers" value={enrolledCount} delta={`${perSpeaker?.unmeasuredSpeakerIds.length ?? 0} unattacked`} />
+          <StatTile label="Total Utterances" value={utteranceCount} delta={`${annotatedCount} annotated`} />
+          <StatTile label="Corpus Duration" value={formatDuration(corpusDurationSec)} delta={utteranceCount ? `Avg ${meanSecPerUtt.toFixed(1)}s/utt` : 'no audio yet'} />
+          <StatTile label="Auth Trials" value={authHistory?.length || 0} delta={`${acceptCount} accepted`} />
+          <StatTile label="Demo EER" value={eerLabel} delta="login history, not a result" deltaClass="text-app-warning" />
+          <StatTile label="Attack Rejection" value={rejectionLabel} delta={perSpeaker?.simulated === false ? 'measured' : 'simulated attacks'} deltaClass="text-app-warning" />
         </div>
 
         <div className="flex gap-6 h-[500px]">

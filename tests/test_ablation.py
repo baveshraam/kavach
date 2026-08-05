@@ -23,8 +23,10 @@ from kavach.eval.ablation import (
     VETOED,
     Trial,
     ablate_policy,
+    ablate_scoring,
     apply_cohort_norm,
     build_trials,
+    cohort_fitting_trials,
     evaluate_configuration,
     fairness_slices,
     fit_cohort_normaliser,
@@ -36,6 +38,7 @@ from kavach.eval.ablation import (
     split_by_speaker,
     stability_curve,
 )
+from kavach.eval.metrics import bootstrap_eer_ci, format_rate
 from kavach.fusion import Branch, FusionPolicy
 from kavach.simulation import make_corpus
 
@@ -537,3 +540,174 @@ class TestFairness:
         policy = FusionPolicy(weights={Branch.CSBG: 1.0}, threshold=0.5, veto_thresholds={})
         slices = fairness_slices(trials, policy, (Branch.CSBG,))
         assert {s.condition for s in slices} == {"device", "environment"}
+
+
+class TestCohortCoverage:
+    """The normaliser must reach the speakers it is reported as normalising.
+
+    `fit_cohort_normaliser(split.dev)` produces statistics for dev speakers
+    only. Every test trial then misses the lookup and falls back to
+    (mean 0, std 1), so the test table said "cohort z-normalised" while the
+    test scores were not normalised at all. `CohortNormaliser.apply` cannot
+    detect this -- a miss is indistinguishable from a speaker whose cohort
+    happens to be centred -- so it has to be asserted here.
+    """
+
+    def test_dev_alone_covers_no_test_speaker(self, graphs, corpus) -> None:
+        """The bug, pinned so it cannot come back quietly."""
+        split = split_by_speaker(build_trials(graphs, corpus.trials), seed=0)
+        stale = fit_cohort_normaliser(split.dev)
+        assert not set(split.test_speakers) & set(stale.means)
+
+    def test_cohort_fitting_covers_every_test_speaker(self, graphs, corpus) -> None:
+        split = split_by_speaker(build_trials(graphs, corpus.trials), seed=0)
+        normaliser = fit_cohort_normaliser(cohort_fitting_trials(split))
+        assert set(split.test_speakers) <= set(normaliser.means)
+        assert set(split.dev_speakers) <= set(normaliser.means)
+
+    def test_no_fitting_trial_uses_a_test_probe(self, graphs, corpus) -> None:
+        """The leak the cohort split exists to avoid.
+
+        A dev model normalised using test speech would reach the fitted
+        weights, threshold and veto floor -- all of which are fitted on dev
+        trials that the dev statistics rescale.
+        """
+        split = split_by_speaker(build_trials(graphs, corpus.trials), seed=0)
+        dev = set(split.dev_speakers)
+        for t in cohort_fitting_trials(split):
+            assert t.probe_speaker in dev
+
+    def test_cohort_holds_the_trials_the_split_discards(self, graphs, corpus) -> None:
+        trials = build_trials(graphs, corpus.trials)
+        split = split_by_speaker(trials, dev_fraction=0.4, seed=0)
+        assert len(split.dev) + len(split.test) + len(split.cohort) == len(trials)
+        assert split.cohort
+
+    def test_cohort_trials_are_all_impostors(self, graphs, corpus) -> None:
+        """They straddle the boundary, so probe and claimed differ by construction."""
+        split = split_by_speaker(build_trials(graphs, corpus.trials), seed=0)
+        assert all(not t.is_genuine for t in split.cohort)
+
+    def test_normalisation_actually_changes_test_scores(self, graphs, corpus) -> None:
+        split = split_by_speaker(build_trials(graphs, corpus.trials), seed=0)
+        before = [t.csbg_score for t in split.test]
+        apply_cohort_norm(split.test, fit_cohort_normaliser(cohort_fitting_trials(split)))
+        after = [t.csbg_score for t in split.test]
+        assert any(a != pytest.approx(b) for a, b in zip(after, before))
+
+    def test_coverage_is_reported_in_the_caveats(self, graphs, corpus) -> None:
+        report = run_ablation(graphs, corpus.trials, bootstrap=20, scoring_ablations=False)
+        assert any("test speakers" in c for c in report.caveats)
+
+
+class TestScoringAblations:
+    """Ablations that need a fresh `build_trials`, unlike `ablate_policy`."""
+
+    def test_rows_are_scoped_to_the_branch_they_change(self, graphs, corpus) -> None:
+        """Scored on the full system they all read +0.00, and the zero lies.
+
+        Every switch here changes only the CSBG score. A knowledge branch that
+        separates far better pins the fused EER, so the delta measures that
+        dominance rather than the switch.
+        """
+        rows = ablate_scoring(
+            graphs, corpus.trials, BRANCHES,
+            speaker_score_fn=acoustic(), knowledge_score_fn=knowledge(),
+        )
+        assert rows
+        assert all(r.scope == Branch.CSBG.value for r in rows)
+
+    def test_the_low_signal_hypothesis_is_actually_tested(self, graphs, corpus) -> None:
+        """`ontology.LOW_SIGNAL_CLASSES` defers to this ablation by name."""
+        rows = ablate_scoring(graphs, corpus.trials, (Branch.CSBG,))
+        assert any("low-signal" in r.name for r in rows)
+
+    def test_every_scoring_stream_gets_a_row(self, graphs, corpus) -> None:
+        names = {r.name for r in ablate_scoring(graphs, corpus.trials, (Branch.CSBG,))}
+        assert "transition stream removed" in names
+        assert "lexical stream removed" in names
+        assert "graph metrics removed" in names
+        assert any("z-norm" in n for n in names)
+
+    def test_removing_the_lexical_stream_hurts(self, graphs, corpus) -> None:
+        """Lexical choice is the best-estimated stream; if dropping it helps,
+        either the weights or the scorer is wrong."""
+        rows = ablate_scoring(graphs, corpus.trials, (Branch.CSBG,))
+        lexical = next(r for r in rows if r.name == "lexical stream removed")
+        assert lexical.delta > 0
+
+    def test_deltas_are_against_a_baseline_built_the_same_way(
+        self, graphs, corpus
+    ) -> None:
+        """`eer - delta` must reconstruct one shared baseline for every row."""
+        rows = ablate_scoring(graphs, corpus.trials, (Branch.CSBG,))
+        baselines = {round(r.eer - r.delta, 9) for r in rows}
+        assert len(baselines) == 1
+
+    def test_notes_do_not_break_the_markdown_table(self, graphs, corpus) -> None:
+        """A `|` in a note silently splits the row into extra columns."""
+        rows = ablate_scoring(graphs, corpus.trials, (Branch.CSBG,))
+        for r in rows:
+            assert "|" not in r.note, f"{r.name} note contains a pipe"
+            assert "|" not in r.name
+
+    def test_scoring_ablations_can_be_switched_off(self, graphs, corpus) -> None:
+        report = run_ablation(graphs, corpus.trials, bootstrap=20, scoring_ablations=False)
+        assert all(r.scope == "full system" for r in report.ablations)
+
+    def test_run_ablation_includes_both_kinds(self, graphs, corpus) -> None:
+        report = run_ablation(
+            graphs, corpus.trials, bootstrap=20,
+            speaker_score_fn=acoustic(), knowledge_score_fn=knowledge(),
+        )
+        scopes = {r.scope for r in report.ablations}
+        assert "full system" in scopes
+        assert Branch.CSBG.value in scopes
+
+    def test_markdown_carries_the_scope_column(self, graphs, corpus) -> None:
+        report = run_ablation(graphs, corpus.trials, bootstrap=20)
+        text = report.to_markdown()
+        assert "| Removed | Scope | EER % |" in text
+
+
+class TestStabilityWiring:
+    def test_run_ablation_computes_the_curve_when_given_enrolment(
+        self, graphs, corpus
+    ) -> None:
+        """`stability_curve` existed but nothing called it."""
+        report = run_ablation(
+            graphs, corpus.trials, bootstrap=20, scoring_ablations=False,
+            enrolment=corpus.enrolment, stability_budgets=(2, 5, 20),
+        )
+        assert [p.n_utterances for p in report.stability] == [2, 5, 20]
+        assert "stability against enrolment budget" in report.to_markdown()
+
+    def test_missing_enrolment_is_a_caveat_not_a_silent_gap(
+        self, graphs, corpus
+    ) -> None:
+        """A section that vanishes reads as 'not applicable', not 'not run'."""
+        report = run_ablation(graphs, corpus.trials, bootstrap=20, scoring_ablations=False)
+        assert report.stability == []
+        assert any("stability curve was skipped" in c for c in report.caveats)
+
+    def test_an_empty_curve_says_why(self, graphs, corpus) -> None:
+        report = run_ablation(
+            graphs, corpus.trials, bootstrap=20, scoring_ablations=False,
+            enrolment=corpus.enrolment, stability_budgets=(10_000,),
+        )
+        assert report.stability == []
+        assert any("stability curve came out empty" in c for c in report.caveats)
+
+
+class TestBootstrapShortcut:
+    def test_zero_resamples_returns_nan_bounds_not_a_crash(self) -> None:
+        """Ablation rows report no interval; an empty quantile used to raise."""
+        genuine = np.array([0.8, 0.7, 0.9, 0.75])
+        impostor = np.array([0.2, 0.3, 0.25, 0.4])
+        point, lo, hi = bootstrap_eer_ci(genuine, impostor, n_resamples=0)
+        assert math.isnan(lo) and math.isnan(hi)
+        assert not math.isnan(point)
+
+    def test_nan_bounds_render_as_not_available(self) -> None:
+        """Trap 3: a sentinel that prints as a rate is worse than no number."""
+        assert format_rate(math.nan) == "n/a"

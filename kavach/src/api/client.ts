@@ -1,4 +1,4 @@
-import { AuthResult, Challenge, CSBG, EvalMetrics, Speaker, Utterance, Triple, AttackRun, AttackType } from './types';
+import { AuthResult, Challenge, CSBG, EvalMetrics, Speaker, Utterance, Triple, AttackRun, AttackType, PerSpeakerIapmr } from './types';
 import { mockSpeakers, mockUtterances, mockTriples, mockCSBG, mockAuthResults, mockAttacks, mockEvalMetrics } from './mock';
 
 // @ts-ignore
@@ -177,6 +177,20 @@ export const apiClient = {
   getAttacks: async (): Promise<AttackRun[]> => {
     if (USE_MOCK) return delay(400).then(() => [...mockAttacks]);
     return fetchApi('/api/attacks');
+  },
+
+  // Per-speaker attack success. Read this before quoting any mean: a system
+  // that stops every attack on 24 speakers and none on the 25th reports 96%.
+  getPerSpeakerIapmr: async (): Promise<PerSpeakerIapmr> => {
+    if (USE_MOCK) {
+      await delay(300);
+      return {
+        speakers: [], worstSpeakerId: '', meanIapmr: null,
+        unmeasuredSpeakerIds: [], minTrialsPerCell: 30, simulated: true,
+        notes: ['Mock mode: no attacks have been run.'],
+      };
+    }
+    return fetchApi('/api/attacks/per-speaker');
   },
 
   getEvaluation: async (): Promise<EvalMetrics> => {

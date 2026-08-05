@@ -81,8 +81,16 @@ export function AppLayout() {
         <div className="p-4 border-t border-app-border bg-app-surface-muted">
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
-              <span className={cn("w-1.5 h-1.5 rounded-full", health ? "bg-app-accept" : "bg-app-reject")} />
-              <span className="text-[10px] font-mono uppercase tracking-wider">{health ? 'Connected' : 'Offline'}</span>
+              <span className={cn(
+                "w-1.5 h-1.5 rounded-full",
+                !health ? "bg-app-reject" : health.status === 'degraded' ? "bg-app-warning" : "bg-app-accept"
+              )} />
+              {/* Degraded is a first-class state, not a synonym for connected:
+                  a branch that could not be measured must not look like one
+                  that passed. See PROJECT.md 3.7. */}
+              <span className="text-[10px] font-mono uppercase tracking-wider">
+                {!health ? 'Offline' : health.status === 'degraded' ? 'Degraded' : 'Connected'}
+              </span>
             </div>
             <button 
               onClick={toggleTheme}
@@ -93,9 +101,17 @@ export function AppLayout() {
             </button>
           </div>
           {health && (
+            /*
+              `models` is empty whenever the heavy checkpoints are not
+              installed, which is the documented degraded mode and the state
+              anyone gets from `pip install -r requirements-core.txt`.
+              Indexing [0] there threw on undefined and took AppLayout down
+              with it, so *every* route rendered blank -- the mock never hits
+              it because mock health hard-codes a populated models array.
+            */
             <div className="text-[10px] font-mono opacity-60 leading-relaxed">
-              MODEL: {health.models[0].toUpperCase()}<br/>
-              DEVICE: {health.device.toUpperCase()}
+              MODEL: {health.models?.length ? health.models[0].toUpperCase() : 'NONE LOADED'}<br/>
+              DEVICE: {(health.device || 'unknown').toUpperCase()}
             </div>
           )}
         </div>

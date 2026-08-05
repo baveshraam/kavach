@@ -282,6 +282,52 @@ class AttackRun(Model):
     notes: list[str] = Field(default_factory=list)
 
 
+class SpeakerIapmr(Model):
+    """One speaker's attack success rate, aggregated over their runs."""
+
+    speaker_id: str
+    name: str = ""
+    trials: int = 0
+    iapmr: float = 0.0
+    """Under full fusion. The number the defence is judged on."""
+
+    iapmr_by_config: dict[str, float] = Field(default_factory=dict)
+    ci_low: float = 0.0
+    ci_high: float = 1.0
+    """95% Wilson interval. Not the normal approximation: these rates sit at 0
+    and 1, where the normal interval runs outside [0, 1] and is simply wrong."""
+
+    below_min_trials: bool = True
+    attack_types: list[AttackTypeStr] = Field(default_factory=list)
+
+
+class PerSpeakerIapmr(Model):
+    """Attack success per speaker, because the mean hides the failure.
+
+    If the full system stops every attack on 24 speakers and none on the 25th,
+    that speaker is completely unprotected and the mean reads 96%. §5.1.3 asks
+    for this table explicitly.
+    """
+
+    speakers: list[SpeakerIapmr] = Field(default_factory=list)
+    worst_speaker_id: str = ""
+    """Highest IAPMR among speakers with enough trials to compare. Empty when
+    no speaker clears the bar."""
+
+    mean_iapmr: float | None = None
+    """None rather than 0.0 when nothing has been measured -- a mean over no
+    trials is not a rate of zero, and 0% is the value that looks like success."""
+
+    unmeasured_speaker_ids: list[str] = Field(default_factory=list)
+    """Enrolled speakers with no attack run at all. **An unmeasured speaker is
+    not a protected speaker**, and leaving them out of the response entirely
+    would make a partial study look complete."""
+
+    min_trials_per_cell: int = 30
+    simulated: bool = True
+    notes: list[str] = Field(default_factory=list)
+
+
 # --------------------------------------------------------------------------
 # Evaluation
 # --------------------------------------------------------------------------
@@ -365,9 +411,11 @@ __all__ = [
     "EvalMetrics",
     "FairnessSlice",
     "Health",
+    "PerSpeakerIapmr",
     "ScoreDistribution",
     "Speaker",
     "SpeakerCreate",
+    "SpeakerIapmr",
     "StabilityPoint",
     "Token",
     "Triple",

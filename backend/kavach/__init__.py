@@ -14,6 +14,7 @@ languages using LLM and Multimodal data".
 Subpackage layout::
 
     csbg/       Code-Switch Behaviour Graph -- the research core. Pure numpy.
+    corpus      Recorded-speech manifest, loader and elicitation protocol.
     lid/        Word-level language ID and semantic tagging.
     asr/        Speech recognition (faster-whisper).
     embedding/  ECAPA-TDNN speaker embeddings.

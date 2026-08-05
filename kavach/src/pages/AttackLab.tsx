@@ -16,7 +16,8 @@ export function AttackLab() {
   const queryClient = useQueryClient();
   const { data: speakers } = useQuery({ queryKey: ['speakers'], queryFn: apiClient.getSpeakers });
   const { data: attacks } = useQuery({ queryKey: ['attacks'], queryFn: apiClient.getAttacks });
-  
+  const { data: perSpeaker } = useQuery({ queryKey: ['attacks', 'per-speaker'], queryFn: apiClient.getPerSpeakerIapmr });
+
   const [selectedSpeakerId, setSelectedSpeakerId] = useState('');
 
   const generateMutation = useMutation({
@@ -110,6 +111,102 @@ export function AttackLab() {
                 </tbody>
               </table>
            </div>
+        </section>
+
+        {/*
+          Per-speaker exposure. The mean is what hides the failure: a system
+          that stops every attack on 24 speakers and none on the 25th reports
+          96% while one person is completely unprotected.
+        */}
+        <section className="flex flex-col">
+          <div className="flex items-baseline justify-between mb-4">
+            <h3 className="text-[13px] font-semibold uppercase tracking-wider text-app-text-muted">Per-Speaker Exposure</h3>
+            <span className="text-[11px] text-app-text-muted">
+              {perSpeaker?.meanIapmr === null || perSpeaker?.meanIapmr === undefined
+                ? 'Mean: not measured'
+                : `Mean IAPMR: ${(perSpeaker.meanIapmr * 100).toFixed(1)}%`}
+            </span>
+          </div>
+
+          {perSpeaker?.notes?.length ? (
+            <ul className="mb-4 flex flex-col gap-1">
+              {perSpeaker.notes.map((note, i) => (
+                <li key={i} className="border border-app-border border-l-4 border-l-app-warning bg-app-bg px-3 py-2 text-[11px] text-app-text-muted leading-relaxed">
+                  {note}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+
+          <div className="border border-app-border bg-app-surface">
+            <table className="w-full text-left border-collapse">
+              <thead className="bg-app-bg border-b border-app-border">
+                <tr>
+                  <th className="px-4 py-2 text-[11px] uppercase tracking-wider text-app-text-muted">Speaker</th>
+                  <th className="px-4 py-2 text-[11px] uppercase tracking-wider text-app-text-muted w-24 text-right">Trials</th>
+                  <th className="px-4 py-2 text-[11px] uppercase tracking-wider text-app-text-muted border-l border-app-border w-32 text-center">IAPMR</th>
+                  <th className="px-4 py-2 text-[11px] uppercase tracking-wider text-app-text-muted border-l border-app-border w-40 text-center">95% CI (Wilson)</th>
+                  <th className="px-4 py-2 text-[11px] uppercase tracking-wider text-app-text-muted border-l border-app-border">Attacks run</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-app-border">
+                {perSpeaker?.speakers.map(s => (
+                  <tr key={s.speakerId} className="hover:bg-app-bg/50 transition-colors">
+                    <td className="px-4 py-2">
+                      {s.name || s.speakerId}
+                      {s.speakerId === perSpeaker.worstSpeakerId && (
+                        <span className="ml-2 mono text-[10px] px-1.5 py-0.5 border border-app-border-strong text-app-text-muted uppercase tracking-wider">most exposed</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2 mono text-right">
+                      {s.trials}
+                      {s.belowMinTrials && (
+                        <span className="ml-1 text-app-text-muted" title={`Fewer than ${perSpeaker.minTrialsPerCell} trials: the interval is too wide to compare against another speaker.`}>*</span>
+                      )}
+                    </td>
+                    <td
+                      className="px-4 py-2 mono text-center border-l border-app-border"
+                      style={{ backgroundColor: `rgba(155, 50, 50, ${s.iapmr * 0.4})` }}
+                    >
+                      {(s.iapmr * 100).toFixed(1)}%
+                    </td>
+                    <td className="px-4 py-2 mono text-center text-app-text-muted border-l border-app-border">
+                      {(s.ciLow * 100).toFixed(1)}–{(s.ciHigh * 100).toFixed(1)}%
+                    </td>
+                    <td className="px-4 py-2 mono text-[11px] text-app-text-muted border-l border-app-border">
+                      {s.attackTypes.join(', ') || '—'}
+                    </td>
+                  </tr>
+                ))}
+                {/*
+                  Unmeasured speakers get rows of their own rather than being
+                  left out. An absent speaker reads as a safe one.
+                */}
+                {perSpeaker?.unmeasuredSpeakerIds.map(id => (
+                  <tr key={id} className="text-app-text-muted">
+                    <td className="px-4 py-2">{speakers?.find(s => s.id === id)?.displayName || id}</td>
+                    <td className="px-4 py-2 mono text-right">0</td>
+                    <td className="px-4 py-2 mono text-center border-l border-app-border" colSpan={3}>
+                      not measured — no attack has been run against this speaker
+                    </td>
+                  </tr>
+                ))}
+                {!perSpeaker?.speakers.length && !perSpeaker?.unmeasuredSpeakerIds.length && (
+                  <tr>
+                    <td className="px-4 py-6 text-center text-[12px] text-app-text-muted" colSpan={5}>
+                      No speakers enrolled.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <p className="mt-2 text-[11px] text-app-text-muted leading-relaxed">
+            <span className="mono">*</span> fewer than {perSpeaker?.minTrialsPerCell ?? 30} trials, so the interval is too
+            wide to rank this speaker against another. Intervals are Wilson, not the normal approximation:
+            these rates sit at 0 and 1, where the normal interval runs outside [0, 1].
+          </p>
         </section>
 
       </div>

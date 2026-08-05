@@ -222,22 +222,51 @@ def apply_cohort_norm(trials: list[Trial], normaliser: CohortNormaliser) -> None
         t.csbg_score = normaliser.apply_squashed(t.claimed_speaker, t.csbg_raw)
 
 
-def fit_cohort_normaliser(dev: Sequence[Trial]) -> CohortNormaliser:
-    """Fit per-speaker z-norm statistics from **dev impostors only**.
+def fit_cohort_normaliser(trials: Sequence[Trial]) -> CohortNormaliser:
+    """Fit per-speaker z-norm statistics from **impostor trials only**.
 
     Impostors only, because the statistics describe "what this speaker's model
     does to someone else's speech". Including genuine trials would drag the
     mean toward the target distribution and shrink exactly the separation the
     normaliser exists to expose.
+
+    Pass `cohort_fitting_trials(split)`, not `split.dev`. Dev alone yields
+    statistics for dev speakers only, and every test lookup then falls back to
+    (mean 0, std 1) -- a normalisation that is reported and does not happen.
     """
     normaliser = CohortNormaliser()
     by_speaker: dict[str, list[float]] = {}
-    for t in dev:
+    for t in trials:
         if not t.is_genuine:
             by_speaker.setdefault(t.claimed_speaker, []).append(t.csbg_raw)
     for speaker, scores in by_speaker.items():
         normaliser.fit_speaker(speaker, scores)
     return normaliser
+
+
+def cohort_fitting_trials(split: Split) -> list[Trial]:
+    """Trials a z-normaliser may be fitted on, for dev **and** test models.
+
+    The rule is one line: **the probe must be a dev speaker.** Everything else
+    follows from it.
+
+    - A dev model against a dev probe -- `split.dev` -- is fittable by
+      definition; dev is the side fitting is allowed on.
+    - A test model against a dev probe -- half of `split.cohort` -- gives test
+      speakers their statistics without touching a test probe or a test label.
+      A model is available at enrolment time in deployment, so normalising
+      against a development cohort is what Z-norm has always meant.
+    - A **dev** model against a **test** probe is the other half of the cohort,
+      and it is excluded. It looks harmless -- the statistic belongs to a dev
+      speaker -- but dev statistics normalise the dev trials that the weights,
+      threshold and veto floor are all fitted on. Test speech would reach the
+      fitted policy through the back door, which is the same leak
+      `split_by_speaker` discarded these trials to avoid.
+    """
+    dev_speakers = set(split.dev_speakers)
+    return list(split.dev) + [
+        t for t in split.cohort if t.probe_speaker in dev_speakers
+    ]
 
 
 # --------------------------------------------------------------------------
@@ -254,10 +283,28 @@ class Split:
     dev_speakers: list[str]
     test_speakers: list[str]
 
+    cohort: list[Trial] = field(default_factory=list)
+    """Cross-boundary trials: one speaker's model against the other side's probe.
+
+    Not scoreable as dev or test -- that is the whole point of discarding them
+    -- but they are exactly the right material for **cohort z-normalisation**,
+    which needs, for each enrolled model, the distribution that model assigns
+    to *other people's* speech.
+
+    A cohort trial claiming a test speaker uses a **dev** speaker's probe, so
+    fitting on it touches no test probe and no test label. That is what Z-norm
+    means in the literature: statistics computed at enrolment against a
+    development cohort, not against the trials being scored. Without these,
+    `fit_cohort_normaliser(split.dev)` has statistics for dev speakers only,
+    every test lookup falls back to (mean 0, std 1), and the normalisation
+    reported on the test table never happens.
+    """
+
     def summary(self) -> str:
         return (
             f"dev: {len(self.dev_speakers)} speakers / {len(self.dev)} trials | "
-            f"test: {len(self.test_speakers)} speakers / {len(self.test)} trials"
+            f"test: {len(self.test_speakers)} speakers / {len(self.test)} trials | "
+            f"cohort: {len(self.cohort)} trials (z-norm only)"
         )
 
 
@@ -276,6 +323,11 @@ def split_by_speaker(
     `dev_fraction=0.4`. The alternative is a leak, and a leak is not cheaper
     than fewer trials, it is just harder to see.
 
+    The discarded trials are kept on `Split.cohort` rather than dropped on the
+    floor. They cannot be scored, but they are the correct material for cohort
+    z-normalisation, which needs each model's response to speech that is not
+    its own -- see `Split.cohort`.
+
     Raises:
         ValueError: If either side would have no speakers.
     """
@@ -293,7 +345,7 @@ def split_by_speaker(
     n_dev = min(n_dev, len(shuffled) - 2)
     dev_speakers = set(shuffled[:n_dev])
 
-    dev, test = [], []
+    dev, test, cohort = [], [], []
     for t in trials:
         in_dev = t.probe_speaker in dev_speakers and t.claimed_speaker in dev_speakers
         in_test = t.probe_speaker not in dev_speakers and t.claimed_speaker not in dev_speakers
@@ -301,12 +353,15 @@ def split_by_speaker(
             dev.append(t)
         elif in_test:
             test.append(t)
+        else:
+            cohort.append(t)
 
     return Split(
         dev=dev,
         test=test,
         dev_speakers=sorted(dev_speakers),
         test_speakers=sorted(set(speakers) - dev_speakers),
+        cohort=cohort,
     )
 
 
@@ -659,10 +714,20 @@ class AblationRow:
     name: str
     eer: float
     delta: float
-    """Change in EER against the full system. Positive means the ablation is
-    worse, i.e. the removed component was helping."""
+    """Change in EER against the un-ablated baseline *of the same scope*.
+    Positive means the ablation is worse, i.e. the removed component was
+    helping."""
 
     note: str = ""
+
+    scope: str = "full system"
+    """What the EER is an EER *of*.
+
+    Policy ablations move the whole system, so they are reported on it.
+    Scoring ablations change only the CSBG score, and a table that mixed the
+    two under one "EER %" column would invite a comparison between numbers
+    measured on different systems. See `ablate_scoring` for why the scopes
+    differ rather than being unified."""
 
 
 def ablate_policy(
@@ -724,6 +789,188 @@ def ablate_policy(
                 note="What the logistic-regression fit was worth.",
             )
         )
+
+    return rows
+
+
+def _reweighted(base: ScoringWeights, **overrides: float) -> ScoringWeights:
+    """`base` with some streams overridden, renormalised to sum to 1.
+
+    Zeroing a stream and renormalising is what "remove this stream" has to
+    mean: `ScoringWeights` must sum to 1.0, so dropping one without
+    redistributing its mass would also shrink the whole score and the ablation
+    would measure a scale change as well as a missing stream.
+    """
+    values = {
+        "lexical": base.lexical,
+        "transition": base.transition,
+        "metrics": base.metrics,
+    }
+    values.update(overrides)
+    total = sum(values.values())
+    if total <= 0:
+        raise ValueError("cannot remove every scoring stream")
+    return ScoringWeights(**{k: v / total for k, v in values.items()})
+
+
+def ablate_scoring(
+    graphs: dict[str, CSBG],
+    probes: dict[str, list[UtteranceTokens]],
+    branches: Sequence[Branch],
+    *,
+    speaker_score_fn: ScoreFn | None = None,
+    knowledge_score_fn: ScoreFn | None = None,
+    groups: dict[str, dict[str, str]] | None = None,
+    dev_fraction: float = 0.4,
+    seed: int = 0,
+    cohort_norm: bool = True,
+    max_veto_frr_cost: float = 0.02,
+    scoring_weights: ScoringWeights | None = None,
+    scope: Sequence[Branch] = (Branch.CSBG,),
+) -> list[AblationRow]:
+    """Ablations that change how the CSBG is *scored*, so trials are rebuilt.
+
+    `ablate_policy` re-fuses one scoring pass and is therefore exact. These
+    rows cannot: removing the transition stream changes every CSBG score, so
+    the whole pipeline -- score, split, fit, evaluate -- runs again for each.
+    Three things keep the rows comparable:
+
+    - the **split seed is shared**, and `split_by_speaker` shuffles a sorted
+      speaker list, so every variant tests on the same speakers;
+    - the policy is **re-fitted on dev** for each variant, because judging
+      ablated scores under weights fitted for the un-ablated ones would
+      conflate the ablation with a stale calibration;
+    - the baseline is computed **through the same helper**, so the delta is
+      attributable to the switch rather than to two code paths.
+
+    WHY THESE ARE SCORED ON THE CSBG BRANCH, NOT THE FULL SYSTEM
+    ------------------------------------------------------------
+    Because on the full system they all read zero, and the zero is an artefact.
+    Every one of these switches changes only the CSBG score; the knowledge
+    branch is near-binary and separates far better, so it pins the fused EER
+    and nothing done to the CSBG moves it. A table of "transition stream
+    removed: +0.00" would be read as "the transition stream is worthless" when
+    what it measures is that another branch dominates -- and the delta would
+    also be quantised to the width of one genuine trial, which at 66 trials is
+    1.5 percentage points, wider than the effects being looked for.
+
+    So `scope` defaults to the CSBG branch alone, the row records that scope,
+    and `AblationReport.to_markdown` prints it in its own column. Pass the full
+    branch tuple to ask the other question -- "does this change reach the
+    system's decisions?" -- but read the answer as being about dominance.
+
+    The rows answer questions the modules they ablate explicitly defer here.
+    `ontology.LOW_SIGNAL_CLASSES` says excluding those classes is "a
+    *hypothesis*, not a fact -- run the ablation in eval.ablation to confirm
+    it helps on your data before reporting it". This is that ablation.
+    """
+    base_weights = scoring_weights or ScoringWeights()
+    scope = tuple(scope) or (Branch.CSBG,)
+    scope_label = " + ".join(b.value for b in scope)
+
+    def run(**kw: Any) -> float | None:
+        """EER on test for one scoring configuration, or None if unmeasurable."""
+        norm = kw.pop("cohort_norm", cohort_norm)
+        trials = build_trials(
+            graphs,
+            probes,
+            speaker_score_fn=speaker_score_fn,
+            knowledge_score_fn=knowledge_score_fn,
+            groups=groups,
+            **kw,
+        )
+        try:
+            split = split_by_speaker(trials, dev_fraction=dev_fraction, seed=seed)
+        except ValueError:
+            return None
+        if norm:
+            normaliser = fit_cohort_normaliser(cohort_fitting_trials(split))
+            if normaliser.means:
+                apply_cohort_norm(split.dev, normaliser)
+                apply_cohort_norm(split.test, normaliser)
+
+        # Fit over every measured branch, then evaluate on `scope`. Fitting on
+        # the scope alone would refit the threshold to a one-branch system and
+        # the rows would differ by calibration as well as by the switch.
+        measured = tuple(b for b in branches if any(t.available(b) for t in trials))
+        scoped = tuple(b for b in scope if b in measured)
+        if not measured or not scoped:
+            return None
+        fitted = fit_policy(split.dev, measured, max_veto_frr_cost=max_veto_frr_cost)
+        result = evaluate_configuration(
+            "variant",
+            split.test,
+            _restrict(fitted.policy, scoped),
+            scoped,
+            bootstrap=0,
+            seed=seed,
+        )
+        return None if result is None else result.metrics.eer
+
+    baseline = run(scoring_weights=base_weights)
+    if baseline is None:
+        return []
+
+    rows: list[AblationRow] = []
+
+    def add(name: str, eer: float | None, note: str) -> None:
+        if eer is not None:
+            rows.append(
+                AblationRow(
+                    name=name, eer=eer, delta=eer - baseline, note=note,
+                    scope=scope_label,
+                )
+            )
+
+    add(
+        "low-signal classes included",
+        run(scoring_weights=base_weights, include_low_signal=True),
+        "FUNCTION_WORD, NAMED_ENTITY and OTHER put back. Excluding them is a "
+        "hypothesis stated in ontology.LOW_SIGNAL_CLASSES; a positive delta "
+        "confirms it on this data, a negative one retires it.",
+    )
+
+    if base_weights.transition > 0:
+        add(
+            "transition stream removed",
+            run(scoring_weights=_reweighted(base_weights, transition=0.0)),
+            "P(lang given class and prev_lang) dropped, its weight redistributed. "
+            "Transition cells are ~4x sparser than lexical ones, so this is the "
+            "row that says whether sequence information survives short probes.",
+        )
+
+    if base_weights.metrics > 0:
+        add(
+            "graph metrics removed",
+            run(scoring_weights=_reweighted(base_weights, metrics=0.0)),
+            "CMI and I-index dropped. They are already ramped down on short "
+            "probes by csbg.scoring, so a near-zero delta here is expected and "
+            "is a check on that ramp rather than a finding.",
+        )
+
+    if base_weights.lexical > 0 and base_weights.transition > 0:
+        add(
+            "lexical stream removed",
+            run(scoring_weights=_reweighted(base_weights, lexical=0.0)),
+            "Transitions and metrics alone. The complement of the row above: "
+            "together they say how much of the CSBG is carried by which "
+            "language a class takes versus how the speaker moves between them.",
+        )
+
+    add(
+        "cohort z-norm removed" if cohort_norm else "cohort z-norm added",
+        run(scoring_weights=base_weights, cohort_norm=not cohort_norm),
+        "Raw LLRs are not comparable across claimed speakers: an unusual "
+        "speaker produces large-magnitude scores for everyone. Expect this row "
+        "to read ~0 on a single branch and still matter in fusion. EER is "
+        "rank-based, so a per-speaker rescale only moves it by *reordering* "
+        "speakers against each other -- which needs the population to vary in "
+        "score scale in the first place. Fusion is not rank-based: it adds the "
+        "branch to others on a shared [0, 1] scale, where the shift is exactly "
+        "what makes the sum comparable. A near-zero delta here alongside a "
+        "large one in the configuration table is the expected shape, not a "
+        "contradiction.",
+    )
 
     return rows
 
@@ -893,9 +1140,23 @@ class AblationReport:
         ]
 
         if self.ablations:
-            lines += ["", "### Ablations", "", "| Removed | EER % | Δ EER | Note |", "|---|---|---|---|"]
+            lines += [
+                "",
+                "### Ablations",
+                "",
+                "**Scope is not decoration.** Each Δ is against the un-ablated "
+                "baseline *of its own scope*, and rows in different scopes are not "
+                "comparable with each other. Scoring ablations are measured on the "
+                "branch they change, because a branch that another one dominates "
+                "shows +0.00 for every switch and the zero says nothing about the "
+                "switch -- see `ablate_scoring`.",
+                "",
+                "| Removed | Scope | EER % | Δ EER | Note |",
+                "|---|---|---|---|---|",
+            ]
             lines.extend(
-                f"| {a.name} | {a.eer * 100:.2f} | {a.delta * 100:+.2f} | {a.note} |"
+                f"| {a.name} | {a.scope} | {a.eer * 100:.2f} | "
+                f"{a.delta * 100:+.2f} | {a.note} |"
                 for a in self.ablations
             )
 
@@ -949,6 +1210,10 @@ def run_ablation(
     cohort_norm: bool = True,
     max_veto_frr_cost: float = 0.02,
     bootstrap: int = 500,
+    enrolment: dict[str, list[UtteranceTokens]] | None = None,
+    stability_budgets: Sequence[int] = (2, 5, 10, 20, 30),
+    seconds_per_utterance: float = 6.0,
+    scoring_ablations: bool = True,
 ) -> AblationReport:
     """The whole offline evaluation, end to end.
 
@@ -959,10 +1224,27 @@ def run_ablation(
     3. fit cohort z-norm on **dev impostors**, apply to both sides;
     4. fit weights, then threshold, then veto floor -- on **dev**;
     5. evaluate every configuration on **test**, with bootstrap intervals;
-    6. ablate by re-fusing the same test trials.
+    6. ablate by re-fusing the same test trials;
+    7. re-score from scratch for the ablations that change scoring;
+    8. sweep the enrolment budget, if the enrolment speech was supplied.
 
     Nothing fitted in 3-4 sees a test speaker. That is the property a reviewer
     checks first, and `AblationReport.split` records it so they can.
+
+    Args:
+        enrolment: The speech `graphs` were built from. Required for the
+            stability curve, which has to rebuild graphs at smaller budgets --
+            a fitted `CSBG` cannot be truncated back into a shorter one.
+            Omitted, the curve is skipped and a caveat says so rather than the
+            section quietly vanishing.
+        stability_budgets: Enrolment sizes, in utterances.
+        seconds_per_utterance: For the stability axis label. Replace with the
+            corpus's measured mean (`UtteranceRecord.duration_sec`) as soon as
+            real recordings exist; 6.0 is a placeholder and the axis is
+            labelled approximate because of it.
+        scoring_ablations: Run the ablations that need re-scoring. Each rebuilds
+            every trial, so this multiplies the run time by roughly the number
+            of rows; off is for a quick pass, not for a paper.
     """
     trials = build_trials(
         graphs,
@@ -975,18 +1257,30 @@ def run_ablation(
 
     caveats: list[str] = []
     if cohort_norm:
-        normaliser = fit_cohort_normaliser(split.dev)
+        fitting = cohort_fitting_trials(split)
+        normaliser = fit_cohort_normaliser(fitting)
+        covered = sum(1 for s in split.test_speakers if s in normaliser.means)
         if normaliser.means:
             apply_cohort_norm(split.dev, normaliser)
             apply_cohort_norm(split.test, normaliser)
             caveats.append(
-                "CSBG scores are cohort z-normalised, with statistics fitted on dev "
-                "impostors only. Report un-normalised results too -- z-norm usually "
-                "helps materially, and hiding that is hiding a design decision."
+                "CSBG scores are cohort z-normalised. Statistics are fitted from "
+                "impostor trials whose *probe* is a dev speaker, which covers test "
+                f"models ({covered}/{len(split.test_speakers)} test speakers) without "
+                "using a test probe -- see `cohort_fitting_trials`. Report "
+                "un-normalised results too: z-norm usually helps materially, and "
+                "hiding that is hiding a design decision."
             )
+            if covered < len(split.test_speakers):
+                caveats.append(
+                    f"{len(split.test_speakers) - covered} test speakers had no "
+                    "cohort trials, so their scores fall back to (mean 0, std 1) "
+                    "and are effectively un-normalised while the rest are not. A "
+                    "table mixing the two is comparing scores on two scales."
+                )
         else:
             caveats.append(
-                "Cohort z-normalisation was requested but no dev impostor trials "
+                "Cohort z-normalisation was requested but no impostor trials "
                 "existed to fit it, so raw scores were used."
             )
 
@@ -1033,11 +1327,52 @@ def run_ablation(
         if result:
             configurations.append(result)
 
+    ablations = ablate_policy(split.test, fitted, measured)
+    if scoring_ablations:
+        ablations += ablate_scoring(
+            graphs,
+            probes,
+            measured,
+            speaker_score_fn=speaker_score_fn,
+            knowledge_score_fn=knowledge_score_fn,
+            groups=groups,
+            dev_fraction=dev_fraction,
+            seed=seed,
+            cohort_norm=cohort_norm,
+            max_veto_frr_cost=max_veto_frr_cost,
+        )
+
+    stability: list[StabilityPoint] = []
+    if enrolment:
+        stability = stability_curve(
+            enrolment,
+            probes,
+            budgets=stability_budgets,
+            seconds_per_utterance=seconds_per_utterance,
+            bootstrap=max(1, bootstrap // 2),
+            speaker_score_fn=speaker_score_fn,
+            knowledge_score_fn=knowledge_score_fn,
+        )
+        if not stability:
+            caveats.append(
+                "The stability curve came out empty: every budget left fewer than "
+                "three speakers with that much enrolment speech, or too few "
+                "scoreable trials. Lower `stability_budgets`, or report that the "
+                "corpus is too short to answer §5.3."
+            )
+    else:
+        caveats.append(
+            "No enrolment speech was passed, so the stability curve was skipped. "
+            "§5.3 -- how much speech a CSBG needs, read from the other side as how "
+            "much an attacker needs to steal one -- is not answered by this run."
+        )
+
     return AblationReport(
         split=split,
         fitted=fitted,
         configurations=configurations,
-        ablations=ablate_policy(split.test, fitted, measured),
+        ablations=ablations,
+        stability=stability,
         fairness=fairness_slices(split.test, fitted.policy, measured),
         measured_branches=measured,
         caveats=caveats,
@@ -1080,8 +1415,10 @@ __all__ = [
     "Split",
     "Trial",
     "ablate_policy",
+    "ablate_scoring",
     "apply_cohort_norm",
     "build_trials",
+    "cohort_fitting_trials",
     "evaluate_configuration",
     "fairness_slices",
     "fit_cohort_normaliser",
