@@ -99,6 +99,24 @@ class ExperimentConfig:
     It is the flattering direction, so a number from this path may not be
     compared against a cross-session number from any other."""
 
+    real_branches: bool = False
+    """Score the acoustic and knowledge branches with the real models.
+
+    ECAPA-TDNN against an enrolled template, and the cross-lingual answer
+    matcher against the claimed speaker's enrolled answer -- see
+    `eval.branches`. Off by default because it needs the audio to be present
+    and the speechbrain checkpoint to be downloadable, neither of which is true
+    in CI; on, it is the only setting that produces a fusion row worth
+    reporting.
+
+    Mutually exclusive with `simulate_branches`, which is checked rather than
+    documented: a run that silently used stand-ins where the operator asked for
+    models would put fabricated numbers in a fusion table."""
+
+    semantic_matcher: bool = True
+    """Load LaBSE for the knowledge branch. Only meaningful with
+    `real_branches`."""
+
     simulate_branches: bool = False
     """Substitute documented stand-ins for the acoustic and knowledge branches.
 
@@ -123,9 +141,20 @@ class ExperimentConfig:
             "allow_within_session": self.allow_within_session,
             "stability_budgets": list(self.stability_budgets),
             "simulate_branches": self.simulate_branches,
+            "real_branches": self.real_branches,
+            "semantic_matcher": self.semantic_matcher,
             "figures": self.figures,
             "n_simulated_speakers": self.n_simulated_speakers,
         }
+
+    def __post_init__(self) -> None:
+        if self.real_branches and self.simulate_branches:
+            raise ValueError(
+                "real_branches and simulate_branches both set. One scores the "
+                "acoustic and knowledge branches with models and the other "
+                "draws them from a fixed distribution; a run cannot be both, "
+                "and picking one silently would mislabel whichever it picked."
+            )
 
 
 # --------------------------------------------------------------------------
@@ -400,8 +429,24 @@ def run(config: ExperimentConfig) -> Results:
         for sid, utterances in split.enrolment.items()
     }
 
-    speaker_fn = _stand_in_acoustic(config.seed) if config.simulate_branches else None
-    knowledge_fn = _stand_in_knowledge(config.seed) if config.simulate_branches else None
+    speaker_fn: ScoreFn | None = None
+    knowledge_fn: ScoreFn | None = None
+    branch_coverage: list[dict[str, Any]] = []
+
+    if config.simulate_branches:
+        speaker_fn = _stand_in_acoustic(config.seed)
+        knowledge_fn = _stand_in_knowledge(config.seed)
+    elif config.real_branches:
+        from .eval import branches as branches_mod
+
+        acoustic = branches_mod.acoustic_branch(corpus, split.enrolment)
+        knowledge = branches_mod.knowledge_branch(
+            corpus, split.enrolment, semantic=config.semantic_matcher
+        )
+        speaker_fn, knowledge_fn = acoustic.score, knowledge.score
+        # Held so their coverage can be read *after* scoring; the counters are
+        # zero until run_ablation has called them.
+        branch_objects = (acoustic, knowledge)
 
     report = run_ablation(
         graphs,
@@ -426,6 +471,26 @@ def run(config: ExperimentConfig) -> Results:
             "from a fixed distribution, not models: any fusion row is a test of "
             "the harness, not a measurement"
         )
+    if config.real_branches:
+        for branch in branch_objects:
+            branch_coverage.append(branch.coverage.to_dict())
+            if branch.coverage.measured == 0:
+                # Not a caveat. A branch that scored nothing contributed
+                # nothing, so every fusion row naming it is really a row
+                # without it, and reporting it as present would be false.
+                blockers.append(
+                    f"the {branch.coverage.name} branch scored no trials at all "
+                    f"({branch.coverage.summary()}), so every fusion row that "
+                    "names it was in fact fused without it"
+                )
+            elif branch.coverage.rate < 0.5:
+                blockers.append(
+                    f"the {branch.coverage.name} branch scored only "
+                    f"{branch.coverage.rate:.0%} of trials "
+                    f"({branch.coverage.summary()}); the unscored trials are "
+                    "fused from the remaining branches, so the table mixes two "
+                    "different systems"
+                )
     if not split.cross_session:
         blockers.append(
             "enrolment and probe speech were split within a session, which "
@@ -456,6 +521,7 @@ def run(config: ExperimentConfig) -> Results:
             "dropped_speakers": split.dropped_speakers,
             "cross_session": split.cross_session,
             "notes": corpus.notes,
+            "branch_coverage": branch_coverage,
         },
         report=report,
         coverage=corpus.coverage(),
@@ -766,6 +832,16 @@ def _readme(results: Results) -> str:
         f"{results.config.bootstrap} bootstrap resamples",
         "",
     ]
+    for branch in results.corpus.get("branch_coverage", []):
+        # How much of each non-CSBG branch actually scored. A fusion row reads
+        # as three branches whatever the coverage was, so the coverage has to
+        # sit next to it.
+        lines.insert(
+            -1,
+            f"- {branch['name']}: scored {branch['measured']} of "
+            f"{branch['measured'] + branch['unavailable']} trials "
+            f"({branch['coverage']:.1%})",
+        )
     if results.blockers:
         lines += ["## Why these numbers may not be reported", ""]
         lines += [f"{i}. {b}" for i, b in enumerate(results.blockers, 1)]
@@ -826,6 +902,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="stand-ins for the acoustic and knowledge branches; marks the run "
              "unreportable, and exists to exercise fusion without models",
     )
+    parser.add_argument(
+        "--real-branches", action="store_true",
+        help="score the acoustic branch with ECAPA-TDNN and the knowledge "
+             "branch with the answer matcher. Needs the corpus audio present "
+             "and downloads the speechbrain checkpoint on first use",
+    )
+    parser.add_argument(
+        "--no-semantic-matcher", action="store_true",
+        help="skip LaBSE in the knowledge branch (faster, weaker matcher)",
+    )
     return parser
 
 
@@ -841,6 +927,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         allow_within_session=args.within_session,
         figures=not args.no_figures,
         simulate_branches=args.simulate_branches,
+        real_branches=args.real_branches,
+        semantic_matcher=not args.no_semantic_matcher,
         n_simulated_speakers=args.speakers,
     )
 
@@ -848,6 +936,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         results = run(config)
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
+        return 2
+    except ImportError as exc:
+        # --real-branches only. Naming the flag matters: without it this reads
+        # as the package being broken rather than as one optional extra.
+        print(
+            f"error: --real-branches needs a dependency that is not installed: "
+            f"{exc}\nInstall it with `pip install -r requirements.txt`, or drop "
+            "--real-branches to run CSBG-only.",
+            file=sys.stderr,
+        )
         return 2
 
     path = write(results)

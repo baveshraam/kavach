@@ -420,3 +420,151 @@ class TestWithinSession:
         written = json.loads((tmp_path / "out" / "results.json").read_text())
         assert written["config"]["allow_within_session"] is True
         assert written["reportable"] is False
+
+
+# --------------------------------------------------------------------------
+# Real branches
+# --------------------------------------------------------------------------
+
+
+class _FakeBranch:
+    """A branch whose coverage is dictated by the test.
+
+    The real ones need the speechbrain checkpoint and LaBSE; what is asserted
+    here is the wiring around them -- that coverage reaches `results.json` and
+    that a branch which scored nothing blocks reporting.
+    """
+
+    def __init__(self, name, measured, unavailable, score=0.7):
+        from kavach.eval.branches import BranchCoverage
+
+        self.coverage = BranchCoverage(name)
+        self.coverage.measured = measured
+        self.coverage.unavailable = unavailable
+        if unavailable:
+            self.coverage.reasons["stubbed out"] = unavailable
+        self._score = score
+
+    def score(self, probe, claimed, utterances):
+        return self._score if probe == claimed else self._score - 0.3
+
+
+def _patch_branches(monkeypatch, acoustic, knowledge):
+    from kavach.eval import branches as B
+
+    monkeypatch.setattr(B, "acoustic_branch", lambda *a, **kw: acoustic)
+    monkeypatch.setattr(B, "knowledge_branch", lambda *a, **kw: knowledge)
+
+
+class TestRealBranches:
+    def test_config_rejects_both_branch_modes_at_once(self):
+        """One draws from a fixed distribution and one runs models. Silently
+        picking either would mislabel the run it produced."""
+        with pytest.raises(ValueError, match="cannot be both"):
+            X.ExperimentConfig(real_branches=True, simulate_branches=True)
+
+    def test_off_by_default(self):
+        assert X.ExperimentConfig().real_branches is False
+        assert X.build_parser().parse_args([]).real_branches is False
+
+    def test_coverage_reaches_the_results(self, tmp_path, monkeypatch):
+        _patch_branches(
+            monkeypatch,
+            _FakeBranch("acoustic (ECAPA)", measured=100, unavailable=0),
+            _FakeBranch("knowledge (answer matcher)", measured=100, unavailable=0),
+        )
+        path = C.save_manifest(_single_session_corpus(), tmp_path / "manifest.json")
+        results = X.run(
+            X.ExperimentConfig(
+                manifest=path, bootstrap=5, stability_budgets=(2,), figures=False,
+                allow_within_session=True, real_branches=True,
+            )
+        )
+        names = {b["name"] for b in results.corpus["branch_coverage"]}
+        assert names == {"acoustic (ECAPA)", "knowledge (answer matcher)"}
+
+    def test_a_branch_that_scored_nothing_blocks_reporting(self, tmp_path, monkeypatch):
+        """The failure this guards: a branch that measured nothing and a branch
+        that measured everything and found no signal produce the same fusion
+        table, and only the second is a result."""
+        _patch_branches(
+            monkeypatch,
+            _FakeBranch("acoustic (ECAPA)", measured=100, unavailable=0),
+            _FakeBranch("knowledge (answer matcher)", measured=0, unavailable=100),
+        )
+        path = C.save_manifest(_single_session_corpus(), tmp_path / "manifest.json")
+        results = X.run(
+            X.ExperimentConfig(
+                manifest=path, bootstrap=5, stability_budgets=(2,), figures=False,
+                allow_within_session=True, real_branches=True,
+            )
+        )
+        assert any("scored no trials at all" in b for b in results.blockers)
+        assert not results.reportable
+
+    def test_partial_coverage_blocks_reporting_too(self, tmp_path, monkeypatch):
+        """Below half, the table is fusing two different systems row by row."""
+        _patch_branches(
+            monkeypatch,
+            _FakeBranch("acoustic (ECAPA)", measured=10, unavailable=90),
+            _FakeBranch("knowledge (answer matcher)", measured=100, unavailable=0),
+        )
+        path = C.save_manifest(_single_session_corpus(), tmp_path / "manifest.json")
+        results = X.run(
+            X.ExperimentConfig(
+                manifest=path, bootstrap=5, stability_budgets=(2,), figures=False,
+                allow_within_session=True, real_branches=True,
+            )
+        )
+        assert any("only 10%" in b for b in results.blockers)
+
+    def test_full_coverage_adds_no_branch_blocker(self, tmp_path, monkeypatch):
+        _patch_branches(
+            monkeypatch,
+            _FakeBranch("acoustic (ECAPA)", measured=100, unavailable=0),
+            _FakeBranch("knowledge (answer matcher)", measured=100, unavailable=0),
+        )
+        path = C.save_manifest(_single_session_corpus(), tmp_path / "manifest.json")
+        results = X.run(
+            X.ExperimentConfig(
+                manifest=path, bootstrap=5, stability_budgets=(2,), figures=False,
+                allow_within_session=True, real_branches=True,
+            )
+        )
+        # Not a bare "branch" search: `Corpus.reportability` has its own
+        # blocker naming "the acoustic and integrity branches", which is about
+        # the corpus rather than about coverage.
+        assert not any("scored no trials" in b for b in results.blockers)
+        assert not any("scored only" in b for b in results.blockers)
+
+    def test_coverage_is_in_the_written_readme(self, tmp_path, monkeypatch):
+        """A fusion row reads as three branches whatever the coverage was, so
+        the coverage has to sit beside it in what a human opens first."""
+        _patch_branches(
+            monkeypatch,
+            _FakeBranch("acoustic (ECAPA)", measured=80, unavailable=20),
+            _FakeBranch("knowledge (answer matcher)", measured=100, unavailable=0),
+        )
+        path = C.save_manifest(_single_session_corpus(), tmp_path / "manifest.json")
+        code = X.main(
+            [
+                "--out", str(tmp_path / "out"), "--manifest", str(path),
+                "--bootstrap", "5", "--no-figures", "--within-session",
+                "--real-branches",
+            ]
+        )
+        assert code == 0
+        readme = (tmp_path / "out" / "README.md").read_text()
+        assert "acoustic (ECAPA): scored 80 of 100" in readme
+
+    def test_simulated_run_records_no_branch_coverage(self, tmp_path):
+        """Stand-ins have no coverage to report, and an empty list is how the
+        JSON says a run had no real branches."""
+        path = C.save_manifest(_single_session_corpus(), tmp_path / "manifest.json")
+        results = X.run(
+            X.ExperimentConfig(
+                manifest=path, bootstrap=5, stability_budgets=(2,), figures=False,
+                allow_within_session=True, simulate_branches=True,
+            )
+        )
+        assert results.corpus["branch_coverage"] == []
