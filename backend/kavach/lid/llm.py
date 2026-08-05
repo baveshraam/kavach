@@ -602,6 +602,21 @@ class Provider:
     env_keys: tuple[str, ...]
     signup: str
 
+    min_interval_seconds: float = 0.0
+    """Minimum gap between requests, to stay under a free tier's rate limit.
+
+    Retries alone are not enough, and this was learned in production. Tagging
+    fires one request per utterance as fast as the network allows, which on a
+    free tier trips the limit almost immediately; the backoff then escalates
+    1.6s, 2.8s, 5.7s, 12.4s, 24.1s and *still* does not clear a per-minute
+    window, because every retry that lands early consumes quota of its own.
+    Pacing prevents the condition instead of recovering from it, and it is
+    strictly faster: a 6-second gap beats a 45-second backoff.
+
+    Zero means no pacing -- correct for a paid endpoint, where this would only
+    slow the run down.
+    """
+
     def api_key(self) -> str | None:
         for key in self.env_keys:
             value = os.environ.get(key)
@@ -628,13 +643,31 @@ PROVIDERS: tuple[Provider, ...] = (
     Provider(
         name="gemini",
         base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-        # Not 2.5-flash: Google has closed it to new keys, and a key issued
-        # today gets a 404 naming the model rather than an auth error. If this
-        # one goes the same way, `client.models.list()` on the base_url below
-        # shows what the key can actually reach -- prefer a non-preview flash.
-        default_model="gemini-3.6-flash",
+        # Chosen by probing a real free key, not from the model list. Two
+        # different failures rule most of them out, and they look alike from a
+        # distance:
+        #
+        #   404  closed to new keys entirely (2.5-flash, 2.5-flash-lite)
+        #   429  open, but the free tier is 20 requests *per day*
+        #        (3.6-flash) or shares an exhausted pool (2.0-flash,
+        #        flash-latest)
+        #
+        # 3.1-flash-lite is the one that both answers and has quota. It is a
+        # smaller model than 3.6-flash and tagging quality bounds every number
+        # downstream, so this is a real trade -- `AnnotationReport.tagger_model`
+        # records which model produced a corpus for exactly that reason.
+        #
+        # If this one closes too, re-probe rather than guess: `models.list()`
+        # on the base_url below shows what the key can reach, and a one-call
+        # tag against each candidate shows which of those will actually serve.
+        default_model="gemini-3.1-flash-lite",
         env_keys=("GEMINI_API_KEY", "GOOGLE_API_KEY"),
         signup="https://aistudio.google.com/apikey",
+        # Free tier is ~15 requests/minute. Tagging fires as fast as the
+        # network allows without this, and the observed result was a 429 on
+        # nearly every call with backoff escalating past 45s and still not
+        # clearing. A 4s gap is strictly faster than that.
+        min_interval_seconds=4.0,
     ),
     Provider(
         name="groq",
@@ -642,6 +675,7 @@ PROVIDERS: tuple[Provider, ...] = (
         default_model="llama-3.3-70b-versatile",
         env_keys=("GROQ_API_KEY",),
         signup="https://console.groq.com/keys",
+        min_interval_seconds=2.0,
     ),
     Provider(
         name="openai",
@@ -690,6 +724,7 @@ class OpenAICompatibleTagger:
         api_key: str | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = 0.0,
+        min_interval: float | None = None,
     ) -> None:
         self.provider = (
             provider if isinstance(provider, Provider) else PROVIDERS_BY_NAME[provider]
@@ -705,9 +740,29 @@ class OpenAICompatibleTagger:
         """Transient failures retried over this tagger's life. **Report this
         for a corpus run.** A pass that needed forty retries took its labels
         from the same model as one that needed none, but it also means the run
-        was fighting a rate limit, and a future pass on a bigger corpus will
-        need pacing rather than luck."""
+        was fighting a rate limit rather than staying under it."""
         self.retry_seconds = 0.0
+        self.min_interval = (
+            min_interval if min_interval is not None
+            else self.provider.min_interval_seconds
+        )
+        self._last_request_at: float | None = None
+
+    def _pace(self, sleep: Callable[[float], None] = time.sleep) -> None:
+        """Wait out the provider's minimum gap before the next request.
+
+        Prevention, not recovery. Retries handle a limit that was already
+        tripped; this stops tripping it, which is both faster and cheaper --
+        every 429 still costs a request against some providers' quotas.
+        """
+        if self.min_interval <= 0:
+            return
+        now = time.monotonic()
+        if self._last_request_at is not None:
+            wait = self.min_interval - (now - self._last_request_at)
+            if wait > 0:
+                sleep(wait)
+        self._last_request_at = time.monotonic()
 
     def _note_retry(self, attempt: int, delay: float, exc: BaseException) -> None:
         """Count and announce a retry.
@@ -741,6 +796,11 @@ class OpenAICompatibleTagger:
                     "Groq's compatibility endpoints expect."
                 ) from exc
 
+            # `.env` is merged here rather than only in `make_tagger`: a
+            # tagger constructed directly -- which every diagnostic script and
+            # every explicit `--provider` does -- would otherwise report "no
+            # API key" with the key sitting in the file beside it.
+            load_api_keys()
             key = self._api_key or self.provider.api_key()
             if not key:
                 raise RuntimeError(
@@ -762,11 +822,14 @@ class OpenAICompatibleTagger:
         if not tokens:
             return []
 
-        # Retried, because this is the path a free-tier key takes and
-        # `tag_corpus` drives it once per utterance with no pacing. See
-        # `with_retries`.
-        response = with_retries(
-            lambda: self.client.chat.completions.create(
+        # Paced *and* retried. The pace keeps a free tier's per-minute limit
+        # from tripping at all; the retries cover what pacing cannot predict
+        # (a shared quota, a transient 5xx). Paced inside the retried callable
+        # so a retry waits its turn too -- retrying immediately after a 429 is
+        # how the backoff ends up escalating past 45 seconds without clearing.
+        def call() -> Any:
+            self._pace()
+            return self.client.chat.completions.create(
                 model=self.model,
                 max_tokens=max(self.max_tokens, output_budget(len(tokens))),
                 temperature=self.temperature,
@@ -785,9 +848,9 @@ class OpenAICompatibleTagger:
                         "schema": _json_schema(),
                     },
                 },
-            ),
-            on_retry=self._note_retry,
-        )
+            )
+
+        response = with_retries(call, on_retry=self._note_retry)
         self.stats.record(_usage_adapter(response.usage))
 
         choice = response.choices[0]

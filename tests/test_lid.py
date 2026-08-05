@@ -697,3 +697,66 @@ class TestOutputBudget:
     def test_it_never_returns_less_than_the_floor(self):
         assert all(llm_mod.output_budget(n) >= llm_mod.DEFAULT_MAX_TOKENS
                    for n in range(0, 200, 7))
+
+
+class TestPacing:
+    """Retries recover from a rate limit; pacing avoids tripping it.
+
+    Both are needed and they are not interchangeable. Against a real free tier
+    the retry-only path produced a 429 on nearly every call, with backoff
+    escalating 1.6s, 2.8s, 5.7s, 12.4s, 24.1s and *still* not clearing -- every
+    retry that landed early spent quota of its own. A 4-second gap is strictly
+    faster than a 45-second backoff.
+    """
+
+    def _tagger(self, **kw):
+        return llm_mod.OpenAICompatibleTagger(provider="gemini", api_key="k", **kw)
+
+    def test_free_providers_are_paced_by_default(self):
+        assert llm_mod.PROVIDERS_BY_NAME["gemini"].min_interval_seconds > 0
+        assert llm_mod.PROVIDERS_BY_NAME["groq"].min_interval_seconds > 0
+
+    def test_paid_providers_are_not(self):
+        """Pacing a paid endpoint only slows the run down."""
+        assert llm_mod.PROVIDERS_BY_NAME["openai"].min_interval_seconds == 0.0
+
+    def test_the_first_request_does_not_wait(self):
+        slept: list[float] = []
+        self._tagger()._pace(sleep=slept.append)
+        assert slept == []
+
+    def test_the_second_request_waits_out_the_gap(self):
+        tagger = self._tagger()
+        slept: list[float] = []
+        tagger._pace(sleep=slept.append)
+        tagger._pace(sleep=slept.append)
+        assert len(slept) == 1
+        assert slept[0] == pytest.approx(tagger.min_interval, abs=0.1)
+
+    def test_no_wait_when_enough_time_has_already_passed(self):
+        """A slow request has already served the gap; waiting again would
+        double the cost of every call for nothing."""
+        import time as _time
+
+        tagger = self._tagger(min_interval=0.05)
+        tagger._pace(sleep=lambda _: None)
+        _time.sleep(0.06)
+        slept: list[float] = []
+        tagger._pace(sleep=slept.append)
+        assert slept == []
+
+    def test_it_can_be_turned_off_per_tagger(self):
+        tagger = self._tagger(min_interval=0.0)
+        slept: list[float] = []
+        tagger._pace(sleep=slept.append)
+        tagger._pace(sleep=slept.append)
+        assert slept == []
+
+    def test_an_explicit_interval_overrides_the_provider(self):
+        assert self._tagger(min_interval=9.0).min_interval == 9.0
+
+    def test_the_default_gemini_model_is_one_that_answers(self):
+        """Chosen by probing a real key: 2.5-flash and 2.5-flash-lite 404 for
+        new keys, 3.6-flash allows 20 requests a day. Changing this back
+        without re-probing breaks corpus annotation."""
+        assert llm_mod.PROVIDERS_BY_NAME["gemini"].default_model == "gemini-3.1-flash-lite"
