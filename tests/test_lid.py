@@ -280,6 +280,97 @@ class TestPipelineWithoutLLM:
         assert pipeline.stats.total_tokens == 4
 
 
+class _StubTagger:
+    """Returns a fixed tag list, so merge behaviour can be tested without a key."""
+
+    supports_batch = False
+
+    def __init__(self, tags: list[TaggedToken]) -> None:
+        self._tags = tags
+
+    def tag(self, tokens, *, context=None):
+        return self._tags
+
+
+def _tag(text, language, confidence, semantic_class=SemanticClass.OTHER):
+    return TaggedToken(
+        text=text, language=language, semantic_class=semantic_class, confidence=confidence
+    )
+
+
+class TestTransliterationRecovery:
+    """Whisper sometimes writes English in Tamil script.
+
+    Observed on real returns: "morning six thirty" came back as "மானிங்க்
+    சிக்ஸ் தெட்டி". Script rules then call it Tamil at confidence 1.0, and the
+    rules-beat-LLM override used to make that final -- recording an English
+    choice the speaker did make as a Tamil one, concentrated in NUMBER and
+    TIME_DATE, which are among the most discriminative CSBG classes.
+    """
+
+    def test_confident_llm_english_overrules_tamil_script(self):
+        text = "மானிங்க் சிக்ஸ்"
+        pipeline = LIDPipeline(
+            llm_tagger=_StubTagger([
+                _tag("மானிங்க்", EN, 0.95, SemanticClass.TIME_DATE),
+                _tag("சிக்ஸ்", EN, 0.95, SemanticClass.NUMBER),
+            ])
+        )
+        tokens = pipeline.tag_utterance(text, utterance_id="u1").tokens
+
+        assert [t.language for t in tokens] == [EN, EN]
+        assert pipeline.stats.transliteration_recovered == 2
+
+    def test_unconfident_llm_does_not_overrule_tamil_script(self):
+        """Script stays the default. Only a confident model call displaces it."""
+        text = "மானிங்க் சிக்ஸ்"
+        pipeline = LIDPipeline(
+            llm_tagger=_StubTagger([
+                _tag("மானிங்க்", EN, 0.60),
+                _tag("சிக்ஸ்", EN, 0.84),
+            ])
+        )
+        tokens = pipeline.tag_utterance(text, utterance_id="u1").tokens
+
+        assert [t.language for t in tokens] == [TA, TA]
+        assert pipeline.stats.transliteration_recovered == 0
+
+    def test_semantic_class_survives_an_override_either_way(self):
+        """Rules never determine class, so the model's must be kept in both
+        branches -- dropping it would empty the class the token belongs to."""
+        pipeline = LIDPipeline(
+            llm_tagger=_StubTagger([_tag("சிக்ஸ்", EN, 0.60, SemanticClass.NUMBER)])
+        )
+        tokens = pipeline.tag_utterance("சிக்ஸ்", utterance_id="u1").tokens
+
+        assert tokens[0].language is TA  # script won
+        assert tokens[0].semantic_class is SemanticClass.NUMBER  # class still the model's
+
+    def test_agreement_is_not_counted_as_a_recovery(self):
+        pipeline = LIDPipeline(
+            llm_tagger=_StubTagger([_tag("வணக்கம்", TA, 1.0)])
+        )
+        pipeline.tag_utterance("வணக்கம்", utterance_id="u1")
+        assert pipeline.stats.transliteration_recovered == 0
+
+    def test_trust_rules_off_disables_the_override_entirely(self):
+        pipeline = LIDPipeline(
+            llm_tagger=_StubTagger([_tag("மானிங்க்", EN, 0.60)]),
+            trust_rules_over_llm=False,
+        )
+        tokens = pipeline.tag_utterance("மானிங்க்", utterance_id="u1").tokens
+        assert tokens[0].language is EN
+        assert pipeline.stats.transliteration_recovered == 0
+
+    def test_count_appears_in_the_summary(self):
+        """It has to be visible; a silent one-directional bias is the problem."""
+        pipeline = LIDPipeline(
+            llm_tagger=_StubTagger([_tag("சிக்ஸ்", EN, 0.99)])
+        )
+        pipeline.tag_utterance("சிக்ஸ்", utterance_id="u1")
+        assert "translit 1" in pipeline.stats.summary()
+
+
 class TestProviderResolution:
     """Which tagger the environment produces.
 

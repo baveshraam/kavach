@@ -19,6 +19,17 @@ from . import rules
 from .llm import LLMTagger, TaggedToken, to_tokens
 
 
+#: How confident the LLM must be before it may overrule Tamil script.
+#:
+#: Script is strong evidence and stays the default, but it is evidence about
+#: *what the ASR wrote*, not about what the speaker said. Whisper transliterates
+#: English into Tamil script on some utterances -- see
+#: `PipelineStats.transliteration_recovered` -- and on those tokens the script
+#: is confidently wrong. A high-confidence EN call on a Tamil-script token is
+#: essentially only produced by transliteration, so it is allowed to win.
+LLM_OVERRIDE_CONFIDENCE = 0.85
+
+
 @dataclass(slots=True)
 class PipelineStats:
     """Where tags came from. Report these -- they justify the design."""
@@ -29,6 +40,13 @@ class PipelineStats:
     fallback_guesses: int = 0
     """Tokens tagged without either stage resolving them. Non-zero means the
     output is not corpus-grade."""
+    transliteration_recovered: int = 0
+    """Tamil-script tokens the LLM confidently called English, i.e. English the
+    ASR transliterated. **Report this number.** It is the size of a bias that
+    would otherwise be silent and one-directional: every one of these tokens
+    would have been recorded as a Tamil choice the speaker did not make, and
+    they concentrate in NUMBER and TIME_DATE, two of the most discriminative
+    CSBG classes."""
 
     @property
     def rule_resolution_rate(self) -> float:
@@ -41,9 +59,15 @@ class PipelineStats:
 
     def summary(self) -> str:
         flag = "" if self.is_corpus_grade else f"  [!] {self.fallback_guesses} guessed"
+        translit = (
+            f" | translit {self.transliteration_recovered}"
+            if self.transliteration_recovered
+            else ""
+        )
         return (
             f"{self.total_tokens} tokens | rules {self.resolved_by_rules} "
-            f"({self.rule_resolution_rate:.1%}) | llm {self.resolved_by_llm}{flag}"
+            f"({self.rule_resolution_rate:.1%}) | llm {self.resolved_by_llm}"
+            f"{translit}{flag}"
         )
 
 
@@ -54,8 +78,13 @@ class LIDPipeline:
     llm_tagger: LLMTagger | None = None
     trust_rules_over_llm: bool = True
     """When True, a confident rule result (Tamil script) wins over the LLM.
-    Script evidence is definitionally correct and cheaper to trust; the LLM is
-    for cases where script is uninformative."""
+
+    Script evidence is cheap and nearly always right, and the LLM is mainly
+    there for the Latin-script tokens where script says nothing. But it is not
+    *definitionally* right, which is what this used to claim: it reports the
+    script the ASR chose, and Whisper transliterates English into Tamil script
+    on some utterances. A confident LLM call still wins -- see
+    `LLM_OVERRIDE_CONFIDENCE`."""
 
     stats: PipelineStats = field(default_factory=PipelineStats)
 
@@ -112,12 +141,22 @@ class LIDPipeline:
             merged = to_tokens(llm_tags, timings=timings)
             out: list[Token] = []
             for tok, rule in zip(merged, rule_results):
-                if (
+                disagree = (
                     self.trust_rules_over_llm
                     and rule.is_resolved
                     and rule.confidence >= 0.95
                     and rule.language is not tok.language
-                ):
+                )
+                if disagree and tok.lid_confidence >= LLM_OVERRIDE_CONFIDENCE:
+                    # The model is confident against confident script evidence.
+                    # On this corpus that means the ASR transliterated an
+                    # English word into Tamil script ("மானிங்க் சிக்ஸ்
+                    # தெட்டி" for "morning six thirty"), so the script is
+                    # describing Whisper's output rather than the speaker's
+                    # choice. Take the model and count it.
+                    self.stats.transliteration_recovered += 1
+                    disagree = False
+                if disagree:
                     # Script evidence beats the model. Keep the model's
                     # semantic class -- rules never determine that.
                     out.append(
