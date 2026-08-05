@@ -16,6 +16,10 @@ consent_forms/
 skg_store/
 # The API's store: voiceprints next to hometowns, schools and family names.
 data/
+# Returned participant recordings, before ingest pseudonymises them. The audio
+# extensions above already cover the files; this covers the *folder names*,
+# which arrive as people's first names and are therefore direct identifiers.
+recordings/
 
 # ---- Secrets ----
 .env

@@ -333,6 +333,18 @@ class SpeakerRecord:
     """Self-reported TA / EN / balanced. The §5.5 slice that most directly
     tests whether a VoxCeleb-trained embedding is fair to this population."""
 
+    script_id: str = ""
+    """Which read-speech script this speaker was given (`participant_scripts/`),
+    empty for spontaneous speech.
+
+    It is the speaker's language profile, and therefore the answer key: a
+    SCRIPTED corpus is scored by asking whether the recovered CSBG matches the
+    profile the script assigned, which is impossible without knowing which one
+    they read. It also means a result on a scripted corpus can be inspected for
+    the trivial failure -- two speakers given the same letter should *not*
+    separate, and if they do, the separation is acoustic or accidental rather
+    than lexical."""
+
     notes: str = ""
 
     def attributes(self) -> dict[str, str]:
@@ -657,15 +669,18 @@ class Corpus:
                     f"utterance {u.utterance_id!r} reports guessed tokens but has no annotation"
                 )
 
-        # Consent is a hard requirement, not a warning. See §9.
-        if self.provenance is Provenance.RECORDED:
+        # Consent is a hard requirement, not a warning. See §9. It attaches to
+        # every corpus whose audio came out of a human, which is RECORDED and
+        # SCRIPTED both: what consent covers is the voiceprint, and a scripted
+        # speaker's voice is exactly as clonable for having read invented words.
+        if self.provenance in (Provenance.RECORDED, Provenance.SCRIPTED):
             missing = sorted(s.speaker_id for s in self.speakers if not s.consent_ref)
             if missing:
                 problems.append(
-                    f"RECORDED speakers without a consent reference: {missing}. "
-                    "Recording a voiceprint alongside personal facts without a "
-                    "signed consent record is not a data-hygiene issue, it is the "
-                    "reason this corpus cannot be used at all."
+                    f"{self.provenance.value} speakers without a consent reference: "
+                    f"{missing}. Recording a voiceprint without a signed consent "
+                    "record is not a data-hygiene issue, it is the reason this "
+                    "corpus cannot be used at all."
                 )
 
         if check_audio:
@@ -700,6 +715,7 @@ class Corpus:
                     "gender": s.gender,
                     "age_band": s.age_band,
                     "dominant_language": s.dominant_language,
+                    "script_id": s.script_id,
                     "notes": s.notes,
                 }
                 for s in self.speakers
@@ -1117,6 +1133,7 @@ def _corpus_from_dict(data: dict[str, Any], *, root: Path | None = None) -> Corp
             gender=s.get("gender", ""),
             age_band=s.get("age_band", ""),
             dominant_language=s.get("dominant_language", ""),
+            script_id=s.get("script_id", ""),
             notes=s.get("notes", ""),
         )
         for s in data.get("speakers", [])

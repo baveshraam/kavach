@@ -372,6 +372,62 @@ def trim_silence(audio: Audio, *, threshold_db: float = -40.0, pad_ms: int = 100
     return Audio(audio.samples[start:end], audio.sample_rate, audio.source)
 
 
+def leading_silence_sec(audio: Audio, *, threshold_db: float = -40.0) -> float:
+    """Seconds before speech starts, by the same threshold `trim_silence` uses.
+
+    The recording protocol asks participants to pause a beat after pressing
+    record, and this is the check that they did. Two things depend on it.
+    `integrity.py` estimates a noise floor from the head of the clip, and a
+    file that opens mid-syllable gives it speech to measure instead. And a
+    recorder that starts capturing late clips the first phoneme, which costs a
+    token in a corpus where the tokens are the measurement.
+
+    Returns the full duration if nothing crosses the threshold, so a silent
+    file reads as "all silence" rather than "starts immediately".
+    """
+    if not len(audio.samples):
+        return 0.0
+
+    frame = max(1, int(0.01 * audio.sample_rate))
+    n_frames = len(audio.samples) // frame
+    if n_frames < 2:
+        return 0.0
+
+    frames = audio.samples[: n_frames * frame].reshape(n_frames, frame)
+    energy = np.sqrt(np.mean(frames**2, axis=1)) + 1e-10
+    db = 20 * np.log10(energy / (np.max(energy) + 1e-10))
+    voiced = np.where(db > threshold_db)[0]
+    if not len(voiced):
+        return audio.duration_sec
+    return float(voiced[0] * frame / audio.sample_rate)
+
+
+def estimate_snr_db(audio: Audio, *, window_sec: float = 0.3) -> float:
+    """Crude speech-to-noise ratio: loud percentile minus quietest window.
+
+    Deliberately not a VAD. The noise floor is the quietest `window_sec` of
+    the file and the speech level is the 95th percentile of the same windows,
+    which needs no model and no threshold tuning, and is stable on the one
+    thing it is used for -- comparing recordings against each other and
+    against a collection standard.
+
+    It reads *low* on a file with no pauses at all, because then the quietest
+    window still contains speech. That failure is in the safe direction: it
+    flags a recording for a human to check rather than passing it silently.
+    """
+    sr = audio.sample_rate
+    win = max(1, int(window_sec * sr))
+    if len(audio.samples) < 2 * win:
+        return 0.0
+
+    step = max(1, win // 6)
+    starts = range(0, len(audio.samples) - win, step)
+    rms = np.array([float(np.sqrt(np.mean(audio.samples[s : s + win] ** 2))) for s in starts])
+    noise = 20 * np.log10(rms.min() + 1e-12)
+    speech = 20 * np.log10(float(np.percentile(rms, 95)) + 1e-12)
+    return float(speech - noise)
+
+
 def prepare_for_embedding(
     audio: Audio, *, max_seconds: float = 30.0, do_trim: bool = True
 ) -> Audio:
@@ -423,6 +479,8 @@ __all__ = [
     "resample",
     "normalise_peak",
     "trim_silence",
+    "leading_silence_sec",
+    "estimate_snr_db",
     "prepare_for_embedding",
     "check_quality",
     "concatenate",
