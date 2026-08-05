@@ -568,3 +568,112 @@ class TestRealBranches:
             )
         )
         assert results.corpus["branch_coverage"] == []
+
+
+class TestGoldsetIntegration:
+    """Every language and semantic class in the corpus came from an LLM, so
+    every number in results.json is an estimate built on an unmeasured
+    estimate. The gold set is the measurement, and it belongs in the same file
+    as the numbers it qualifies -- not in a separate report nobody opens
+    alongside the EER."""
+
+    def _gold(self, tmp_path, corpus, *, prefilled=False, correct=True):
+        from kavach import goldset as G
+
+        rows = []
+        for u in corpus.utterances[:2]:
+            for i, tok in enumerate(u.tokens[:6]):
+                lang = tok.language.value if correct else (
+                    "EN" if tok.language.value == "TA" else "TA"
+                )
+                rows.append((u.utterance_id, i, tok.text, lang,
+                             tok.semantic_class.value))
+        path = tmp_path / "gold.tsv"
+        header = [
+            f"# {G.GOLDSET_FORMAT}",
+            f"# prefilled: {'yes' if prefilled else 'no'}",
+            "\t".join(G.COLUMNS),
+        ]
+        body = ["\t".join([*(str(c) for c in r), ""]) for r in rows]
+        path.write_text("\n".join(header + body) + "\n", encoding="utf-8")
+        return path
+
+    def _run(self, tmp_path, goldset):
+        corpus = _single_session_corpus()
+        path = C.save_manifest(corpus, tmp_path / "manifest.json")
+        return corpus, X.run(
+            X.ExperimentConfig(
+                manifest=path, bootstrap=5, stability_budgets=(2,), figures=False,
+                allow_within_session=True, goldset=goldset,
+            )
+        )
+
+    def test_without_a_goldset_the_gap_is_recorded_not_silent(self, tmp_path):
+        _, results = self._run(tmp_path, None)
+        assert results.annotation_quality["measured"] is False
+        assert "unmeasured" in results.annotation_quality["why"]
+
+    def test_a_missing_goldset_is_not_a_blocker(self, tmp_path):
+        """Demanding one before any number could be produced would stop the
+        pilot dead. The corpus is usable without it."""
+        _, results = self._run(tmp_path, None)
+        assert not any("gold set" in b for b in results.blockers)
+
+    def test_a_goldset_is_scored_into_the_results(self, tmp_path):
+        corpus = _single_session_corpus()
+        gold = self._gold(tmp_path, corpus)
+        _, results = self._run(tmp_path, gold)
+        assert results.annotation_quality["language_accuracy"] == 1.0
+        assert results.annotation_quality["n_tokens"] == 12
+
+    def test_disagreement_shows_up_as_a_lower_accuracy(self, tmp_path):
+        corpus = _single_session_corpus()
+        gold = self._gold(tmp_path, corpus, correct=False)
+        _, results = self._run(tmp_path, gold)
+        assert results.annotation_quality["language_accuracy"] == 0.0
+
+    def test_a_prefilled_goldset_blocks_reporting(self, tmp_path):
+        """Its accuracy measures adjudication rather than blind labelling, and
+        overstates the tagger."""
+        corpus = _single_session_corpus()
+        gold = self._gold(tmp_path, corpus, prefilled=True)
+        _, results = self._run(tmp_path, gold)
+        assert any("prefilled" in b for b in results.blockers)
+
+    def test_a_goldset_that_scores_nothing_blocks_reporting(self, tmp_path):
+        """Supplying one and measuring nothing is worse than not supplying one:
+        the config records a gold set was used."""
+        from kavach import goldset as G
+
+        path = tmp_path / "gold.tsv"
+        path.write_text(
+            f"# {G.GOLDSET_FORMAT}\n# prefilled: no\n"
+            + "\t".join(G.COLUMNS)
+            + "\nghost\t0\tword\tTA\tOTHER\t\n",
+            encoding="utf-8",
+        )
+        _, results = self._run(tmp_path, path)
+        assert any("scored no tokens" in b for b in results.blockers)
+
+    def test_it_reaches_the_written_json_and_readme(self, tmp_path):
+        corpus = _single_session_corpus()
+        gold = self._gold(tmp_path, corpus)
+        manifest = C.save_manifest(corpus, tmp_path / "manifest.json")
+        assert X.main([
+            "--out", str(tmp_path / "out"), "--manifest", str(manifest),
+            "--bootstrap", "5", "--no-figures", "--within-session",
+            "--goldset", str(gold),
+        ]) == 0
+        written = json.loads((tmp_path / "out" / "results.json").read_text())
+        assert written["annotation_quality"]["language_accuracy"] == 1.0
+        assert written["config"]["goldset"] == str(gold)
+        assert "word-level LID accuracy" in (tmp_path / "out" / "README.md").read_text()
+
+    def test_the_readme_says_unmeasured_when_there_is_none(self, tmp_path):
+        manifest = C.save_manifest(_single_session_corpus(), tmp_path / "manifest.json")
+        X.main([
+            "--out", str(tmp_path / "out"), "--manifest", str(manifest),
+            "--bootstrap", "5", "--no-figures", "--within-session",
+        ])
+        readme = (tmp_path / "out" / "README.md").read_text()
+        assert "**unmeasured** (no `--goldset`)" in readme

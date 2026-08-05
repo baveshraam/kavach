@@ -117,6 +117,14 @@ class ExperimentConfig:
     """Load LaBSE for the knowledge branch. Only meaningful with
     `real_branches`."""
 
+    goldset: Path | None = None
+    """Hand-labelled word-level LID, from `kavach.goldset`.
+
+    Scored and folded into `results.json` as `annotation_quality`. Not a
+    blocker when absent -- the corpus is usable without it -- but its absence
+    is recorded, because every other number here rests on annotations whose
+    accuracy is then unmeasured."""
+
     simulate_branches: bool = False
     """Substitute documented stand-ins for the acoustic and knowledge branches.
 
@@ -143,6 +151,7 @@ class ExperimentConfig:
             "simulate_branches": self.simulate_branches,
             "real_branches": self.real_branches,
             "semantic_matcher": self.semantic_matcher,
+            "goldset": str(self.goldset) if self.goldset else None,
             "figures": self.figures,
             "n_simulated_speakers": self.n_simulated_speakers,
         }
@@ -207,6 +216,13 @@ class Results:
     coverage: corpus_mod.CoverageReport
     consistency: dict[str, float] = field(default_factory=dict)
     blockers: list[str] = field(default_factory=list)
+    annotation_quality: dict[str, Any] = field(default_factory=dict)
+    """Word-level LID accuracy against human labels, when a gold set was given.
+
+    Every language and semantic class in this corpus came from an LLM, so every
+    number in this file is an estimate built on an unmeasured estimate. This is
+    the measurement, and it belongs beside them rather than in a separate
+    file nobody opens with the EER."""
     """Why these numbers may not be reported. Empty means they may be."""
 
     graphs: dict[str, CSBG] = field(default_factory=dict)
@@ -228,6 +244,7 @@ class Results:
             "config": self.config.to_dict(),
             "environment": self.environment,
             "corpus": self.corpus,
+            "annotation_quality": self.annotation_quality,
             "split": {
                 "dev_speakers": self.report.split.dev_speakers,
                 "test_speakers": self.report.split.test_speakers,
@@ -497,6 +514,37 @@ def run(config: ExperimentConfig) -> Results:
             "measures how well the estimator memorises one recording sitting"
         )
 
+    annotation_quality: dict[str, Any] = {}
+    if config.goldset is not None:
+        from . import goldset as goldset_mod
+
+        gold = goldset_mod.load(config.goldset)
+        gold_score = goldset_mod.score(gold, corpus)
+        annotation_quality = gold_score.to_dict()
+        if gold_score.n_tokens == 0:
+            blockers.append(
+                f"the gold set {config.goldset} scored no tokens "
+                f"({len(gold_score.misaligned)} utterances misaligned, "
+                f"{len(gold_score.missing_utterances)} missing), so word-level "
+                "LID accuracy is unmeasured despite a gold set being supplied"
+            )
+        elif gold_score.prefilled:
+            blockers.append(
+                "the gold set was prefilled with the system's own labels, so its "
+                "accuracy measures adjudication rather than blind labelling and "
+                "overstates the tagger"
+            )
+    else:
+        # Not a blocker. The corpus is usable without it, and demanding a gold
+        # set before any number could be produced would stop the pilot dead.
+        # But every number in this file rests on LLM annotations, so a run
+        # without one has to say that its foundation is unmeasured.
+        annotation_quality = {
+            "measured": False,
+            "why": "no gold set supplied (--goldset); word-level LID accuracy "
+                   "of the annotations every number here rests on is unmeasured",
+        }
+
     consistency: dict[str, float] = {}
     try:
         from .eval import figures as figures_mod
@@ -527,6 +575,7 @@ def run(config: ExperimentConfig) -> Results:
         coverage=corpus.coverage(),
         consistency=consistency,
         blockers=blockers,
+        annotation_quality=annotation_quality,
         graphs=graphs,
     )
 
@@ -832,6 +881,18 @@ def _readme(results: Results) -> str:
         f"{results.config.bootstrap} bootstrap resamples",
         "",
     ]
+    quality = results.annotation_quality
+    if quality.get("measured") is False:
+        lines.insert(-1, "- word-level LID accuracy: **unmeasured** (no `--goldset`)")
+    elif quality.get("n_tokens"):
+        lines.insert(
+            -1,
+            f"- word-level LID accuracy **{quality['language_accuracy']:.1%}** over "
+            f"{quality['n_tokens']} hand-labelled tokens from "
+            f"{quality['n_speakers']} speakers"
+            + (" *(prefilled — adjudication, not blind)*" if quality.get("prefilled") else ""),
+        )
+
     for branch in results.corpus.get("branch_coverage", []):
         # How much of each non-CSBG branch actually scored. A fusion row reads
         # as three branches whatever the coverage was, so the coverage has to
@@ -912,6 +973,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-semantic-matcher", action="store_true",
         help="skip LaBSE in the knowledge branch (faster, weaker matcher)",
     )
+    parser.add_argument(
+        "--goldset", type=Path, default=None,
+        help="hand-labelled word-level LID from `kavach.goldset`, scored into "
+             "results.json as annotation_quality. Without it, the accuracy of "
+             "the annotations every number here rests on is unmeasured",
+    )
     return parser
 
 
@@ -929,6 +996,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         simulate_branches=args.simulate_branches,
         real_branches=args.real_branches,
         semantic_matcher=not args.no_semantic_matcher,
+        goldset=args.goldset,
         n_simulated_speakers=args.speakers,
     )
 
