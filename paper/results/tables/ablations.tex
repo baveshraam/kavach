@@ -1,0 +1,25 @@
+% ---------------------------------------------------------------
+% NOT A RESULT. This table was generated from data that cannot be
+% reported. Reasons:
+%   - provenance is SCRIPTED: speakers read authored text, so a CSBG recovers the profile the script assigned; the acoustic and integrity branches are unaffected, but no §5.1 claim about natural code-switching follows from it
+%   - 4 speakers have one session, so no cross-session trial exists for them and §5.3 cannot be computed on this corpus
+%   - the knowledge (answer matcher) branch scored no trials at all (knowledge (answer matcher): 0/720 trials scored (0.0%); unmeasured: claimed speaker never answered this prompt at enrolment x720), so every fusion row that names it was in fact fused without it
+%   - enrolment and probe speech were split within a session, which measures how well the estimator memorises one recording sitting
+% Delete this banner only when kavach.experiments emits the table
+% without it -- do not edit it out by hand.
+% ---------------------------------------------------------------
+\begin{tabular}{llrr}
+\toprule
+Removed & Scope & EER \% & $\Delta$ EER \\
+\midrule
+equal branch weights & full system & 10.00 & +10.00 \\
+low-signal classes included & csbg & 40.00 & +10.00 \\
+transition stream removed & csbg & 40.00 & +10.00 \\
+graph metrics removed & csbg & 30.00 & +0.00 \\
+lexical stream removed & csbg & 40.00 & +10.00 \\
+cohort z-norm removed & csbg & 20.00 & -10.00 \\
+\bottomrule
+\end{tabular}
+
+% Each delta is against the un-ablated baseline OF ITS OWN SCOPE.
+% Rows in different scopes are not comparable with one another.
