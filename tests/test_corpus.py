@@ -237,6 +237,29 @@ class TestReportability:
         assert any("not independent speakers" in r
                    for r in two_session_corpus.reportability())
 
+    def test_scripted_is_not_reportable(self, two_session_corpus):
+        """Read speech recovers the script's profile, not the speaker's."""
+        two_session_corpus.provenance = C.Provenance.SCRIPTED
+        reasons = two_session_corpus.reportability()
+        assert any("SCRIPTED" in r for r in reasons)
+        assert any("script assigned" in r for r in reasons)
+
+    def test_every_unreportable_provenance_explains_itself(self):
+        """A bare 'provenance is X' tells a reader nothing about what to do.
+
+        The reason strings are what land in the paper's limitations section, so
+        a new Provenance member that falls through to the generic fallback is a
+        silent downgrade of the one guarantee this module makes.
+        """
+        for prov in C.Provenance:
+            if prov.is_reportable:
+                continue
+            cp = C.Corpus(name="t", provenance=prov)
+            reason = next(r for r in cp.reportability() if prov.value in r)
+            assert "not a recorded corpus" not in reason, (
+                f"{prov.value} has no entry in the reportability reason table"
+            )
+
 
 # --------------------------------------------------------------------------
 # The session split
