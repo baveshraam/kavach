@@ -13,13 +13,38 @@ import pytest
 
 from kavach.csbg.ontology import Language, SemanticClass
 from kavach.lid import rules
+from kavach.lid import llm as llm_mod
 from kavach.lid.llm import (
+    PROVIDERS,
+    PROVIDERS_BY_NAME,
     TaggedToken,
+    available_providers,
     build_system_prompt,
     estimate_cost,
+    make_tagger,
     to_tokens,
 )
 from kavach.lid.pipeline import LIDPipeline
+
+ALL_KEY_VARS = sorted(
+    {"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"}
+    | {k for p in PROVIDERS for k in p.env_keys}
+)
+
+
+@pytest.fixture
+def no_keys(monkeypatch):
+    """A machine with no provider key anywhere, and no `.env` to find.
+
+    Without the `_env_file_loaded` reset these tests would pass or fail
+    depending on whether some earlier test had already triggered the one-shot
+    load -- and without stubbing the loader they would read the developer's
+    real `.env` and see their real key.
+    """
+    for var in ALL_KEY_VARS:
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(llm_mod, "_env_file_loaded", True)
+    return monkeypatch
 
 TA, EN, NEU, NE = (
     Language.TA,
@@ -253,6 +278,112 @@ class TestPipelineWithoutLLM:
         pipeline.tag_utterance("naan poren", utterance_id="u1")
         pipeline.tag_utterance("நான் போறேன்", utterance_id="u2")
         assert pipeline.stats.total_tokens == 4
+
+
+class TestProviderResolution:
+    """Which tagger the environment produces.
+
+    The failure this guards against is silent: no key resolves, the pipeline
+    degrades to rules-only, rules never assign semantic class, every token
+    becomes OTHER, and every speaker's graph comes out identical -- a corpus
+    that annotates cleanly and separates nobody.
+    """
+
+    def test_no_key_anywhere_returns_none(self, no_keys):
+        assert available_providers() == []
+        assert make_tagger() is None
+
+    def test_gemini_key_selects_gemini(self, no_keys):
+        no_keys.setenv("GEMINI_API_KEY", "test-key")
+        assert [p.name for p in available_providers()] == ["gemini"]
+        assert make_tagger().provider.name == "gemini"
+
+    def test_google_api_key_is_accepted_for_gemini(self, no_keys):
+        """AI Studio hands out the same key under two names."""
+        no_keys.setenv("GOOGLE_API_KEY", "test-key")
+        assert [p.name for p in available_providers()] == ["gemini"]
+
+    def test_anthropic_wins_when_present(self, no_keys):
+        no_keys.setenv("ANTHROPIC_API_KEY", "test-key")
+        no_keys.setenv("GEMINI_API_KEY", "test-key")
+        assert type(make_tagger()).__name__ == "LLMTagger"
+
+    def test_gemini_beats_groq_when_both_present(self, no_keys):
+        """Ordering is a Tamil-quality judgement, not an accident. See PROVIDERS."""
+        no_keys.setenv("GROQ_API_KEY", "test-key")
+        no_keys.setenv("GEMINI_API_KEY", "test-key")
+        assert make_tagger().provider.name == "gemini"
+
+    def test_explicit_provider_overrides_preference(self, no_keys):
+        no_keys.setenv("GEMINI_API_KEY", "test-key")
+        no_keys.setenv("GROQ_API_KEY", "test-key")
+        assert make_tagger("groq").provider.name == "groq"
+
+    def test_unknown_provider_names_the_valid_ones(self, no_keys):
+        with pytest.raises(ValueError, match="gemini"):
+            make_tagger("gemeni")
+
+    def test_openai_compatible_taggers_declare_no_batch_api(self):
+        """`pipeline.tag_corpus` branches on this; a wrong default would make
+        it submit a batch job to an endpoint that has none."""
+        assert make_tagger("gemini", model="m").supports_batch is False
+
+
+class TestDotenvLoading:
+    """`.env` has to reach `os.environ`, which it did not used to.
+
+    `config.Settings` reads the same file but only maps `KAVACH_`-prefixed
+    names onto its own fields and exports nothing, so an unprefixed
+    `GEMINI_API_KEY=...` on disk left `make_tagger()` returning None with the
+    key sitting two directories up.
+    """
+
+    def test_env_file_key_becomes_visible(self, tmp_path, monkeypatch):
+        for var in ALL_KEY_VARS:
+            monkeypatch.delenv(var, raising=False)
+        (tmp_path / ".env").write_text("GEMINI_API_KEY=from-dotenv\n")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(llm_mod, "_env_file_loaded", False)
+
+        assert [p.name for p in available_providers()] == ["gemini"]
+        assert PROVIDERS_BY_NAME["gemini"].api_key() == "from-dotenv"
+
+    def test_real_environment_wins_over_the_file(self, tmp_path, monkeypatch):
+        """An exported key is a deliberate act; a checked-out `.env` may be stale."""
+        for var in ALL_KEY_VARS:
+            monkeypatch.delenv(var, raising=False)
+        (tmp_path / ".env").write_text("GEMINI_API_KEY=from-dotenv\n")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("GEMINI_API_KEY", "from-environ")
+        monkeypatch.setattr(llm_mod, "_env_file_loaded", False)
+
+        llm_mod.load_api_keys()
+        assert PROVIDERS_BY_NAME["gemini"].api_key() == "from-environ"
+
+    def test_reads_the_file_once_not_per_call(self, monkeypatch):
+        """`api_key()` runs on every provider on every lookup; without the
+        one-shot guard each of those would re-read the filesystem."""
+        import dotenv
+
+        reads = []
+        monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **k: reads.append(1))
+        monkeypatch.setattr(llm_mod, "_env_file_loaded", False)
+
+        llm_mod.load_api_keys()
+        llm_mod.load_api_keys()
+        available_providers()
+
+        assert len(reads) == 1
+
+    def test_missing_env_file_is_not_an_error(self, tmp_path, monkeypatch):
+        """A fresh checkout has no `.env`; that is the normal state."""
+        for var in ALL_KEY_VARS:
+            monkeypatch.delenv(var, raising=False)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(llm_mod, "_env_file_loaded", False)
+
+        llm_mod.load_api_keys()
+        assert make_tagger() is None
 
 
 class TestCostEstimate:

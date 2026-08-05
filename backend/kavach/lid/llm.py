@@ -482,7 +482,11 @@ PROVIDERS: tuple[Provider, ...] = (
     Provider(
         name="gemini",
         base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-        default_model="gemini-2.5-flash",
+        # Not 2.5-flash: Google has closed it to new keys, and a key issued
+        # today gets a 404 naming the model rather than an auth error. If this
+        # one goes the same way, `client.models.list()` on the base_url below
+        # shows what the key can actually reach -- prefer a non-preview flash.
+        default_model="gemini-3.6-flash",
         env_keys=("GEMINI_API_KEY", "GOOGLE_API_KEY"),
         signup="https://aistudio.google.com/apikey",
     ),
@@ -648,8 +652,38 @@ def _usage_adapter(usage: Any) -> _Usage:
     )
 
 
+_env_file_loaded = False
+
+
+def load_api_keys() -> None:
+    """Merge a `.env` file into `os.environ`, once per process.
+
+    `config.Settings` also reads `.env`, but pydantic-settings only maps the
+    `KAVACH_`-prefixed names onto its own fields and puts nothing back into the
+    environment -- so an unprefixed `GEMINI_API_KEY` sitting in `.env` was
+    invisible to `Provider.api_key()`, and the tagger reported "no key" with
+    the key on disk two directories up.
+
+    Real environment variables win over the file: an operator who exported a
+    key for one command means that key, not a stale one someone committed to
+    their checkout months ago.
+    """
+    global _env_file_loaded
+    if _env_file_loaded:
+        return
+    _env_file_loaded = True
+    try:
+        from dotenv import find_dotenv, load_dotenv
+    except ImportError:  # pragma: no cover - python-dotenv is in requirements
+        return
+    # usecwd: find it from where the command was run, not from this file, so
+    # `python -m kavach.annotate` works from the repo root and from backend/.
+    load_dotenv(find_dotenv(usecwd=True), override=False)
+
+
 def available_providers() -> list[Provider]:
     """Providers with a key present in the environment, in preference order."""
+    load_api_keys()
     return [p for p in PROVIDERS if p.api_key()]
 
 
@@ -668,6 +702,7 @@ def make_tagger(
         error -- it is the normal state on a fresh machine, and the caller
         (`annotate._default_pipeline`) degrades to rules-only and says so.
     """
+    load_api_keys()
     if provider == "anthropic" or (
         provider is None
         and (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"))
@@ -768,6 +803,7 @@ __all__ = [
     "PROVIDERS",
     "PROVIDERS_BY_NAME",
     "available_providers",
+    "load_api_keys",
     "make_tagger",
     "build_system_prompt",
     "to_tokens",
