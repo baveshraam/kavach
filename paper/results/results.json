@@ -3,13 +3,13 @@
   "reportable": false,
   "blockers": [
     "provenance is SCRIPTED: speakers read authored text, so a CSBG recovers the profile the script assigned; the acoustic and integrity branches are unaffected, but no §5.1 claim about natural code-switching follows from it",
-    "4 speakers have one session, so no cross-session trial exists for them and §5.3 cannot be computed on this corpus",
-    "the knowledge (answer matcher) branch scored no trials at all (knowledge (answer matcher): 0/720 trials scored (0.0%); unmeasured: claimed speaker never answered this prompt at enrolment x720), so every fusion row that names it was in fact fused without it",
+    "7 speakers have one session, so no cross-session trial exists for them and §5.3 cannot be computed on this corpus",
+    "the knowledge (answer matcher) branch scored no trials at all (knowledge (answer matcher): 0/2205 trials scored (0.0%); unmeasured: claimed speaker never answered this prompt at enrolment x2205), so every fusion row that names it was in fact fused without it",
     "enrolment and probe speech were split within a session, which measures how well the estimator memorises one recording sitting"
   ],
   "config": {
     "out_dir": "paper/results",
-    "manifest": "data/corpus_v1/manifest.json",
+    "manifest": "data/corpus_v2/manifest.json",
     "seed": 0,
     "dev_fraction": 0.4,
     "bootstrap": 500,
@@ -31,8 +31,8 @@
     "n_simulated_speakers": 24
   },
   "environment": {
-    "generated_utc": "2026-08-06T00:05:19+00:00",
-    "git_commit": "036f45f534132584dd80c074fcffef4c7b760326",
+    "generated_utc": "2026-08-06T10:55:02+00:00",
+    "git_commit": "f29680f7024c483a73bb1e27925fa7f53fac83e4",
     "git_dirty": true,
     "python": "3.11.15",
     "platform": "macOS-26.6-arm64-arm-64bit",
@@ -44,22 +44,22 @@
     }
   },
   "corpus": {
-    "name": "corpus_v1",
+    "name": "kavach_corpus_v2",
     "provenance": "SCRIPTED",
     "protocol_version": "v1",
     "ontology_version": "1.0",
-    "n_speakers": 4,
-    "n_sessions": 4,
-    "n_utterances": 56,
-    "n_annotated": 56,
-    "session_split": "within-session: 4 speakers, 36 enrolment / 20 probe utterances",
+    "n_speakers": 7,
+    "n_sessions": 7,
+    "n_utterances": 98,
+    "n_annotated": 98,
+    "session_split": "within-session: 7 speakers, 63 enrolment / 35 probe utterances",
     "dropped_speakers": [],
     "cross_session": false,
-    "notes": "Ingested from 4 speaker folders. 56 utterances, 24.3 minutes of speech. Transcripts are the reference scripts, not ASR output.",
+    "notes": "Ingested from 7 speaker folders. 98 utterances, 41.0 minutes of speech. Transcripts are the reference scripts, not ASR output.",
     "branch_coverage": [
       {
         "name": "acoustic (ECAPA)",
-        "measured": 720,
+        "measured": 2205,
         "unavailable": 0,
         "coverage": 1.0,
         "reasons": {}
@@ -67,10 +67,10 @@
       {
         "name": "knowledge (answer matcher)",
         "measured": 0,
-        "unavailable": 720,
+        "unavailable": 2205,
         "coverage": 0.0,
         "reasons": {
-          "claimed speaker never answered this prompt at enrolment": 720
+          "claimed speaker never answered this prompt at enrolment": 2205
         }
       }
     ]
@@ -81,23 +81,26 @@
   },
   "split": {
     "dev_speakers": [
-      "S01",
-      "S03"
+      "S02",
+      "S03",
+      "S05"
     ],
     "test_speakers": [
-      "S02",
-      "S04"
+      "S01",
+      "S04",
+      "S06",
+      "S07"
     ],
-    "n_dev_trials": 20,
-    "n_test_trials": 20,
-    "n_cohort_trials": 40
+    "n_dev_trials": 45,
+    "n_test_trials": 80,
+    "n_cohort_trials": 120
   },
   "fitted": {
     "weights": {
-      "speaker_embedding": 0.7418348096142023,
-      "csbg": 0.25816519038579766
+      "speaker_embedding": 0.6457200976806746,
+      "csbg": 0.35427990231932543
     },
-    "threshold": 0.818619004039204,
+    "threshold": 0.8186190040392041,
     "veto_floor": null,
     "veto_frr_cost": 0.0,
     "weights_source": "logistic regression on dev",
@@ -127,8 +130,8 @@
       "far_at_frr_1pct": 0.0,
       "frr_at_far_1pct": 0.0,
       "auc": 1.0,
-      "n_genuine": 10,
-      "n_impostor": 10,
+      "n_genuine": 20,
+      "n_impostor": 60,
       "n_vetoed": 0,
       "is_reliable": false
     },
@@ -137,23 +140,23 @@
       "branches": [
         "csbg"
       ],
-      "eer": 0.3,
+      "eer": 0.2833333333333333,
       "eer_ci": [
-        0.1,
-        0.5262499999999989
+        0.18333333333333332,
+        0.4
       ],
-      "min_dcf": 0.6999999999999998,
+      "min_dcf": 0.95,
       "min_dcf_params": [
         0.05,
         1.0,
         1.0
       ],
       "far_at_frr_1pct": null,
-      "frr_at_far_1pct": 0.7,
-      "auc": 0.72,
-      "n_genuine": 10,
-      "n_impostor": 10,
-      "n_vetoed": 4,
+      "frr_at_far_1pct": 0.95,
+      "auc": 0.7,
+      "n_genuine": 20,
+      "n_impostor": 60,
+      "n_vetoed": 16,
       "is_reliable": false
     },
     {
@@ -176,8 +179,8 @@
       "far_at_frr_1pct": 0.0,
       "frr_at_far_1pct": 0.0,
       "auc": 1.0,
-      "n_genuine": 10,
-      "n_impostor": 10,
+      "n_genuine": 20,
+      "n_impostor": 60,
       "n_vetoed": 0,
       "is_reliable": false
     }
@@ -186,143 +189,143 @@
     {
       "name": "equal branch weights",
       "scope": "full system",
-      "eer": 0.1,
-      "delta": 0.1,
+      "eer": 0.03333333333333333,
+      "delta": 0.03333333333333333,
       "note": "What the logistic-regression fit was worth."
     },
     {
       "name": "low-signal classes included",
       "scope": "csbg",
-      "eer": 0.4,
-      "delta": 0.10000000000000003,
+      "eer": 0.25,
+      "delta": -0.033333333333333326,
       "note": "FUNCTION_WORD, NAMED_ENTITY and OTHER put back. Excluding them is a hypothesis stated in ontology.LOW_SIGNAL_CLASSES; a positive delta confirms it on this data, a negative one retires it."
     },
     {
       "name": "transition stream removed",
       "scope": "csbg",
-      "eer": 0.4,
-      "delta": 0.10000000000000003,
+      "eer": 0.2833333333333333,
+      "delta": 0.0,
       "note": "P(lang given class and prev_lang) dropped, its weight redistributed. Transition cells are ~4x sparser than lexical ones, so this is the row that says whether sequence information survives short probes."
     },
     {
       "name": "graph metrics removed",
       "scope": "csbg",
-      "eer": 0.3,
+      "eer": 0.2833333333333333,
       "delta": 0.0,
       "note": "CMI and I-index dropped. They are already ramped down on short probes by csbg.scoring, so a near-zero delta here is expected and is a check on that ramp rather than a finding."
     },
     {
       "name": "lexical stream removed",
       "scope": "csbg",
-      "eer": 0.4,
-      "delta": 0.10000000000000003,
+      "eer": 0.3,
+      "delta": 0.016666666666666663,
       "note": "Transitions and metrics alone. The complement of the row above: together they say how much of the CSBG is carried by which language a class takes versus how the speaker moves between them."
     },
     {
       "name": "cohort z-norm removed",
       "scope": "csbg",
-      "eer": 0.2,
-      "delta": -0.09999999999999998,
+      "eer": 0.26666666666666666,
+      "delta": -0.016666666666666663,
       "note": "Raw LLRs are not comparable across claimed speakers: an unusual speaker produces large-magnitude scores for everyone. Expect this row to read ~0 on a single branch and still matter in fusion. EER is rank-based, so a per-speaker rescale only moves it by *reordering* speakers against each other -- which needs the population to vary in score scale in the first place. Fusion is not rank-based: it adds the branch to others on a shared [0, 1] scale, where the shift is exactly what makes the sum comparable. A near-zero delta here alongside a large one in the configuration table is the expected shape, not a contradiction."
     }
   ],
   "stability": [
     {
       "n_utterances": 2,
-      "approx_seconds": 52.01174999999999,
+      "approx_seconds": 50.19761224489796,
       "eer": 0.25,
-      "ci_low": 0.125,
-      "ci_high": 0.375
+      "ci_low": 0.20238095238095238,
+      "ci_high": 0.32142857142857145
     },
     {
       "n_utterances": 5,
-      "approx_seconds": 130.029375,
-      "eer": 0.1875,
-      "ci_low": 0.10416666666666667,
-      "ci_high": 0.3125
+      "approx_seconds": 125.4940306122449,
+      "eer": 0.2857142857142857,
+      "ci_low": 0.18586309523809527,
+      "ci_high": 0.3273809523809524
     }
   ],
   "fairness": [],
   "coverage": {
-    "total_tokens": 3304,
-    "total_choice_tokens": 2729,
-    "n_speakers": 4,
+    "total_tokens": 6495,
+    "total_choice_tokens": 5442,
+    "n_speakers": 7,
     "min_tokens_for_own_evidence": 4.0,
     "classes": [
       {
         "class": "NUMBER",
-        "n_tokens": 164,
-        "n_speakers_with_own_evidence": 4
+        "n_tokens": 352,
+        "n_speakers_with_own_evidence": 7
       },
       {
         "class": "TIME_DATE",
-        "n_tokens": 221,
-        "n_speakers_with_own_evidence": 4
+        "n_tokens": 434,
+        "n_speakers_with_own_evidence": 7
       },
       {
         "class": "KINSHIP",
-        "n_tokens": 78,
-        "n_speakers_with_own_evidence": 4
+        "n_tokens": 141,
+        "n_speakers_with_own_evidence": 7
       },
       {
         "class": "FOOD",
-        "n_tokens": 127,
-        "n_speakers_with_own_evidence": 4
+        "n_tokens": 238,
+        "n_speakers_with_own_evidence": 7
       },
       {
         "class": "PLACE_LOCAL",
-        "n_tokens": 104,
-        "n_speakers_with_own_evidence": 4
+        "n_tokens": 173,
+        "n_speakers_with_own_evidence": 7
       },
       {
         "class": "PLACE_GLOBAL",
-        "n_tokens": 9,
+        "n_tokens": 13,
         "n_speakers_with_own_evidence": 1
       },
       {
         "class": "TECH_DIGITAL",
-        "n_tokens": 18,
-        "n_speakers_with_own_evidence": 2
+        "n_tokens": 36,
+        "n_speakers_with_own_evidence": 5
       },
       {
         "class": "EDU_WORK",
-        "n_tokens": 87,
-        "n_speakers_with_own_evidence": 4
+        "n_tokens": 150,
+        "n_speakers_with_own_evidence": 7
       },
       {
         "class": "MONEY_COMMERCE",
-        "n_tokens": 61,
-        "n_speakers_with_own_evidence": 4
+        "n_tokens": 97,
+        "n_speakers_with_own_evidence": 7
       },
       {
         "class": "EMOTION_STATE",
-        "n_tokens": 39,
-        "n_speakers_with_own_evidence": 4
+        "n_tokens": 76,
+        "n_speakers_with_own_evidence": 7
       },
       {
         "class": "BODY_HEALTH",
-        "n_tokens": 23,
-        "n_speakers_with_own_evidence": 3
+        "n_tokens": 50,
+        "n_speakers_with_own_evidence": 6
       },
       {
         "class": "TRANSPORT",
-        "n_tokens": 23,
-        "n_speakers_with_own_evidence": 3
+        "n_tokens": 67,
+        "n_speakers_with_own_evidence": 6
       },
       {
         "class": "RELIGION_FESTIVAL",
-        "n_tokens": 25,
-        "n_speakers_with_own_evidence": 4
+        "n_tokens": 43,
+        "n_speakers_with_own_evidence": 7
       },
       {
         "class": "MEDIA_ENTERTAIN",
-        "n_tokens": 69,
-        "n_speakers_with_own_evidence": 4
+        "n_tokens": 112,
+        "n_speakers_with_own_evidence": 7
       },
       {
         "class": "DISCOURSE_MARKER",
-        "n_tokens": 100,
-        "n_speakers_with_own_evidence": 4
+        "n_tokens": 133,
+        "n_speakers_with_own_evidence": 7
       },
       {
         "class": "POLITENESS",
@@ -331,18 +334,18 @@
       },
       {
         "class": "QUANTITY_MEASURE",
-        "n_tokens": 205,
-        "n_speakers_with_own_evidence": 4
+        "n_tokens": 348,
+        "n_speakers_with_own_evidence": 7
       },
       {
         "class": "ACTION_VERB",
-        "n_tokens": 416,
-        "n_speakers_with_own_evidence": 4
+        "n_tokens": 687,
+        "n_speakers_with_own_evidence": 7
       },
       {
         "class": "FUNCTION_WORD",
-        "n_tokens": 735,
-        "n_speakers_with_own_evidence": 4
+        "n_tokens": 1919,
+        "n_speakers_with_own_evidence": 7
       },
       {
         "class": "NAMED_ENTITY",
@@ -351,93 +354,93 @@
       },
       {
         "class": "OTHER",
-        "n_tokens": 222,
-        "n_speakers_with_own_evidence": 4
+        "n_tokens": 370,
+        "n_speakers_with_own_evidence": 7
       }
     ],
     "prompts": [
       {
         "prompt_id": "p01_family",
-        "n_utterances": 4,
-        "mean_tokens": 54.25,
-        "hit_rate": 0.75
+        "n_utterances": 7,
+        "mean_tokens": 69.85714285714286,
+        "hit_rate": 0.8571428571428571
       },
       {
         "prompt_id": "p02_food",
-        "n_utterances": 4,
-        "mean_tokens": 54.0,
-        "hit_rate": 0.75
+        "n_utterances": 7,
+        "mean_tokens": 66.14285714285714,
+        "hit_rate": 0.8571428571428571
       },
       {
         "prompt_id": "p03_commute",
-        "n_utterances": 4,
-        "mean_tokens": 72.75,
+        "n_utterances": 7,
+        "mean_tokens": 77.28571428571429,
         "hit_rate": 1.0
       },
       {
         "prompt_id": "p04_money",
-        "n_utterances": 4,
-        "mean_tokens": 74.0,
+        "n_utterances": 7,
+        "mean_tokens": 79.0,
         "hit_rate": 1.0
       },
       {
         "prompt_id": "p05_phone",
-        "n_utterances": 4,
-        "mean_tokens": 77.75,
+        "n_utterances": 7,
+        "mean_tokens": 78.28571428571429,
         "hit_rate": 1.0
       },
       {
         "prompt_id": "p06_study",
-        "n_utterances": 4,
-        "mean_tokens": 77.25,
+        "n_utterances": 7,
+        "mean_tokens": 81.42857142857143,
         "hit_rate": 1.0
       },
       {
         "prompt_id": "p07_festival",
-        "n_utterances": 4,
-        "mean_tokens": 65.5,
+        "n_utterances": 7,
+        "mean_tokens": 76.28571428571429,
         "hit_rate": 1.0
       },
       {
         "prompt_id": "p08_travel",
-        "n_utterances": 4,
-        "mean_tokens": 56.25,
+        "n_utterances": 7,
+        "mean_tokens": 68.57142857142857,
         "hit_rate": 1.0
       },
       {
         "prompt_id": "p09_film",
-        "n_utterances": 4,
-        "mean_tokens": 73.75,
+        "n_utterances": 7,
+        "mean_tokens": 77.71428571428571,
         "hit_rate": 1.0
       },
       {
         "prompt_id": "p10_numbers",
-        "n_utterances": 4,
-        "mean_tokens": 38.75,
+        "n_utterances": 7,
+        "mean_tokens": 39.0,
         "hit_rate": 1.0
       },
       {
         "prompt_id": "p11_health",
-        "n_utterances": 4,
-        "mean_tokens": 52.75,
+        "n_utterances": 7,
+        "mean_tokens": 66.42857142857143,
         "hit_rate": 1.0
       },
       {
         "prompt_id": "p12_market",
-        "n_utterances": 4,
-        "mean_tokens": 63.0,
+        "n_utterances": 7,
+        "mean_tokens": 72.0,
         "hit_rate": 1.0
       },
       {
         "prompt_id": "p13_hometown",
-        "n_utterances": 4,
-        "mean_tokens": 60.5,
+        "n_utterances": 7,
+        "mean_tokens": 70.14285714285714,
         "hit_rate": 1.0
       },
       {
         "prompt_id": "p14_control_name",
-        "n_utterances": 4,
-        "mean_tokens": 5.5,
+        "n_utterances": 7,
+        "mean_tokens": 5.714285714285714,
         "hit_rate": 1.0
       }
     ],
@@ -448,10 +451,13 @@
     "S01": 0.5577167529965495,
     "S02": 0.8420216643363434,
     "S03": 0.6938172697175308,
-    "S04": 0.47984093059880323
+    "S04": 0.47984093059880323,
+    "S05": 0.802358937519489,
+    "S06": 0.8624443732661204,
+    "S07": 0.76304126926542
   },
   "caveats": [
-    "CSBG scores are cohort z-normalised. Statistics are fitted from impostor trials whose *probe* is a dev speaker, which covers test models (2/2 test speakers) without using a test probe -- see `cohort_fitting_trials`. Report un-normalised results too: z-norm usually helps materially, and hiding that is hiding a design decision.",
+    "CSBG scores are cohort z-normalised. Statistics are fitted from impostor trials whose *probe* is a dev speaker, which covers test models (4/4 test speakers) without using a test probe -- see `cohort_fitting_trials`. Report un-normalised results too: z-norm usually helps materially, and hiding that is hiding a design decision.",
     "Branches not measured on this run: knowledge. Rows that would have used them are omitted rather than scored, so this table compares fewer systems than the paper's -- it is not a partial version of it.",
     "No veto floor bought any FAR reduction inside the 2% FRR budget on dev. Report that the veto was fitted and discarded -- that is a result about the branch, not an omission."
   ]
