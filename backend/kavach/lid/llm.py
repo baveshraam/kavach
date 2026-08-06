@@ -976,20 +976,49 @@ def make_tagger(
 
 
 def to_tokens(
-    tagged: list[TaggedToken], *, timings: list[tuple[int, int]] | None = None
-) -> list[Token]:
+    tagged: list[TaggedToken],
+    *,
+    surface: list[str] | None = None,
+    timings: list[tuple[int, int]] | None = None,
+) -> tuple[list[Token], int]:
     """Convert tagger output into CSBG `Token` objects.
 
     Args:
         tagged: Model output.
+        surface: The tokens that were *sent*. **Pass this.** When given, it is
+            authoritative for `Token.text` and the model's own `text` is used
+            only to detect that it disagreed.
         timings: Optional (start_ms, end_ms) per token from ASR word timestamps.
+
+    Returns:
+        (tokens, n_rewritten) -- how many token texts the model changed.
+
+    Why `surface` is authoritative
+    ------------------------------
+    The model's job is to assign a language and a class, not to rewrite the
+    word. Taking its `text` field means the corpus records the model's
+    rendering of what the ASR wrote, and `_check_alignment` cannot catch that
+    because it compares *counts*: a model that silently normalises a token
+    returns the right number of them.
+
+    This is not hypothetical. On the first real corpus pass the tagger returned
+    an **empty string** for a `U+FFFD` replacement character in two utterances.
+    Counts matched, so nothing complained, and the stored token no longer
+    matched the transcript it came from -- which breaks every downstream
+    alignment: gold-set scoring, word timings, splice detection.
     """
+    n_rewritten = 0
     out: list[Token] = []
     for i, t in enumerate(tagged):
         start, end = timings[i] if timings and i < len(timings) else (0, 0)
+        text = t.text
+        if surface is not None and i < len(surface):
+            if surface[i] != t.text:
+                n_rewritten += 1
+            text = surface[i]
         out.append(
             Token(
-                text=t.text,
+                text=text,
                 language=t.language,
                 semantic_class=t.semantic_class,
                 lid_confidence=t.confidence,
@@ -997,7 +1026,7 @@ def to_tokens(
                 end_ms=end,
             )
         )
-    return out
+    return out, n_rewritten
 
 
 def estimate_cost(

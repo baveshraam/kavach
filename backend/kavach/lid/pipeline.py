@@ -48,6 +48,16 @@ class PipelineStats:
     they concentrate in NUMBER and TIME_DATE, two of the most discriminative
     CSBG classes."""
 
+    rewritten_by_model: int = 0
+    """Tokens whose text the model changed, and which were restored from the
+    surface form.
+
+    Not an error -- the correction is automatic -- but a non-zero count means
+    the tagger is editing rather than labelling, which is worth knowing about a
+    model before trusting its labels. On the first real corpus pass this was
+    the tagger returning an empty string for a `U+FFFD` replacement character;
+    `_check_alignment` compares counts, so nothing caught it."""
+
     @property
     def rule_resolution_rate(self) -> float:
         return self.resolved_by_rules / self.total_tokens if self.total_tokens else 0.0
@@ -64,10 +74,15 @@ class PipelineStats:
             if self.transliteration_recovered
             else ""
         )
+        rewritten = (
+            f" | text restored {self.rewritten_by_model}"
+            if self.rewritten_by_model
+            else ""
+        )
         return (
             f"{self.total_tokens} tokens | rules {self.resolved_by_rules} "
             f"({self.rule_resolution_rate:.1%}) | llm {self.resolved_by_llm}"
-            f"{translit}{flag}"
+            f"{translit}{rewritten}{flag}"
         )
 
 
@@ -138,7 +153,11 @@ class LIDPipeline:
     ) -> list[Token]:
         """Combine rule and LLM evidence into final tokens."""
         if llm_tags is not None:
-            merged = to_tokens(llm_tags, timings=timings)
+            # `surface` is authoritative for the token text -- the model
+            # assigns labels, it does not get to rewrite the word. See
+            # `to_tokens` and `PipelineStats.rewritten_by_model`.
+            merged, rewritten = to_tokens(llm_tags, surface=surface, timings=timings)
+            self.stats.rewritten_by_model += rewritten
             out: list[Token] = []
             for tok, rule in zip(merged, rule_results):
                 disagree = (

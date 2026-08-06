@@ -217,15 +217,16 @@ class TestTokenConversion:
             TaggedToken(text="naan", language=TA, semantic_class=SemanticClass.FUNCTION_WORD, confidence=0.95),
             TaggedToken(text="college", language=EN, semantic_class=SemanticClass.EDU_WORK, confidence=1.0),
         ]
-        tokens = to_tokens(tagged, timings=[(0, 300), (300, 800)])
+        tokens, rewritten = to_tokens(tagged, timings=[(0, 300), (300, 800)])
         assert [t.text for t in tokens] == ["naan", "college"]
+        assert rewritten == 0
         assert tokens[0].language is TA
         assert tokens[1].semantic_class is SemanticClass.EDU_WORK
         assert tokens[1].start_ms == 300
 
     def test_missing_timings_default_to_zero(self):
         tagged = [TaggedToken(text="x", language=EN, semantic_class=SemanticClass.OTHER)]
-        assert to_tokens(tagged)[0].start_ms == 0
+        assert to_tokens(tagged)[0][0].start_ms == 0
 
     def test_confidence_clamped(self):
         """Structured-output schemas cannot express numeric bounds."""
@@ -760,3 +761,78 @@ class TestPacing:
         new keys, 3.6-flash allows 20 requests a day. Changing this back
         without re-probing breaks corpus annotation."""
         assert llm_mod.PROVIDERS_BY_NAME["gemini"].default_model == "gemini-3.1-flash-lite"
+
+
+class TestSurfaceIsAuthoritative:
+    """The model assigns labels; it does not get to rewrite the word.
+
+    `_check_alignment` compares counts, so a model that silently normalises a
+    token returns the right number of them and nothing complains. On the first
+    real corpus pass the tagger returned an empty string for a U+FFFD
+    replacement character in two utterances, and the stored token stopped
+    matching the transcript it came from -- which breaks gold-set scoring, word
+    timings and splice detection, none of which would have reported why.
+    """
+
+    def _tagged(self, texts):
+        return [
+            TaggedToken(text=x, language=EN, semantic_class=SemanticClass.OTHER)
+            for x in texts
+        ]
+
+    def test_surface_wins_over_the_models_text(self):
+        tokens, rewritten = to_tokens(
+            self._tagged(["", "college"]), surface=["\ufffd", "college"]
+        )
+        assert [t.text for t in tokens] == ["\ufffd", "college"]
+        assert rewritten == 1
+
+    def test_agreement_is_not_counted_as_a_rewrite(self):
+        _, rewritten = to_tokens(
+            self._tagged(["naan", "college"]), surface=["naan", "college"]
+        )
+        assert rewritten == 0
+
+    def test_labels_still_come_from_the_model(self):
+        tagged = [
+            TaggedToken(text="x", language=TA, semantic_class=SemanticClass.FOOD,
+                        confidence=0.8)
+        ]
+        tokens, _ = to_tokens(tagged, surface=["idli"])
+        assert tokens[0].text == "idli"
+        assert tokens[0].language is TA
+        assert tokens[0].semantic_class is SemanticClass.FOOD
+        assert tokens[0].lid_confidence == 0.8
+
+    def test_without_surface_the_models_text_is_used(self):
+        """Back-compatible: callers that cannot supply the surface forms still
+        work, they just lose the protection."""
+        tokens, rewritten = to_tokens(self._tagged(["whatever"]))
+        assert tokens[0].text == "whatever"
+        assert rewritten == 0
+
+    def _pipeline(self):
+        """A tagger that blanks whatever it is given, as the real one did."""
+        return LIDPipeline(
+            llm_tagger=_StubTagger([_tag("", EN, 0.9, SemanticClass.OTHER)])
+        )
+
+    def test_the_pipeline_restores_the_surface_form(self):
+        """End to end through LIDPipeline, which is where it matters."""
+        pipeline = self._pipeline()
+        result = pipeline.tag_utterance("idli", utterance_id="u")
+        assert result.tokens[0].text == "idli"
+        assert pipeline.stats.rewritten_by_model == 1
+
+    def test_the_count_reaches_the_summary(self):
+        pipeline = self._pipeline()
+        pipeline.tag_utterance("idli", utterance_id="u")
+        assert "text restored 1" in pipeline.stats.summary()
+
+    def test_a_well_behaved_tagger_reports_nothing(self):
+        pipeline = LIDPipeline(
+            llm_tagger=_StubTagger([_tag("idli", EN, 0.9, SemanticClass.FOOD)])
+        )
+        pipeline.tag_utterance("idli", utterance_id="u")
+        assert pipeline.stats.rewritten_by_model == 0
+        assert "text restored" not in pipeline.stats.summary()
