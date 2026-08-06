@@ -15,6 +15,7 @@ a zero.
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -292,6 +293,105 @@ def parse_nested_literals(source: str, interface: str) -> list[set[str]]:
 
 def aliases(model: type[schemas.Model]) -> set[str]:
     return {f.alias or name for name, f in model.model_fields.items()}
+
+
+class TestPackageEntryPoint:
+    """`kavach.api`'s lazy re-exports, checked in a *fresh* interpreter.
+
+    This has to be a subprocess. By the time this module is collected, pytest
+    has already imported `kavach.api.app`, so the submodule is in `sys.modules`
+    and bound onto the parent package -- which is exactly the state in which
+    the bug this guards against is invisible. It shipped in a lazy `__getattr__`
+    marked `# pragma: no cover`, and 891 passing tests said nothing while
+    `uvicorn kavach.api:app` died on a RecursionError.
+    """
+
+    def _fresh(self, body: str) -> str:
+        import subprocess
+        import sys
+
+        backend = str(Path(__file__).resolve().parents[1] / "backend")
+        result = subprocess.run(
+            [sys.executable, "-c", body],
+            capture_output=True,
+            text=True,
+            env={**os.environ, "PYTHONPATH": backend},
+            timeout=120,
+        )
+        assert result.returncode == 0, (
+            f"a clean interpreter could not resolve the attribute:\n{result.stderr}"
+        )
+        return result.stdout.strip()
+
+    def test_documented_uvicorn_target_resolves(self) -> None:
+        """`kavach.api.app:app` -- exactly what uvicorn does with that string."""
+        got = self._fresh(
+            "import importlib;"
+            "m = importlib.import_module('kavach.api.app');"
+            "print(type(getattr(m, 'app')).__name__)"
+        )
+        assert got == "FastAPI", (
+            f"the documented uvicorn target resolved to {got!r}, not an ASGI "
+            "application, so `uvicorn kavach.api.app:app` cannot start the server."
+        )
+
+    def test_create_app_resolves_on_the_package(self) -> None:
+        assert self._fresh(
+            "import importlib;"
+            "m = importlib.import_module('kavach.api');"
+            "print(callable(getattr(m, 'create_app')))"
+        ) == "True"
+
+    def test_app_means_the_submodule_whatever_the_import_order(self) -> None:
+        """`kavach.api.app` is the module, both ways round.
+
+        Importing the submodule binds it onto the parent package as a side
+        effect, so this is the only answer the package can give consistently --
+        which is why the ASGI app is *not* re-exported under that name. The
+        pair matters: a mismatch here is a server whose start-up depends on
+        what some unrelated module imported first.
+        """
+        lazy = self._fresh(
+            "import importlib;"
+            "m = importlib.import_module('kavach.api');"
+            "print(type(getattr(m, 'app')).__name__)"
+        )
+        eager = self._fresh(
+            "import kavach.api.app;"
+            "import importlib;"
+            "m = importlib.import_module('kavach.api');"
+            "print(type(getattr(m, 'app')).__name__)"
+        )
+        assert lazy == eager == "module", (
+            f"kavach.api.app is {lazy!r} when reached lazily and {eager!r} when the "
+            "submodule was imported first; it must be the module either way."
+        )
+
+    def test_submodules_are_still_reachable(self) -> None:
+        assert self._fresh(
+            "import importlib;"
+            "m = importlib.import_module('kavach.api');"
+            "print(m.schemas.__name__, m.store.__name__)"
+        ) == "kavach.api.schemas kavach.api.store"
+
+    def test_unknown_attribute_raises_attribute_error(self) -> None:
+        """Not RecursionError, and not a silent None."""
+        assert self._fresh(
+            "import importlib;"
+            "m = importlib.import_module('kavach.api');\n"
+            "try:\n"
+            "    m.nonexistent\n"
+            "except AttributeError as e:\n"
+            "    print('AttributeError')\n"
+        ) == "AttributeError"
+
+    def test_importing_the_package_does_not_drag_in_fastapi(self) -> None:
+        """The docstring's promise: `schemas` must not cost a web framework."""
+        assert self._fresh(
+            "import sys, importlib;"
+            "importlib.import_module('kavach.api');"
+            "print('fastapi' in sys.modules)"
+        ) == "False"
 
 
 class TestFrontendContract:
