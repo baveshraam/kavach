@@ -218,6 +218,19 @@ class AnnotationReport:
     the most confident cell in that speaker's graph, built from a word nobody
     said. See `Transcript.repetition_loop`."""
 
+    translated: list[tuple[str, str]] = field(default_factory=list)
+    """`(utterance_id, reason)` for transcripts Whisper translated to English.
+
+    **These must be re-transcribed, not annotated.** Two of the pilot's 98
+    utterances came out as fluent English translations of Tamil speech despite
+    `CODE_MIX_PROMPT`, and nothing downstream objected because a translation is
+    correct English -- it enters the graph as a speaker who chose English for
+    every token, which is a fabricated language choice rather than noise.
+
+    Caught without a reference transcript on purpose: free-speech sessions have
+    none, and that is precisely when this needs to be caught. See
+    `Transcript.looks_translated`."""
+
     @property
     def is_corpus_grade(self) -> bool:
         """The same rule `PipelineStats.is_corpus_grade` applies, restated
@@ -276,6 +289,25 @@ class AnnotationReport:
                 f"| {uid} | `{token}` | {share:.1%} |"
                 for uid, token, share in sorted(self.degenerate, key=lambda r: -r[2])
             ]
+            lines.append("")
+
+        if self.translated:
+            lines += [
+                f"## {len(self.translated)} transcripts were translated, not "
+                "transcribed — do not annotate these",
+                "",
+                "Whisper heard Tamil and wrote fluent English. **Re-transcribe "
+                "them.** Nothing downstream will object on its own, because a "
+                "translation is correct English: it enters the graph as a speaker "
+                "who chose English for every token, which is a language choice "
+                "that was never made rather than an error that averages out. It "
+                "also lands on whichever speaker the model found hardest, so it "
+                "reads as a per-speaker finding.",
+                "",
+                "| utterance | why |",
+                "|---|---|",
+            ]
+            lines += [f"| {uid} | {reason} |" for uid, reason in sorted(self.translated)]
             lines.append("")
 
         if not self.used_llm and self.tagged:
@@ -408,6 +440,9 @@ def transcribe_corpus(
         if loop is not None:
             token, share = loop
             report.degenerate.append((utterance.utterance_id, token, share))
+        translated = transcript.looks_translated()
+        if translated is not None:
+            report.translated.append((utterance.utterance_id, translated))
         reference = utterance.reference_transcript
         if reference:
             if transcripts_are_comparable(reference, transcript.text):

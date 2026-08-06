@@ -215,6 +215,36 @@ class TestReportability:
         two_session_corpus.utterances[0].annotation_source = None
         assert any("not annotated" in r for r in two_session_corpus.reportability())
 
+    def test_excluded_utterances_must_be_declared(self, two_session_corpus):
+        """Excluding a bad recording is correct; doing it silently is not.
+
+        A corpus quietly curated until it behaved is indistinguishable from a
+        clean one unless the count and the reasons are published.
+        """
+        two_session_corpus.utterances[0].excluded_reason = "whisper translated it"
+        reasons = two_session_corpus.reportability()
+        assert any("excluded" in r for r in reasons)
+        assert any("whisper translated it" in r for r in reasons)
+
+    def test_an_excluded_utterance_reaches_no_graph(self, two_session_corpus):
+        """`is_annotated` is not the graph test -- an excluded row keeps its
+        tokens so a reader can see what was rejected."""
+        target = two_session_corpus.utterances[0]
+        before = sum(
+            len(v) for v in two_session_corpus.tokens_by_speaker().values()
+        )
+        target.excluded_reason = "whisper translated it"
+        after = sum(len(v) for v in two_session_corpus.tokens_by_speaker().values())
+        assert after == before - 1
+        assert target.is_annotated and not target.is_usable
+
+    def test_exclusion_survives_a_manifest_round_trip(self, two_session_corpus, tmp_path):
+        """An exclusion that vanishes on save is worse than none: the tokens
+        come back and nothing records that they were rejected."""
+        two_session_corpus.utterances[0].excluded_reason = "whisper translated it"
+        path = C.save_manifest(two_session_corpus, tmp_path / "m.json")
+        assert C.load_manifest(path).utterances[0].excluded_reason == "whisper translated it"
+
     def test_guessed_tokens_block_reporting(self, two_session_corpus):
         """Same rule as `PipelineStats.is_corpus_grade`, not a second one."""
         two_session_corpus.utterances[0].n_guessed_tokens = 2

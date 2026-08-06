@@ -191,6 +191,44 @@ class TestTagging:
         assert corpus.utterances[0].tokens is None
 
 
+class TestTranslationReporting:
+    """A translated transcript has to be loud in the report.
+
+    It is the one defect here that looks like success: correct English, clean
+    WER if no reference exists, and a graph that says the speaker chose English
+    throughout. If the report does not name it, nothing else will.
+    """
+
+    def test_translated_utterances_appear_in_the_report(self):
+        report = A.AnnotationReport(transcribed=2, tagged=0)
+        report.translated.append(("S04_s1_p10_numbers", "detected language 'ta' but ..."))
+        md = report.to_markdown()
+        assert "S04_s1_p10_numbers" in md
+        assert "translated" in md.lower()
+
+    def test_the_report_says_not_to_annotate_them(self):
+        """The instruction, not just the observation."""
+        report = A.AnnotationReport(transcribed=1, tagged=0)
+        report.translated.append(("S04_s1_p08_travel", "reason"))
+        md = report.to_markdown()
+        assert "do not annotate" in md.lower()
+        assert "re-transcribe" in md.lower()
+
+    def test_a_clean_run_says_nothing_about_translation(self):
+        """No false alarm on the ordinary case."""
+        report = A.AnnotationReport(transcribed=5, tagged=5)
+        assert "translated" not in report.to_markdown().lower()
+
+    def test_translation_is_tracked_separately_from_loops(self):
+        """Different defects, different fixes; one list would hide that."""
+        report = A.AnnotationReport(transcribed=2, tagged=0)
+        report.degenerate.append(("u1", "Rs", 0.4))
+        report.translated.append(("u2", "reason"))
+        md = report.to_markdown()
+        assert "u1" in md and "u2" in md
+        assert md.count("do not annotate") == 2
+
+
 class TestReportRoundTrip:
     def test_reference_and_asr_transcripts_survive_serialisation(self, tmp_path):
         """They are different fields on purpose: conflating them would make

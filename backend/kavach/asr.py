@@ -75,6 +75,10 @@ CODE_MIX_PROMPT = (
     "appuram, konjam, seri, amma appa anna akka."
 )
 
+#: The Tamil block. Used to ask whether any Tamil survived a transcription --
+#: see `Transcript.looks_translated`.
+TAMIL_SCRIPT = re.compile(r"[஀-௿]")
+
 
 @dataclass(frozen=True, slots=True)
 class Word:
@@ -146,6 +150,52 @@ class Transcript:
         top, count = Counter(tokens).most_common(1)[0]
         share = count / len(tokens)
         return (top, share) if share >= floor else None
+
+    def looks_translated(self) -> str | None:
+        """A reason to believe Whisper translated instead of transcribing.
+
+        The failure `CODE_MIX_PROMPT` exists to prevent, caught after the fact
+        because the prompt is a hint and not a guarantee -- it did not hold on
+        two recordings in the pilot corpus. The output is fluent, correct
+        English, so nothing downstream objects: it reads as a clean transcript
+        and lands in the graph as a speaker who chose English for every single
+        token. That is not noise the CSBG can absorb. It is a fabricated
+        language choice, and it lands on whichever speaker Whisper found
+        hardest, which is a per-speaker bias masquerading as a per-speaker
+        result.
+
+        **Deliberately reference-free.** WER against a reference script would
+        catch it too, and did here -- but the free-speech sessions this project
+        actually needs have no reference by construction, so a check that
+        depends on one would go blind exactly when the corpus starts to matter.
+        This asks a different question: the decoder reported hearing Tamil, so
+        where did the Tamil go?
+
+        Returns a reason, or None if the transcript looks fine.
+        """
+        if not self.text.strip():
+            return None
+        if not self.language.lower().startswith("ta"):
+            # Only meaningful when the decoder itself says the audio is Tamil.
+            # An English-language recording legitimately has no Tamil in it.
+            return None
+
+        from .lid.rules import ROMANISED_TAMIL
+
+        if TAMIL_SCRIPT.search(self.text):
+            return None
+        tokens = [t.lower() for t in re.findall(r"[A-Za-z]+", self.text)]
+        if not tokens:
+            return None
+        if any(t in ROMANISED_TAMIL for t in tokens):
+            return None
+        return (
+            f"detected language {self.language!r} (p={self.language_probability:.2f}) "
+            f"but the transcript has no Tamil script and no romanised Tamil over "
+            f"{len(tokens)} words -- Whisper most likely translated it into English "
+            "rather than transcribing it, which records every token as an English "
+            "choice the speaker did not make"
+        )
 
     def gaps_ms(self) -> list[int]:
         """Silence between consecutive words.

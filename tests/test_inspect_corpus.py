@@ -189,6 +189,106 @@ class TestTags:
         assert "Nothing tagged matches" in I.tags(_corpus(), speaker="nobody")
 
 
+class TestTranslatedAudit:
+    """Sweeping an already-annotated manifest for Whisper translations.
+
+    Calibrated on the two real ones in the pilot, both of which defeat the
+    obvious test: one had 7 choice tokens, the other scored 0.04 rather than
+    0.00 because `idli` survived as Tamil. The signal is the distance from the
+    speaker's own baseline, not an absolute floor.
+    """
+
+    def _mixing_speaker(self, *, odd_one_out: float | None = None, n: int = 8):
+        """One speaker at ~0.50 Tamil, optionally with one utterance dropped."""
+        corpus = C.Corpus(name="t", provenance=C.Provenance.RECORDED)
+        corpus.speakers.append(C.SpeakerRecord(speaker_id="S00", consent_ref="c/S00"))
+        corpus.sessions.append(C.SessionRecord(session_id="S00_s1", speaker_id="S00"))
+        for u in range(n):
+            share = 0.5
+            if odd_one_out is not None and u == 0:
+                share = odd_one_out
+            n_ta = round(20 * share)
+            tokens = [_tok("நான்", Language.TA) for _ in range(n_ta)]
+            tokens += [_tok("bus", Language.EN) for _ in range(20 - n_ta)]
+            corpus.utterances.append(
+                C.UtteranceRecord(
+                    utterance_id=f"S00_s1_u{u}",
+                    session_id="S00_s1",
+                    speaker_id="S00",
+                    prompt_id=f"p{u:02d}",
+                    duration_sec=12.0,
+                    transcript="x",
+                    tokens=tokens,
+                )
+            )
+        return corpus
+
+    def test_an_utterance_that_collapses_to_english_is_flagged(self):
+        out = I.translated(self._mixing_speaker(odd_one_out=0.0))
+        assert "S00_s1_u0" in out
+        assert "1 utterance(s)" in out
+
+    def test_a_near_zero_share_is_flagged_too(self):
+        """The real case scored 0.04, not 0.00 -- `idli` survived as Tamil."""
+        out = I.translated(self._mixing_speaker(odd_one_out=0.05))
+        assert "S00_s1_u0" in out
+
+    def test_a_consistent_speaker_is_left_alone(self):
+        out = I.translated(self._mixing_speaker())
+        assert "None found" in out
+
+    def test_a_speaker_who_read_an_english_script_is_not_flagged(self):
+        """Four of seven pilot speakers sit near 0.03 Tamil throughout.
+
+        They have no baseline to fall away from, and flagging all fourteen of
+        their utterances would bury the ones that matter.
+        """
+        corpus = self._mixing_speaker()
+        for u in corpus.utterances:
+            u.tokens = [_tok("bus", Language.EN) for _ in range(20)]
+        assert "None found" in I.translated(corpus)
+
+    def test_a_short_utterance_is_still_eligible(self):
+        """One of the two real cases had 7 choice tokens.
+
+        A minimum length chosen for statistical comfort would have excluded it.
+        """
+        corpus = self._mixing_speaker(odd_one_out=0.0)
+        corpus.utterances[0].tokens = [_tok("bus", Language.EN) for _ in range(7)]
+        assert "S00_s1_u0" in I.translated(corpus)
+
+    def test_too_few_utterances_to_have_a_baseline_says_nothing(self):
+        corpus = self._mixing_speaker(odd_one_out=0.0, n=3)
+        assert "None found" in I.translated(corpus)
+
+    def test_the_output_shows_the_baseline_it_judged_against(self):
+        """A reader has to be able to disagree with the call."""
+        out = I.translated(self._mixing_speaker(odd_one_out=0.0))
+        assert "speaker median" in out
+
+    def test_the_empty_case_points_at_the_stronger_check(self):
+        """This view is the fallback; `looks_translated` is the real one."""
+        assert "looks_translated" in I.translated(self._mixing_speaker())
+
+    def test_an_already_excluded_hit_reads_as_finished(self):
+        """Otherwise a handled corpus looks unfinished on every re-run, and
+        the operator learns to ignore the view."""
+        corpus = self._mixing_speaker(odd_one_out=0.0)
+        corpus.utterances[0].excluded_reason = "whisper translated it"
+        out = I.translated(corpus)
+        assert "Nothing to do" in out
+        assert "S00_s1_u0" in out, "it should still be listed, just not as work"
+
+    def test_a_live_hit_is_separated_from_an_excluded_one(self):
+        corpus = self._mixing_speaker(odd_one_out=0.0, n=9)
+        corpus.utterances[1].tokens = [_tok("bus", Language.EN) for _ in range(20)]
+        corpus.utterances[0].excluded_reason = "already handled"
+        out = I.translated(corpus)
+        assert "still scoring" in out
+        assert "1 utterance(s) still contributing" in out
+        assert "already excluded" in out
+
+
 class TestTransliteration:
     def test_lists_tamil_script_tokens_tagged_english(self):
         corpus = _corpus()

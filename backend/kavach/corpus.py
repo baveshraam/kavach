@@ -441,9 +441,33 @@ class UtteranceRecord:
     applies the same rule `PipelineStats.is_corpus_grade` does rather than
     inventing a second standard."""
 
+    excluded_reason: str = ""
+    """Why this recording must not contribute to any graph, or empty.
+
+    Set it rather than deleting the row. A deleted utterance cannot be counted,
+    and "we recorded 98 and excluded 1 because Whisper translated it" is a
+    sentence the paper has to be able to write -- silently dropping it leaves a
+    corpus of 97 that no longer matches the recordings on disk, which is
+    indistinguishable from a corpus that was quietly curated until it behaved.
+
+    The first use was `S04_s1_p10_numbers`: three decoding attempts all
+    returned fluent English for Tamil speech, so its tokens are a language
+    choice the speaker never made. Keeping it and marking it is honest;
+    keeping it unmarked would put fabricated choices in the CSBG."""
+
     @property
     def is_annotated(self) -> bool:
         return self.tokens is not None
+
+    @property
+    def is_usable(self) -> bool:
+        """Annotated *and* not excluded. This is the graph-building test.
+
+        `is_annotated` alone is not, and the difference is the whole point of
+        `excluded_reason`: an excluded utterance keeps its tokens so a reader
+        can see what was rejected, which means every filter written against
+        `is_annotated` would happily score it."""
+        return self.tokens is not None and not self.excluded_reason
 
     def to_utterance_tokens(self) -> UtteranceTokens:
         """The shape everything downstream reads.
@@ -539,7 +563,7 @@ class Corpus:
         wanted = set(session_ids) if session_ids is not None else None
         out: dict[str, list[UtteranceTokens]] = {}
         for u in self.utterances:
-            if not u.is_annotated:
+            if not u.is_usable:
                 continue
             if wanted is not None and u.session_id not in wanted:
                 continue
@@ -602,6 +626,23 @@ class Corpus:
             reasons.append(
                 f"{unannotated} of {len(self.utterances)} utterances are not annotated; "
                 "they are skipped by the loader and contribute nothing to any graph"
+            )
+
+        # Not a blocker on its own -- excluding a bad recording is the correct
+        # action, not a defect. It appears here because it has to be *stated*:
+        # a corpus quietly curated until it behaved looks exactly like a clean
+        # one from the outside, and the difference is whether the count and the
+        # reasons were published.
+        excluded = [u for u in self.utterances if u.excluded_reason]
+        if excluded:
+            by_reason: dict[str, int] = {}
+            for u in excluded:
+                by_reason[u.excluded_reason] = by_reason.get(u.excluded_reason, 0) + 1
+            detail = "; ".join(f"{n}x {why}" for why, n in sorted(by_reason.items()))
+            reasons.append(
+                f"{len(excluded)} of {len(self.utterances)} utterances are excluded "
+                f"and contribute to no graph ({detail}) -- report this count and these "
+                "reasons alongside any result"
             )
 
         guessed = sum(u.n_guessed_tokens for u in self.annotated())
@@ -761,6 +802,7 @@ class Corpus:
                     "transcript": u.transcript,
                     "reference_transcript": u.reference_transcript,
                     "asr_wer": u.asr_wer,
+                    "excluded_reason": u.excluded_reason,
                     "annotation_source": (
                         u.annotation_source.value if u.annotation_source else None
                     ),
@@ -1107,7 +1149,7 @@ def _tokens_for(
     return [
         u.to_utterance_tokens()
         for u in corpus.utterances
-        if u.speaker_id == speaker_id and u.session_id in wanted and u.is_annotated
+        if u.speaker_id == speaker_id and u.session_id in wanted and u.is_usable
     ]
 
 
@@ -1183,6 +1225,7 @@ def _corpus_from_dict(data: dict[str, Any], *, root: Path | None = None) -> Corp
             transcript=u.get("transcript", ""),
             reference_transcript=u.get("reference_transcript", ""),
             asr_wer=(None if u.get("asr_wer") is None else float(u["asr_wer"])),
+            excluded_reason=u.get("excluded_reason", ""),
             annotation_source=(
                 AnnotationSource(u["annotation_source"])
                 if u.get("annotation_source")

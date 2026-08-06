@@ -101,6 +101,76 @@ class TestTranscript:
         assert Transcript(text="", words=[]).mean_confidence == 0.0
 
 
+class TestTranslationDetection:
+    """Whisper translating instead of transcribing must not reach the CSBG.
+
+    Worse than a loop, because a loop looks broken and this looks perfect. The
+    output is fluent, correct English, so every check downstream passes and the
+    utterance enters the graph as a speaker who chose English for all of it --
+    a language choice nobody made, concentrated on whichever speaker the model
+    found hardest.
+    """
+
+    #: The real failure, from the pilot: S04 prompt 10, whose reference is
+    #: romanised Tamil ("Naan rendaayirathu naalu la piranthen ...").
+    REAL_TRANSLATION = (
+        "I was born in the year of two thousand and four. In my area, one plate "
+        "of idli costs ten rupees and four idlis are served. Today, I woke up at "
+        "six forty-five in the morning. I usually wake up at six thirty."
+    )
+
+    def test_the_real_corpus_translation_is_caught(self):
+        reason = Transcript(
+            text=self.REAL_TRANSLATION, language="ta", language_probability=0.98
+        ).looks_translated()
+        assert reason is not None
+        assert "translated" in reason
+
+    def test_genuine_code_mixed_output_is_not_flagged(self):
+        """The same speaker, transcribed correctly, must pass."""
+        t = Transcript(
+            text=(
+                "நான் two thousand and fourல பிறந்தேன். எங்க ஏரியால ஒரு plate idli "
+                "ten rupees, morning six forty fiveக்கு எழுந்தேன்"
+            ),
+            language="ta",
+        )
+        assert t.looks_translated() is None
+
+    def test_romanised_tamil_counts_as_tamil_surviving(self):
+        """Latin script is not evidence of translation on its own.
+
+        Whisper romanises Tamil constantly -- `lid.rules` exists for it -- so
+        treating Latin script as English here would flag the single most common
+        *correct* output this pipeline sees.
+        """
+        t = Transcript(text="naan college la irukken, appuram lab ku poren", language="ta")
+        assert t.looks_translated() is None
+
+    def test_an_english_recording_is_never_flagged(self):
+        """Four of the seven pilot speakers read English-dominant scripts."""
+        t = Transcript(
+            text="I usually wake up at six thirty and take the bus to college.",
+            language="en",
+            language_probability=0.99,
+        )
+        assert t.looks_translated() is None
+
+    def test_empty_transcript_is_not_a_translation(self):
+        assert Transcript(text="", language="ta").looks_translated() is None
+
+    def test_unknown_language_is_not_guessed_at(self):
+        """No detected language means no claim -- silence, not a guess."""
+        assert Transcript(text=self.REAL_TRANSLATION).looks_translated() is None
+
+    def test_the_reason_names_the_evidence(self):
+        """An operator has to be able to act on it without reading the source."""
+        reason = Transcript(
+            text=self.REAL_TRANSLATION, language="ta", language_probability=0.98
+        ).looks_translated()
+        assert "ta" in reason and "0.98" in reason
+
+
 class TestRepetitionLoop:
     """Whisper's degenerate output must not reach the CSBG.
 

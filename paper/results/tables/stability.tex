@@ -2,8 +2,9 @@
 % NOT A RESULT. This table was generated from data that cannot be
 % reported. Reasons:
 %   - provenance is SCRIPTED: speakers read authored text, so a CSBG recovers the profile the script assigned; the acoustic and integrity branches are unaffected, but no §5.1 claim about natural code-switching follows from it
+%   - 1 of 98 utterances are excluded and contribute to no graph (1x Whisper translated it into English rather than transcribing the Tamil; three decoding attempts (auto x2, forced ta) all returned zero Tamil, so its tokens are language choices the speaker never made) -- report this count and these reasons alongside any result
 %   - 7 speakers have one session, so no cross-session trial exists for them and §5.3 cannot be computed on this corpus
-%   - the knowledge (answer matcher) branch scored no trials at all (knowledge (answer matcher): 0/2205 trials scored (0.0%); unmeasured: claimed speaker never answered this prompt at enrolment x2205), so every fusion row that names it was in fact fused without it
+%   - the knowledge (answer matcher) branch scored no trials at all (knowledge (answer matcher): 0/2142 trials scored (0.0%); unmeasured: claimed speaker never answered this prompt at enrolment x2142), so every fusion row that names it was in fact fused without it
 %   - enrolment and probe speech were split within a session, which measures how well the estimator memorises one recording sitting
 % Delete this banner only when kavach.experiments emits the table
 % without it -- do not edit it out by hand.
@@ -12,8 +13,8 @@
 \toprule
 Enrolment utterances & Approx.\ seconds & EER \% [95\% CI] \\
 \midrule
-2 & 50 & 25.00 [20.24--32.14] \\
-5 & 125 & 28.57 [18.59--32.74] \\
+2 & 50 & 23.46 [17.90--29.63] \\
+5 & 125 & 25.93 [15.71--31.48] \\
 \bottomrule
 \end{tabular}
 

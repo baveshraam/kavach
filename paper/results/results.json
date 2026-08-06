@@ -3,8 +3,9 @@
   "reportable": false,
   "blockers": [
     "provenance is SCRIPTED: speakers read authored text, so a CSBG recovers the profile the script assigned; the acoustic and integrity branches are unaffected, but no §5.1 claim about natural code-switching follows from it",
+    "1 of 98 utterances are excluded and contribute to no graph (1x Whisper translated it into English rather than transcribing the Tamil; three decoding attempts (auto x2, forced ta) all returned zero Tamil, so its tokens are language choices the speaker never made) -- report this count and these reasons alongside any result",
     "7 speakers have one session, so no cross-session trial exists for them and §5.3 cannot be computed on this corpus",
-    "the knowledge (answer matcher) branch scored no trials at all (knowledge (answer matcher): 0/2205 trials scored (0.0%); unmeasured: claimed speaker never answered this prompt at enrolment x2205), so every fusion row that names it was in fact fused without it",
+    "the knowledge (answer matcher) branch scored no trials at all (knowledge (answer matcher): 0/2142 trials scored (0.0%); unmeasured: claimed speaker never answered this prompt at enrolment x2142), so every fusion row that names it was in fact fused without it",
     "enrolment and probe speech were split within a session, which measures how well the estimator memorises one recording sitting"
   ],
   "config": {
@@ -31,8 +32,8 @@
     "n_simulated_speakers": 24
   },
   "environment": {
-    "generated_utc": "2026-08-06T10:55:02+00:00",
-    "git_commit": "f29680f7024c483a73bb1e27925fa7f53fac83e4",
+    "generated_utc": "2026-08-06T18:31:58+00:00",
+    "git_commit": "e7472b7e7c1337abb39e9a40e6bf52690951f713",
     "git_dirty": true,
     "python": "3.11.15",
     "platform": "macOS-26.6-arm64-arm-64bit",
@@ -52,14 +53,14 @@
     "n_sessions": 7,
     "n_utterances": 98,
     "n_annotated": 98,
-    "session_split": "within-session: 7 speakers, 63 enrolment / 35 probe utterances",
+    "session_split": "within-session: 7 speakers, 63 enrolment / 34 probe utterances",
     "dropped_speakers": [],
     "cross_session": false,
     "notes": "Ingested from 7 speaker folders. 98 utterances, 41.0 minutes of speech. Transcripts are the reference scripts, not ASR output.",
     "branch_coverage": [
       {
         "name": "acoustic (ECAPA)",
-        "measured": 2205,
+        "measured": 2142,
         "unavailable": 0,
         "coverage": 1.0,
         "reasons": {}
@@ -67,10 +68,10 @@
       {
         "name": "knowledge (answer matcher)",
         "measured": 0,
-        "unavailable": 2205,
+        "unavailable": 2142,
         "coverage": 0.0,
         "reasons": {
-          "claimed speaker never answered this prompt at enrolment": 2205
+          "claimed speaker never answered this prompt at enrolment": 2142
         }
       }
     ]
@@ -92,15 +93,15 @@
       "S07"
     ],
     "n_dev_trials": 45,
-    "n_test_trials": 80,
-    "n_cohort_trials": 120
+    "n_test_trials": 76,
+    "n_cohort_trials": 117
   },
   "fitted": {
     "weights": {
-      "speaker_embedding": 0.6457200976806746,
-      "csbg": 0.35427990231932543
+      "speaker_embedding": 0.6460146111581965,
+      "csbg": 0.35398538884180336
     },
-    "threshold": 0.8186190040392041,
+    "threshold": 0.818619004039204,
     "veto_floor": null,
     "veto_frr_cost": 0.0,
     "weights_source": "logistic regression on dev",
@@ -130,8 +131,8 @@
       "far_at_frr_1pct": 0.0,
       "frr_at_far_1pct": 0.0,
       "auc": 1.0,
-      "n_genuine": 20,
-      "n_impostor": 60,
+      "n_genuine": 19,
+      "n_impostor": 57,
       "n_vetoed": 0,
       "is_reliable": false
     },
@@ -140,22 +141,22 @@
       "branches": [
         "csbg"
       ],
-      "eer": 0.2833333333333333,
+      "eer": 0.2631578947368421,
       "eer_ci": [
-        0.18333333333333332,
-        0.4
+        0.15789473684210525,
+        0.42105263157894735
       ],
-      "min_dcf": 0.95,
+      "min_dcf": 0.9473684210526315,
       "min_dcf_params": [
         0.05,
         1.0,
         1.0
       ],
       "far_at_frr_1pct": null,
-      "frr_at_far_1pct": 0.95,
-      "auc": 0.7,
-      "n_genuine": 20,
-      "n_impostor": 60,
+      "frr_at_far_1pct": 0.9473684210526315,
+      "auc": 0.7091412742382271,
+      "n_genuine": 19,
+      "n_impostor": 57,
       "n_vetoed": 16,
       "is_reliable": false
     },
@@ -179,8 +180,8 @@
       "far_at_frr_1pct": 0.0,
       "frr_at_far_1pct": 0.0,
       "auc": 1.0,
-      "n_genuine": 20,
-      "n_impostor": 60,
+      "n_genuine": 19,
+      "n_impostor": 57,
       "n_vetoed": 0,
       "is_reliable": false
     }
@@ -189,43 +190,43 @@
     {
       "name": "equal branch weights",
       "scope": "full system",
-      "eer": 0.03333333333333333,
-      "delta": 0.03333333333333333,
+      "eer": 0.0,
+      "delta": 0.0,
       "note": "What the logistic-regression fit was worth."
     },
     {
       "name": "low-signal classes included",
       "scope": "csbg",
-      "eer": 0.25,
-      "delta": -0.033333333333333326,
+      "eer": 0.22807017543859648,
+      "delta": -0.03508771929824561,
       "note": "FUNCTION_WORD, NAMED_ENTITY and OTHER put back. Excluding them is a hypothesis stated in ontology.LOW_SIGNAL_CLASSES; a positive delta confirms it on this data, a negative one retires it."
     },
     {
       "name": "transition stream removed",
       "scope": "csbg",
-      "eer": 0.2833333333333333,
+      "eer": 0.2631578947368421,
       "delta": 0.0,
       "note": "P(lang given class and prev_lang) dropped, its weight redistributed. Transition cells are ~4x sparser than lexical ones, so this is the row that says whether sequence information survives short probes."
     },
     {
       "name": "graph metrics removed",
       "scope": "csbg",
-      "eer": 0.2833333333333333,
+      "eer": 0.2631578947368421,
       "delta": 0.0,
       "note": "CMI and I-index dropped. They are already ramped down on short probes by csbg.scoring, so a near-zero delta here is expected and is a check on that ramp rather than a finding."
     },
     {
       "name": "lexical stream removed",
       "scope": "csbg",
-      "eer": 0.3,
-      "delta": 0.016666666666666663,
+      "eer": 0.2631578947368421,
+      "delta": 0.0,
       "note": "Transitions and metrics alone. The complement of the row above: together they say how much of the CSBG is carried by which language a class takes versus how the speaker moves between them."
     },
     {
       "name": "cohort z-norm removed",
       "scope": "csbg",
-      "eer": 0.26666666666666666,
-      "delta": -0.016666666666666663,
+      "eer": 0.24561403508771928,
+      "delta": -0.017543859649122806,
       "note": "Raw LLRs are not comparable across claimed speakers: an unusual speaker produces large-magnitude scores for everyone. Expect this row to read ~0 on a single branch and still matter in fusion. EER is rank-based, so a per-speaker rescale only moves it by *reordering* speakers against each other -- which needs the population to vary in score scale in the first place. Fusion is not rank-based: it adds the branch to others on a shared [0, 1] scale, where the shift is exactly what makes the sum comparable. A near-zero delta here alongside a large one in the configuration table is the expected shape, not a contradiction."
     }
   ],
@@ -233,22 +234,22 @@
     {
       "n_utterances": 2,
       "approx_seconds": 50.19761224489796,
-      "eer": 0.25,
-      "ci_low": 0.20238095238095238,
-      "ci_high": 0.32142857142857145
+      "eer": 0.2345679012345679,
+      "ci_low": 0.17901234567901234,
+      "ci_high": 0.2962962962962963
     },
     {
       "n_utterances": 5,
       "approx_seconds": 125.4940306122449,
-      "eer": 0.2857142857142857,
-      "ci_low": 0.18586309523809527,
-      "ci_high": 0.3273809523809524
+      "eer": 0.25925925925925924,
+      "ci_low": 0.15709876543209883,
+      "ci_high": 0.3148148148148148
     }
   ],
   "fairness": [],
   "coverage": {
-    "total_tokens": 6495,
-    "total_choice_tokens": 5442,
+    "total_tokens": 6536,
+    "total_choice_tokens": 5484,
     "n_speakers": 7,
     "min_tokens_for_own_evidence": 4.0,
     "classes": [
@@ -259,7 +260,7 @@
       },
       {
         "class": "TIME_DATE",
-        "n_tokens": 434,
+        "n_tokens": 436,
         "n_speakers_with_own_evidence": 7
       },
       {
@@ -274,13 +275,13 @@
       },
       {
         "class": "PLACE_LOCAL",
-        "n_tokens": 173,
+        "n_tokens": 174,
         "n_speakers_with_own_evidence": 7
       },
       {
         "class": "PLACE_GLOBAL",
-        "n_tokens": 13,
-        "n_speakers_with_own_evidence": 1
+        "n_tokens": 17,
+        "n_speakers_with_own_evidence": 2
       },
       {
         "class": "TECH_DIGITAL",
@@ -289,17 +290,17 @@
       },
       {
         "class": "EDU_WORK",
-        "n_tokens": 150,
+        "n_tokens": 151,
         "n_speakers_with_own_evidence": 7
       },
       {
         "class": "MONEY_COMMERCE",
-        "n_tokens": 97,
+        "n_tokens": 98,
         "n_speakers_with_own_evidence": 7
       },
       {
         "class": "EMOTION_STATE",
-        "n_tokens": 76,
+        "n_tokens": 79,
         "n_speakers_with_own_evidence": 7
       },
       {
@@ -319,12 +320,12 @@
       },
       {
         "class": "MEDIA_ENTERTAIN",
-        "n_tokens": 112,
+        "n_tokens": 113,
         "n_speakers_with_own_evidence": 7
       },
       {
         "class": "DISCOURSE_MARKER",
-        "n_tokens": 133,
+        "n_tokens": 135,
         "n_speakers_with_own_evidence": 7
       },
       {
@@ -334,17 +335,17 @@
       },
       {
         "class": "QUANTITY_MEASURE",
-        "n_tokens": 348,
+        "n_tokens": 353,
         "n_speakers_with_own_evidence": 7
       },
       {
         "class": "ACTION_VERB",
-        "n_tokens": 687,
+        "n_tokens": 699,
         "n_speakers_with_own_evidence": 7
       },
       {
         "class": "FUNCTION_WORD",
-        "n_tokens": 1919,
+        "n_tokens": 1928,
         "n_speakers_with_own_evidence": 7
       },
       {
@@ -354,7 +355,7 @@
       },
       {
         "class": "OTHER",
-        "n_tokens": 370,
+        "n_tokens": 371,
         "n_speakers_with_own_evidence": 7
       }
     ],
@@ -404,7 +405,7 @@
       {
         "prompt_id": "p08_travel",
         "n_utterances": 7,
-        "mean_tokens": 68.57142857142857,
+        "mean_tokens": 74.42857142857143,
         "hit_rate": 1.0
       },
       {
@@ -451,7 +452,7 @@
     "S01": 0.5577167529965495,
     "S02": 0.8420216643363434,
     "S03": 0.6938172697175308,
-    "S04": 0.47984093059880323,
+    "S04": 0.49287621320665653,
     "S05": 0.802358937519489,
     "S06": 0.8624443732661204,
     "S07": 0.76304126926542

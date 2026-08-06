@@ -398,15 +398,16 @@ class Pipeline:
     def _llm_model_label(self) -> str:
         """`resolved_llm_model` plus what it is used for, for the models list.
 
-        Challenge generation is called out separately because it still speaks
-        only the Anthropic Messages API; on any other provider it falls back to
-        the offline template bank, which works but is not the same thing, and
-        an operator reading the model list should not have to guess which.
+        Both jobs are named unconditionally now. This used to append
+        "challenges use templates" on any non-Anthropic provider, which was
+        true while `ChallengeGenerator` spoke only the Anthropic Messages API
+        and is a lie since it stopped. The distinction is worth keeping in mind
+        rather than in this string: whether a *given* challenge came from a
+        model or the template bank is per-challenge and already recorded on
+        `Challenge.generator`, which is the honest place for it -- a provider
+        that is reachable at health-poll time can still fail at login.
         """
-        model = self.resolved_llm_model()
-        if model == self.settings.llm_model:
-            return f"{model} (tagging, challenges)"
-        return f"{model} (tagging; challenges use templates)"
+        return f"{self.resolved_llm_model()} (tagging, challenges)"
 
     def loaded_models(self) -> list[str]:
         """Model identifiers this server can use, for `/api/health`.

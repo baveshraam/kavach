@@ -17,6 +17,10 @@ Five views, each answering one question:
     --tags      Did the tagger label them? Token tables with language and class.
     --translit  How much English did the ASR write in Tamil script? The
                 tokens behind `transliteration_recovered`, listed.
+    --translated Did the ASR *translate* any Tamil into English instead of
+                transcribing it? The same bias as --translit, an order of
+                magnitude larger and pointing the other way: it converts a
+                whole utterance into English choices nobody made.
     --acoustic  Are the recordings actually of the people they are labelled
                 as? Per-speaker ECAPA template self-consistency. Slow -- it
                 embeds every clip -- and the one check to run on a folder that
@@ -41,6 +45,25 @@ from .lid import rules
 #: threshold -- restated here rather than imported so this stays a read-only
 #: view that cannot be broken by a change to the scoring config.
 THIN_CLASS_TOKENS = 5
+
+#: Below this many choice tokens an utterance's Tamil share is not a
+#: measurement. Kept low deliberately: one of the two real translations in the
+#: pilot had 7 choice tokens, and a floor set for statistical comfort would
+#: have excluded it.
+MIN_CHOICE_TOKENS_FOR_TRANSLATION = 5
+
+#: A speaker whose median Tamil share is under this read a monolingual script.
+#: They have no baseline to fall away from, so the test says nothing about them
+#: and flagging their utterances would only bury the real hits.
+MIXES_AT_ALL = 0.15
+
+#: Fraction of a speaker's own median Tamil share below which an utterance is
+#: suspect. Measured against the pilot: S04's median is 0.59 with a per-utterance
+#: minimum of 0.53 among the good ones, while the two translated utterances sat
+#: at 0.00 and 0.04. Anything from 0.1 to 0.8 separates them; 0.25 leaves room on
+#: both sides. Widen it if a speaker legitimately answers one prompt entirely in
+#: English -- a name, a phone number -- rather than deleting the check.
+TRANSLATION_DROP = 0.25
 
 
 def _tokens_by_speaker(corpus: Any) -> dict[str, list[UtteranceTokens]]:
@@ -245,6 +268,107 @@ def tags(corpus: Any, *, speaker: str | None = None, limit: int | None = None) -
     return "\n".join(lines)
 
 
+def translated(corpus: Any) -> str:
+    """Utterances whose transcript looks like a translation, not a transcript.
+
+    Audits a manifest that already exists, so a corpus annotated before this
+    check existed can be swept without re-running ASR -- which is how the two
+    in the pilot were found, after they had already been tagged, scored, and
+    written into a results table.
+
+    The manifest does not store the detected language, so this cannot use
+    `Transcript.looks_translated` and instead reads the tagged tokens: an
+    utterance every one of whose tokens came out English, in a corpus where
+    that speaker mixes elsewhere, is the same signal from the other end. It is
+    a weaker test than the ASR-time one and it is the only one available after
+    the fact -- treat a hit as "listen to this recording", not as a verdict.
+    """
+    # Relative to the speaker, not to an absolute floor. Both real cases defeat
+    # an absolute test: one had 7 choice tokens, under any sane minimum length,
+    # and the other scored 0.04 rather than 0.00 because `idli` survived as
+    # Tamil. What they have in common is not their score, it is the distance
+    # from the rest of that speaker's own utterances.
+    shares: dict[str, list[tuple[str, int, float]]] = {}
+    for u in corpus.utterances:
+        choice = [t for t in (u.tokens or []) if t.language in (Language.EN, Language.TA)]
+        if len(choice) < MIN_CHOICE_TOKENS_FOR_TRANSLATION:
+            continue
+        ta = sum(1 for t in choice if t.language is Language.TA) / len(choice)
+        shares.setdefault(u.speaker_id, []).append((u.utterance_id, len(choice), ta))
+
+    excluded = {u.utterance_id for u in corpus.utterances if u.excluded_reason}
+    rows: list[tuple[str, str, int, float, float]] = []
+    for speaker, entries in shares.items():
+        values = sorted(s for _, _, s in entries)
+        if len(values) < 4:
+            continue  # too few utterances for "typical for this speaker"
+        mid = len(values) // 2
+        median = (
+            values[mid] if len(values) % 2 else (values[mid - 1] + values[mid]) / 2
+        )
+        # A speaker who read an English script has a median near zero and no
+        # baseline to fall away from; flagging all fourteen of their utterances
+        # would bury the ones that matter.
+        if median < MIXES_AT_ALL:
+            continue
+        for uid, n, share in entries:
+            if share <= median * TRANSLATION_DROP:
+                rows.append((speaker, uid, n, share, median))
+
+    live = [r for r in rows if r[1] not in excluded]
+    lines = [f"# Possibly translated, not transcribed -- {corpus.name}", ""]
+    if rows and not live:
+        # Everything this view can see has already been dealt with. Saying so
+        # is the difference between a finished job and one that looks unfinished
+        # every time it is re-run.
+        lines += [
+            f"{len(rows)} flagged, all already excluded and contributing to no "
+            "graph. Nothing to do.",
+            "",
+            "| speaker | utterance | choice tokens | TA share | speaker median |",
+            "|---|---|---|---|---|",
+        ]
+        lines += [
+            f"| {spk} | {uid} | {n} | {share:.2f} | {median:.2f} |"
+            for spk, uid, n, share, median in sorted(rows)
+        ]
+        return "\n".join(lines)
+    if not rows:
+        lines += [
+            "None found. No utterance came out entirely English from a speaker who "
+            "code-switches elsewhere.",
+            "",
+            "This is the after-the-fact check and it is the weaker one. The check "
+            "that matters runs at transcription time, needs no reference and no "
+            "corpus-wide comparison, and is reported by `kavach.annotate` -- see "
+            "`Transcript.looks_translated`.",
+        ]
+        return "\n".join(lines)
+
+    lines += [
+        f"{len(live)} utterance(s) still contributing to graphs. **Listen to these "
+        "before trusting them.** An utterance that collapses to English from a "
+        "speaker who mixes everywhere else is what a Whisper translation looks "
+        "like once it has been tagged: fluent, well-formed, and a language choice "
+        "the speaker never made."
+        + (
+            f" A further {len(rows) - len(live)} flagged utterance(s) are already "
+            "excluded and are listed below for completeness."
+            if len(rows) > len(live)
+            else ""
+        ),
+        "",
+        "| speaker | utterance | choice tokens | TA share | speaker median | status |",
+        "|---|---|---|---|---|---|",
+    ]
+    lines += [
+        f"| {spk} | {uid} | {n} | {share:.2f} | {median:.2f} | "
+        f"{'excluded' if uid in excluded else '**still scoring**'} |"
+        for spk, uid, n, share, median in sorted(rows)
+    ]
+    return "\n".join(lines)
+
+
 def transliteration(corpus: Any) -> str:
     """Every Tamil-script token the tagger called English.
 
@@ -408,6 +532,10 @@ def build_parser() -> argparse.ArgumentParser:
                       help="Per-speaker code-mixing profile (default).")
     view.add_argument("--text", action="store_true", help="Transcripts.")
     view.add_argument("--tags", action="store_true", help="Token tables.")
+    view.add_argument("--translated", action="store_true",
+                      help="Utterances that look translated rather than "
+                           "transcribed. Audits an existing manifest; the "
+                           "check that matters runs at ASR time.")
     view.add_argument("--translit", action="store_true",
                       help="Tamil-script tokens tagged English.")
     view.add_argument("--acoustic", action="store_true",
@@ -427,6 +555,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         out = transcripts(corpus, speaker=args.speaker)
     elif args.tags:
         out = tags(corpus, speaker=args.speaker, limit=args.limit)
+    elif args.translated:
+        out = translated(corpus)
     elif args.translit:
         out = transliteration(corpus)
     elif args.acoustic:
@@ -463,5 +593,6 @@ __all__ = [
     "summary",
     "tags",
     "transcripts",
+    "translated",
     "transliteration",
 ]
