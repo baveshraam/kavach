@@ -295,6 +295,107 @@ def aliases(model: type[schemas.Model]) -> set[str]:
     return {f.alias or name for name, f in model.model_fields.items()}
 
 
+class TestLLMProvenance:
+    """The API must name the model that actually tagged, not the configured one.
+
+    The API used to hard-code Anthropic while `kavach.annotate` went through
+    `make_tagger`, so one `.env` gave two answers to "is the LLM configured":
+    the CLI tagged the corpus with Gemini while the server next to it reported
+    itself degraded and fell back to rules.
+    """
+
+    def _fake_tagger(self, provider_name: str, model: str):
+        class _Provider:
+            name = provider_name
+
+        class _Tagger:
+            provider = _Provider()
+
+        t = _Tagger()
+        t.model = model
+        return t
+
+    def test_reports_the_provider_that_will_actually_tag(
+        self, pipeline: Pipeline, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import kavach.lid.llm as llm
+
+        monkeypatch.setattr(
+            llm, "make_tagger", lambda *a, **k: self._fake_tagger("gemini", "gemini-x")
+        )
+        assert pipeline.resolved_llm_model() == "gemini/gemini-x", (
+            "a Gemini-tagged run must not be recorded as having used the configured "
+            "Anthropic model -- reportable.llm_model is copied into write-ups."
+        )
+
+    def test_falls_back_to_the_configured_model_for_anthropic(
+        self, pipeline: Pipeline, settings: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import kavach.lid.llm as llm
+
+        monkeypatch.setattr(
+            llm, "make_tagger", lambda *a, **k: llm.LLMTagger(model=settings.llm_model)
+        )
+        assert pipeline.resolved_llm_model() == settings.llm_model
+
+    def test_no_provider_at_all_does_not_raise(
+        self, pipeline: Pipeline, settings: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A health poll reports; it never 500s."""
+        import kavach.lid.llm as llm
+
+        monkeypatch.setattr(llm, "make_tagger", lambda *a, **k: None)
+        assert pipeline.resolved_llm_model() == settings.llm_model
+
+    def test_a_broken_provider_setting_does_not_break_health(
+        self, pipeline: Pipeline, settings: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import kavach.lid.llm as llm
+
+        def boom(*a, **k):
+            raise ValueError("unknown provider 'nope'")
+
+        monkeypatch.setattr(llm, "make_tagger", boom)
+        assert pipeline.resolved_llm_model() == settings.llm_model
+
+    def test_health_publishes_the_resolved_model(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import kavach.lid.llm as llm
+
+        monkeypatch.setattr(
+            llm, "make_tagger", lambda *a, **k: self._fake_tagger("groq", "llama-x")
+        )
+        body = client.get("/api/health").json()
+        assert body["reportable"]["llm_model"] == "groq/llama-x"
+
+    def test_llm_availability_is_not_decided_by_the_anthropic_package(
+        self, pipeline: Pipeline
+    ) -> None:
+        """`find_spec("anthropic")` answers a narrower question than the one asked."""
+        assert all(m != "anthropic" for m, _, _ in pipeline.REQUIREMENTS), (
+            "the LLM row belongs in `_llm_gap`, which checks every provider; in "
+            "REQUIREMENTS it reports 'anthropic is not installed' on a machine whose "
+            "Gemini key is tagging fine."
+        )
+
+    def test_gap_names_the_missing_key_when_there_is_none(
+        self, pipeline: Pipeline, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import kavach.lid.llm as llm
+
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+        monkeypatch.setattr(llm, "load_api_keys", lambda *a, **k: None)
+        monkeypatch.setattr(llm, "available_providers", lambda: [])
+        gap = pipeline._llm_gap()
+        assert gap is not None and "No LLM provider key found" in gap
+        assert "not corpus-grade" in gap, (
+            "the consequence has to travel with the diagnosis, or an operator reads "
+            "it as cosmetic."
+        )
+
+
 class TestPackageEntryPoint:
     """`kavach.api`'s lazy re-exports, checked in a *fresh* interpreter.
 

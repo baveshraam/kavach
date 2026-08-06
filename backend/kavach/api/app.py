@@ -121,7 +121,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             device=cfg.embedding_device,
             version=app.version,
             demo_reveal_answers=cfg.demo_reveal_answers,
-            reportable={**cfg.reportable(), "unavailable": failures},
+            # `llm_model` is overridden with the model that actually tagged,
+            # not the configured default. This block is the provenance record
+            # someone copies into a write-up, so naming an Anthropic model on a
+            # run that Gemini tagged would put a false claim in a paper -- the
+            # one error here that survives past the demo.
+            reportable={
+                **cfg.reportable(),
+                "llm_model": pipeline.resolved_llm_model(),
+                "unavailable": failures,
+            },
         )
 
     # -------------------------------------------------------------- speakers

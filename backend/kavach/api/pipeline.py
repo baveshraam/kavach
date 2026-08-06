@@ -228,27 +228,35 @@ class Pipeline:
         if self._lid is None:
             tagger = None
             try:
-                # `LLMTagger` builds its client lazily, so constructing one
-                # proves nothing. Import the SDK and check for a key here, or
-                # the first login would be the thing that discovers the LLM is
-                # not configured -- and it would discover it as an exception
-                # mid-verification.
-                import anthropic  # noqa: F401
-                import os
+                # `make_tagger` is the same selection the corpus CLI uses:
+                # Anthropic when its key is present, otherwise the first
+                # provider that has one. Hard-coding Anthropic here meant a
+                # machine holding only a Gemini key ran the *API* rules-only
+                # while `kavach.annotate` on the same machine tagged the corpus
+                # fine -- two answers to "is the LLM configured" from one
+                # `.env`. It also resolves eagerly: a tagger that built its
+                # client lazily would make the first login the thing that
+                # discovers the LLM is missing, as an exception mid-
+                # verification.
+                from ..lid.llm import LLMTagger, make_tagger
 
-                if not os.environ.get("ANTHROPIC_API_KEY"):
+                tagger = make_tagger(self.settings.llm_provider)
+                if tagger is None:
                     raise RuntimeError(
-                        "ANTHROPIC_API_KEY is not set; falling back to rule-based "
-                        "tagging, which is not corpus-grade."
+                        "no LLM provider key found (checked ANTHROPIC_API_KEY and "
+                        "the OpenAI-compatible providers); falling back to "
+                        "rule-based tagging, which is not corpus-grade."
                     )
-                from ..lid.llm import LLMTagger
-
-                tagger = LLMTagger(
-                    model=self.settings.llm_model,
-                    effort=self.settings.llm_tagging_effort,
-                )
+                # `llm_model` names an Anthropic model by default, so it is
+                # only applied to an Anthropic tagger; every other provider
+                # keeps its own default rather than being handed a model id
+                # from a different vendor's namespace.
+                if isinstance(tagger, LLMTagger):
+                    tagger.model = self.settings.llm_model
+                    tagger.effort = self.settings.llm_tagging_effort
             except Exception as exc:
                 self._failed["llm_tagger"] = str(exc)
+                tagger = None
             self._lid = LIDPipeline(llm_tagger=tagger)
         return self._lid
 
@@ -286,9 +294,54 @@ class Pipeline:
     REQUIREMENTS: tuple[tuple[str, str, str], ...] = (
         ("speechbrain", "speaker_embedding", "No acoustic branch: voices are not compared."),
         ("faster_whisper", "asr", "No transcript: the CSBG and knowledge branches cannot run."),
-        ("anthropic", "llm", "Rule-based tagging only; annotations are not corpus-grade."),
         ("sentence_transformers", "semantic_matcher", "Cross-lingual answer matching is weaker."),
     )
+    #: The LLM is deliberately absent from that table. Every other row is a
+    #: single package, but tagging works through any of several providers, so
+    #: `find_spec("anthropic")` answers a narrower question than the one being
+    #: asked -- it used to report "anthropic is not installed" on a machine
+    #: whose Gemini key was tagging the corpus perfectly well. See `_llm_gap`.
+
+    #: What the operator loses when no provider is reachable.
+    _LLM_CONSEQUENCE = "Rule-based tagging only; annotations are not corpus-grade."
+
+    def _llm_gap(self) -> str | None:
+        """Why no LLM tagger can be built, or None if one can.
+
+        Keys and import presence only -- no client is constructed and no
+        request is made, because this runs on every health poll.
+        """
+        from importlib.util import find_spec
+
+        from ..lid.llm import available_providers, load_api_keys
+
+        load_api_keys()
+        import os
+
+        has_anthropic_key = bool(
+            os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")
+        )
+        if has_anthropic_key and find_spec("anthropic") is not None:
+            return None
+        try:
+            others = [p.name for p in available_providers()]
+        except Exception:  # noqa: BLE001 - a health poll never raises
+            others = []
+        if others and find_spec("openai") is not None:
+            return None
+
+        # Distinguish "no key" from "key but no SDK" -- they need different fixes.
+        if has_anthropic_key:
+            return f"anthropic is not installed but ANTHROPIC_API_KEY is set. {self._LLM_CONSEQUENCE}"
+        if others:
+            return (
+                f"openai is not installed but a key for {', '.join(others)} is set. "
+                f"{self._LLM_CONSEQUENCE}"
+            )
+        return (
+            "No LLM provider key found: set ANTHROPIC_API_KEY, or a key for one of the "
+            f"OpenAI-compatible providers, in .env. {self._LLM_CONSEQUENCE}"
+        )
 
     def availability(self) -> dict[str, str]:
         """Which components could run, without loading any of them.
@@ -317,7 +370,45 @@ class Pipeline:
                 present = False
             if not present:
                 out[name] = f"{module} is not installed. {consequence}"
+        gap = self._llm_gap()
+        if gap is not None:
+            out["llm"] = gap
         return out
+
+    def resolved_llm_model(self) -> str:
+        """The model that will actually tag, for the provenance record.
+
+        Returning `settings.llm_model` unconditionally would name an Anthropic
+        model on a machine where Gemini is doing the work. That string is what
+        `/api/health` publishes as `reportable.llm_model` and what someone
+        copies into a write-up, so a confidently wrong answer here outlives the
+        demo it was taken from.
+
+        Resolution is by construction only -- `make_tagger` builds no client
+        and sends no request -- so this stays cheap enough for a health poll.
+        """
+        from ..lid.llm import LLMTagger, make_tagger
+
+        try:
+            tagger = make_tagger(self.settings.llm_provider)
+        except Exception:  # noqa: BLE001 - a health poll never raises
+            return self.settings.llm_model
+        if tagger is None or isinstance(tagger, LLMTagger):
+            return self.settings.llm_model
+        return f"{tagger.provider.name}/{tagger.model}"
+
+    def _llm_model_label(self) -> str:
+        """`resolved_llm_model` plus what it is used for, for the models list.
+
+        Challenge generation is called out separately because it still speaks
+        only the Anthropic Messages API; on any other provider it falls back to
+        the offline template bank, which works but is not the same thing, and
+        an operator reading the model list should not have to guess which.
+        """
+        model = self.resolved_llm_model()
+        if model == self.settings.llm_model:
+            return f"{model} (tagging, challenges)"
+        return f"{model} (tagging; challenges use templates)"
 
     def loaded_models(self) -> list[str]:
         """Model identifiers this server can use, for `/api/health`.
@@ -333,7 +424,7 @@ class Pipeline:
         if "speaker_embedding" not in missing:
             out.append(self.settings.ecapa_model)
         if "llm" not in missing:
-            out.append(f"{self.settings.llm_model} (tagging, challenges)")
+            out.append(self._llm_model_label())
         if "semantic_matcher" not in missing:
             out.append("sentence-transformers/LaBSE")
         return out

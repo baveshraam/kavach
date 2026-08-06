@@ -114,6 +114,15 @@ class Settings(BaseSettings):
     max_audio_seconds: float = 30.0
 
     # ----------------------------------------------------------------- LLM
+    llm_provider: str | None = None
+    """Which LLM backend the API uses, or None to auto-select.
+
+    None means the same rule `kavach.annotate` follows: Anthropic when its key
+    is present, otherwise the first OpenAI-compatible provider that has one
+    (Gemini, Groq, a local Ollama). Set it explicitly to pin a machine that
+    holds several keys. `llm_model` below applies only to the Anthropic path;
+    the others carry their own defaults."""
+
     llm_model: str = "claude-opus-5"
     llm_tagging_effort: str = "low"
     """Tagging is well-specified and high-volume. Thinking stays ON --
