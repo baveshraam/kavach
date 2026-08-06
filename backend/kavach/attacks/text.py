@@ -309,13 +309,26 @@ class AttackTextGenerator:
         api_key: str | None = None,
         seed: int | None = None,
         use_llm: bool = True,
+        provider: str | None = None,
+        client: Any = None,
     ) -> None:
         self.model = model
         self.max_tokens = max_tokens
         self._api_key = api_key
         self._use_llm = use_llm
-        self._client: Any = None
+        self._explicit_client = client
+        self._client: Any = client
         self._rng = random.Random(seed)
+        self._provider = provider
+        # An explicit `api_key` or `client` means the caller has chosen
+        # Anthropic and that choice is honoured. Otherwise the provider is
+        # whichever one the machine has a key for, so an attacker is only
+        # reduced to templates when there is genuinely nothing to call.
+        from ..textgen import TextGenerator
+
+        self._text = TextGenerator(
+            provider=provider, anthropic_model=model, max_tokens=max_tokens
+        )
 
     @property
     def client(self) -> Any:
@@ -416,7 +429,11 @@ class AttackTextGenerator:
                     style_source=StyleSource.NONE,
                     knows_answer=True,
                     contains_fact=_contains(text, true_answer),
-                    provenance={"generator": "llm", "model": self.model, "question": question},
+                    provenance={
+                        "generator": "llm",
+                        "model": self._model_used(),
+                        "question": question,
+                    },
                 )
 
         wrapper = self._rng.choice(_GENERIC_WRAPPERS)
@@ -451,7 +468,7 @@ class AttackTextGenerator:
                     contains_fact=_contains(text, true_answer),
                     provenance={
                         "generator": "llm",
-                        "model": self.model,
+                        "model": self._model_used(),
                         "question": question,
                         "style_observed_seconds": style.observed_seconds,
                         "style_classes": style.n_classes,
@@ -483,30 +500,53 @@ class AttackTextGenerator:
 
     # ---------------------------------------------------------------- LLM
 
+    def _model_used(self) -> str:
+        """The model behind an `"llm"` provenance record.
+
+        Naming `self.model` regardless would put an Anthropic model id on text
+        a free-tier model wrote. An attack corpus is evidence about a specific
+        adversary's capability, so the adversary has to be identified
+        correctly or the IAPMR it produces is attributed to the wrong system.
+        """
+        if self._api_key is not None or self._explicit_client is not None:
+            return self.model
+        return self._text.model_id or self.model
+
     def _llm_answer(
         self, question: str, true_answer: str, *, style: StyleProfile | None
     ) -> str | None:
-        """Ask Claude to compose the answer. Returns None if the call fails.
+        """Ask a model to compose the answer. Returns None if the call fails.
 
         Failures degrade to the template path rather than aborting a long
         attack run, but they are recorded in provenance so a batch that
         silently fell back cannot be mistaken for an LLM result.
+
+        Which model depends on what the machine has a key for. This used to be
+        Anthropic-only, which made A4 and A5 -- the two attacks the whole
+        threat model is built around -- silently degrade to a handful of fixed
+        wrappers on any machine without a paid key. An attacker held to six
+        sentence frames is not the attacker the paper claims to defend against,
+        so the resulting IAPMR would have been optimistic for a reason that
+        never appeared in the numbers.
         """
+        user = (
+            f"Question asked: {question}\n"
+            f"Fact to include: {true_answer}\n\n"
+            "Write the spoken answer only. No quotation marks, no commentary."
+        )
+        if self._api_key is None and self._explicit_client is None:
+            try:
+                text = self._text.complete(system=_system_prompt(style), user=user)
+            except Exception:  # noqa: BLE001 - any API failure falls back
+                return None
+            return text.strip().strip('"') or None
+
         try:
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=self.max_tokens,
                 system=_system_prompt(style),
-                messages=[
-                    {
-                        "role": "user",
-                        "content": (
-                            f"Question asked: {question}\n"
-                            f"Fact to include: {true_answer}\n\n"
-                            "Write the spoken answer only. No quotation marks, no commentary."
-                        ),
-                    }
-                ],
+                messages=[{"role": "user", "content": user}],
             )
         except Exception:  # noqa: BLE001 - any API failure falls back
             return None

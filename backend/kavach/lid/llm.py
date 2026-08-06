@@ -131,6 +131,37 @@ def _retry_after(exc: BaseException) -> float | None:
     return None
 
 
+class Pacer:
+    """Keeps a minimum gap between requests to one provider.
+
+    The other half of `with_retries`, and the half that does the real work on a
+    free tier: retries recover from a limit that has already been tripped,
+    while this stops tripping it. That is both faster and cheaper, because a
+    429 still costs a request against some providers' quotas -- which is how a
+    backoff ends up escalating past 45 seconds without ever clearing.
+
+    One instance per client, not per call: the gap is only meaningful relative
+    to the last request the *same* key made.
+    """
+
+    __slots__ = ("min_interval", "_last_request_at")
+
+    def __init__(self, min_interval: float = 0.0) -> None:
+        self.min_interval = min_interval
+        self._last_request_at: float | None = None
+
+    def wait(self, sleep: Callable[[float], None] = time.sleep) -> None:
+        """Block until the gap has elapsed, then mark the request as sent."""
+        if self.min_interval <= 0:
+            return
+        now = time.monotonic()
+        if self._last_request_at is not None:
+            remaining = self.min_interval - (now - self._last_request_at)
+            if remaining > 0:
+                sleep(remaining)
+        self._last_request_at = time.monotonic()
+
+
 def is_transient(exc: BaseException) -> bool:
     """True if `exc` is worth retrying.
 
@@ -742,27 +773,18 @@ class OpenAICompatibleTagger:
         from the same model as one that needed none, but it also means the run
         was fighting a rate limit rather than staying under it."""
         self.retry_seconds = 0.0
-        self.min_interval = (
+        self._pacer = Pacer(
             min_interval if min_interval is not None
             else self.provider.min_interval_seconds
         )
-        self._last_request_at: float | None = None
+
+    @property
+    def min_interval(self) -> float:
+        return self._pacer.min_interval
 
     def _pace(self, sleep: Callable[[float], None] = time.sleep) -> None:
-        """Wait out the provider's minimum gap before the next request.
-
-        Prevention, not recovery. Retries handle a limit that was already
-        tripped; this stops tripping it, which is both faster and cheaper --
-        every 429 still costs a request against some providers' quotas.
-        """
-        if self.min_interval <= 0:
-            return
-        now = time.monotonic()
-        if self._last_request_at is not None:
-            wait = self.min_interval - (now - self._last_request_at)
-            if wait > 0:
-                sleep(wait)
-        self._last_request_at = time.monotonic()
+        """Wait out the provider's minimum gap. See `Pacer`."""
+        self._pacer.wait(sleep)
 
     def _note_retry(self, attempt: int, delay: float, exc: BaseException) -> None:
         """Count and announce a retry.
@@ -1091,6 +1113,7 @@ __all__ = [
     "estimate_cost",
     "is_transient",
     "with_retries",
+    "Pacer",
     "DEFAULT_MODEL",
     "OUTPUT_TOKENS_PER_WORD",
     "output_budget",

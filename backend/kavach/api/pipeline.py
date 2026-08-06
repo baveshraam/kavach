@@ -271,19 +271,17 @@ class Pipeline:
     @property
     def challenges(self) -> ChallengeGenerator:
         if self._challenges is None:
-            client: Any = None
-            try:
-                import anthropic
-
-                client = anthropic.Anthropic()
-            except Exception as exc:
-                self._failed["llm_challenge"] = str(exc)
+            # No client is built here. `ChallengeGenerator` selects its own
+            # provider now, so constructing an Anthropic one first would just
+            # reintroduce the restriction this indirection removed -- and it
+            # would record a failure for "anthropic missing" on a machine that
+            # is about to generate challenges perfectly well on a free tier.
             self._challenges = ChallengeGenerator(
                 ledger=self.ledger,
-                llm_client=client,
                 model=self.settings.llm_model,
                 effort=self.settings.llm_challenge_effort,
                 ttl_seconds=self.settings.challenge_ttl_seconds,
+                provider=self.settings.llm_provider,
             )
         return self._challenges
 

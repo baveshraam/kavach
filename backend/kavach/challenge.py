@@ -304,8 +304,17 @@ Always output exactly one question and nothing else."""
 class ChallengeGenerator:
     """Generates adaptive, single-use challenges.
 
-    With `llm_client=None` it uses the template bank, which is fully offline
-    and reproducible but has a bounded challenge space.
+    Questions come from an LLM where one is reachable and from the template
+    bank otherwise. The template bank is fully offline and reproducible but has
+    a bounded challenge space, so which one served a run is a property of the
+    result, not an implementation detail -- `Challenge.generator` records it
+    per challenge.
+
+    Pass `llm_client` to drive a specific Anthropic client (tests do this).
+    Leave it None and a `TextGenerator` is used, which finds whichever provider
+    has a key -- including the free tiers. Before that existed this class was
+    Anthropic-or-templates, so the unpredictability the LLM path buys was
+    gated behind a paid key.
     """
 
     def __init__(
@@ -316,12 +325,27 @@ class ChallengeGenerator:
         model: str = "claude-opus-5",
         effort: str = "medium",
         ttl_seconds: int = 60,
+        provider: str | None = None,
+        use_llm: bool = True,
     ) -> None:
         self.ledger = ledger or ChallengeLedger(ttl_seconds=ttl_seconds)
         self.llm_client = llm_client
         self.model = model
         self.effort = effort
         self.ttl_seconds = ttl_seconds
+        self._text: Any = None
+        if llm_client is None and use_llm:
+            from .textgen import TextGenerator
+
+            # Constructed, not connected: `TextGenerator.__init__` touches no
+            # network and reads no key, so this cannot fail here. Whether a
+            # provider actually exists is answered by `resolve()` on first use.
+            self._text = TextGenerator(
+                provider=provider,
+                anthropic_model=model,
+                effort=effort,
+                max_tokens=512,
+            )
 
     def generate(
         self,
@@ -365,7 +389,25 @@ class ChallengeGenerator:
     ) -> tuple[str, str]:
         """Return (question_text, generator_name)."""
         if self.llm_client is None:
-            return _template_question(fact, already_asked), "template"
+            # `resolve()` separates "no provider is configured" from "a
+            # provider was configured and failed". Both end at a template, but
+            # only the second is a fault worth chasing, and collapsing them
+            # would make an offline run look like a broken one in the reports.
+            if self._text is None or self._text.resolve() is None:
+                return _template_question(fact, already_asked), "template"
+            try:
+                text = self._text.complete(
+                    system=CHALLENGE_SYSTEM_PROMPT,
+                    user=build_generation_prompt(fact, target_class, already_asked),
+                )
+            except Exception:
+                # Same reasoning as the Anthropic path below: a login must not
+                # fail because the question generator is unreachable.
+                return _template_question(fact, already_asked), "template_after_error"
+            text = text.strip().strip('"')
+            if not text:
+                return _template_question(fact, already_asked), "template_after_empty"
+            return text, "llm"
 
         try:
             response = self.llm_client.messages.create(

@@ -40,6 +40,10 @@ def pytest_configure(config: pytest.Config) -> None:
         "markers",
         "models: needs a real model checkpoint; loads from disk or downloads it.",
     )
+    config.addinivalue_line(
+        "markers",
+        "llm: may reach a real LLM provider; needs a key and spends quota.",
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -69,6 +73,50 @@ def pytest_collection_modifyitems(
     for item in items:
         if item.get_closest_marker("models"):
             item.add_marker(skip)
+
+
+#: Every environment variable that can make a component reach for a network LLM.
+#: Kept as one list because the point is to leave *no* provider reachable --
+#: missing one would mean the suite still calls out, just less often.
+PROVIDER_KEY_VARS = (
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "GROQ_API_KEY",
+    "OPENAI_API_KEY",
+)
+
+
+@pytest.fixture(autouse=True)
+def no_live_llm_calls(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make every LLM path resolve to "no provider", unless a test opts in.
+
+    Same argument as `offline_by_default`, one layer up. Components that fall
+    back to templates decide whether to fall back by asking whether a key
+    exists, so the suite's behaviour would otherwise depend on whether the
+    developer running it happens to have a key in `.env` -- passing on a fresh
+    clone and, on a configured laptop, quietly spending free-tier quota to
+    reach the same assertion.
+
+    Clearing the variables is not enough on its own: `load_api_keys` merges
+    `.env` back into the environment on first use. It is disarmed through its
+    own one-shot guard rather than by stubbing the function, because callers
+    import it by value (`from .lid.llm import load_api_keys`) and a stub would
+    only cover the modules someone remembered to patch. The flag is read inside
+    the real function, so every caller is covered by construction -- including
+    ones written later.
+
+    Tests of the loader itself set the flag back to False, which is all the
+    opt-in they need.
+    """
+    if request.node.get_closest_marker("llm"):
+        return
+    for var in PROVIDER_KEY_VARS:
+        monkeypatch.delenv(var, raising=False)
+    from kavach.lid import llm as llm_mod
+
+    monkeypatch.setattr(llm_mod, "_env_file_loaded", True)
 
 
 @pytest.fixture(scope="session", autouse=True)
