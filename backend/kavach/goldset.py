@@ -595,8 +595,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         except GoldsetError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 2
-        n_rows = sum(1 for _ in path.read_text(encoding="utf-8").splitlines()) - 1
-        print(f"wrote {path} ({n_rows} rows to label)")
+        # Count the rows a human has to fill in, not the lines in the file:
+        # the instruction header is ~22 comment lines and counting those
+        # overstates the job by that much.
+        n_rows = len(load(path).tokens)
+        print(f"wrote {path} ({n_rows} tokens to label)")
         if args.prefill:
             print(
                 "warning: prefilled with the system's own labels. The result is "

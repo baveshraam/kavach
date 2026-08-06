@@ -429,3 +429,14 @@ class TestCLI:
             "--report", str(report),
         ]) == 0
         assert "language accuracy" in report.read_text(encoding="utf-8")
+
+
+class TestExportRowCount:
+    def test_the_cli_counts_tokens_not_lines(self, tmp_path, capsys):
+        """The instruction header is ~22 comment lines; counting them
+        overstates the labelling job by that much, and this is the number
+        someone uses to decide whether to accept the task."""
+        manifest = C.save_manifest(_corpus(1, 1), tmp_path / "m.json")
+        G.main(["export", "--manifest", str(manifest), "--out", str(tmp_path / "g.tsv")])
+        out = capsys.readouterr().out
+        assert "4 tokens to label" in out

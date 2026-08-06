@@ -31,9 +31,9 @@
     "n_simulated_speakers": 24
   },
   "environment": {
-    "generated_utc": "2026-08-05T23:29:53+00:00",
-    "git_commit": "0663a31b65af23084267f8f0d6b402057ae7ae96",
-    "git_dirty": false,
+    "generated_utc": "2026-08-06T00:05:19+00:00",
+    "git_commit": "036f45f534132584dd80c074fcffef4c7b760326",
+    "git_dirty": true,
     "python": "3.11.15",
     "platform": "macOS-26.6-arm64-arm-64bit",
     "packages": {
