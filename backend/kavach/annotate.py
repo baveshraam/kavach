@@ -209,6 +209,15 @@ class AnnotationReport:
     was fighting a rate limit; the labels are the same but a bigger corpus will
     need pacing rather than luck."""
 
+    degenerate: list[tuple[str, str, float]] = field(default_factory=list)
+    """`(utterance_id, token, share)` for transcripts Whisper looped on.
+
+    **These must be re-transcribed or dropped, not annotated.** A loop is a
+    plausible word repeated, so every copy lands in the same semantic class and
+    counts as a real language choice: sixty hallucinated `Rs` would make MONEY
+    the most confident cell in that speaker's graph, built from a word nobody
+    said. See `Transcript.repetition_loop`."""
+
     @property
     def is_corpus_grade(self) -> bool:
         """The same rule `PipelineStats.is_corpus_grade` applies, restated
@@ -249,6 +258,25 @@ class AnnotationReport:
                 "was fighting a rate limit -- a larger corpus needs pacing.",
                 "",
             ]
+
+        if self.degenerate:
+            lines += [
+                f"## {len(self.degenerate)} transcripts degenerated — do not annotate these",
+                "",
+                "Whisper looped on these recordings, emitting one fragment over and "
+                "over. **Re-transcribe or drop them.** A loop is a plausible word "
+                "repeated, so every copy lands in the same semantic class and is "
+                "counted as a real language choice -- the speaker's graph ends up "
+                "most confident about the word they never said.",
+                "",
+                "| utterance | token | share of transcript |",
+                "|---|---|---|",
+            ]
+            lines += [
+                f"| {uid} | `{token}` | {share:.1%} |"
+                for uid, token, share in sorted(self.degenerate, key=lambda r: -r[2])
+            ]
+            lines.append("")
 
         if not self.used_llm and self.tagged:
             lines += [
@@ -376,6 +404,10 @@ def transcribe_corpus(
             continue
 
         utterance.transcript = transcript.text
+        loop = transcript.repetition_loop()
+        if loop is not None:
+            token, share = loop
+            report.degenerate.append((utterance.utterance_id, token, share))
         reference = utterance.reference_transcript
         if reference:
             if transcripts_are_comparable(reference, transcript.text):

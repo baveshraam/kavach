@@ -526,12 +526,29 @@ class LLMTagger:
 
     @staticmethod
     def _check_alignment(inputs: list[str], outputs: list[TaggedToken]) -> None:
-        if len(outputs) != len(inputs):
-            raise ValueError(
-                f"Tagger returned {len(outputs)} tokens for {len(inputs)} inputs. "
-                "Token alignment is required -- a mismatch would attach tags to the "
-                "wrong surface forms. Inputs: {inputs!r}"
-            )
+        if len(outputs) == len(inputs):
+            return
+        # Report where the two streams part company, not the whole utterance.
+        # A long Tamil utterance dumped verbatim is a screenful that still
+        # leaves the reader diffing by eye, and the interesting part is the
+        # first divergence -- usually the model merging two tokens or dropping
+        # a punctuation-only one.
+        first = next(
+            (
+                i
+                for i, (a, b) in enumerate(zip(inputs, [o.text for o in outputs]))
+                if a != b
+            ),
+            min(len(inputs), len(outputs)),
+        )
+        lo, hi = max(0, first - 2), first + 3
+        raise ValueError(
+            f"Tagger returned {len(outputs)} tokens for {len(inputs)} inputs. "
+            "Token alignment is required -- a mismatch would attach tags to the "
+            f"wrong surface forms. They first differ at index {first}:\n"
+            f"  sent    : {inputs[lo:hi]!r}\n"
+            f"  returned: {[o.text for o in outputs[lo:hi]]!r}"
+        )
 
     # --------------------------------------------------------------- batch
 

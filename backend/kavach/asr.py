@@ -26,10 +26,25 @@ pipeline.
 
 from __future__ import annotations
 
+import re
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from .audio import Audio
+
+#: Share of a transcript one token may occupy before it is called a loop.
+#:
+#: Measured against the real corpus: the highest legitimate value was 16.7%,
+#: from `my` in the six-token "my name is ..." control prompt, and the one
+#: genuine Whisper loop sat at 28.9%. 0.25 separates them with room on both
+#: sides. Raise it if a prompt ever legitimately repeats a word -- a chant, a
+#: counting task -- rather than deleting the check.
+REPETITION_FLOOR = 0.25
+
+#: Below this, share is meaningless: in a four-token answer any repeated word
+#: is 25% on its own.
+MIN_TOKENS_FOR_REPETITION = 12
 
 #: Common Tamil-English function words. Passed to Whisper as an initial
 #: prompt to bias it toward code-mixed output rather than snapping to a
@@ -104,6 +119,33 @@ class Transcript:
     @property
     def is_empty(self) -> bool:
         return not self.text.strip()
+
+    def repetition_loop(self, *, floor: float = REPETITION_FLOOR) -> tuple[str, float] | None:
+        """The token this transcript degenerated into, if it did.
+
+        Whisper loops. Given audio it cannot decode -- and numerals with
+        `suppress_numerals` on are a reliable trigger -- it emits one fragment
+        over and over: `Rs.Ls.Rs.Rs.Rs.Rs.Rs.` for sixty tokens where the
+        speaker said a price.
+
+        This has to be caught before annotation, and not because it is untidy.
+        A loop is a *plausible* token repeated, so it lands in one semantic
+        class and one language, and the CSBG counts every copy. Sixty
+        hallucinated `Rs` would make MONEY the most confident cell in that
+        speaker's graph, built entirely from a word they never said. Silence
+        would be safer than this, which is why an empty transcript is handled
+        and a degenerate one must not be treated as ordinary text.
+
+        Returns `(token, share)` for the offending token, or None. Uses a
+        share of alphanumeric tokens rather than a run-length, because the
+        loop interleaves punctuation and never repeats a token adjacently.
+        """
+        tokens = [t for t in re.findall(r"\w+", self.text.lower()) if t]
+        if len(tokens) < MIN_TOKENS_FOR_REPETITION:
+            return None
+        top, count = Counter(tokens).most_common(1)[0]
+        share = count / len(tokens)
+        return (top, share) if share >= floor else None
 
     def gaps_ms(self) -> list[int]:
         """Silence between consecutive words.
@@ -237,7 +279,53 @@ class WhisperASR:
             A Transcript. Empty audio yields an empty Transcript rather than
             raising, so a failed recording degrades to a rejected login
             instead of a 500.
+
+            If the first decode degenerates into a repetition loop it is
+            decoded once more with `condition_on_previous_text=False`; see
+            `_decode`. The returned transcript is whichever attempt did not
+            loop, and still carries `repetition_loop()` if both did.
         """
+        first = self._decode(
+            audio,
+            language=language,
+            initial_prompt=initial_prompt,
+            beam_size=beam_size,
+            vad_filter=vad_filter,
+            condition_on_previous_text=True,
+        )
+        if first.repetition_loop() is None:
+            return first
+
+        # Whisper loops when its own previous output conditions the next
+        # window -- the repetition feeds itself. Turning that conditioning off
+        # is the standard remedy and costs one extra decode on the rare
+        # utterance that needs it. Observed on the real corpus: a price the
+        # speaker gave as "three thousand five hundred" came back as `Rs.` for
+        # sixty tokens, and the same audio decoded cleanly on the retry.
+        second = self._decode(
+            audio,
+            language=language,
+            initial_prompt=initial_prompt,
+            beam_size=beam_size,
+            vad_filter=vad_filter,
+            condition_on_previous_text=False,
+        )
+        # Keep the retry only if it actually helped. A second loop is not
+        # better than the first, and returning it would hide that the first
+        # attempt looped too.
+        return second if second.repetition_loop() is None else first
+
+    def _decode(
+        self,
+        audio: Audio,
+        *,
+        language: str | None,
+        initial_prompt: str | None,
+        beam_size: int,
+        vad_filter: bool,
+        condition_on_previous_text: bool,
+    ) -> Transcript:
+        """One decode pass. See `transcribe` for the arguments."""
         lang = language if language is not None else self.language
 
         segments, info = self.model.transcribe(
@@ -251,6 +339,7 @@ class WhisperASR:
             # loses the speaker's choice of English vs Tamil, and NUMBER is
             # one of the most discriminative CSBG classes. See _numeral_tokens.
             suppress_tokens=self._numeral_tokens() if self.suppress_numerals else [-1],
+            condition_on_previous_text=condition_on_previous_text,
         )
 
         words: list[Word] = []

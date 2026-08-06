@@ -101,6 +101,113 @@ class TestTranscript:
         assert Transcript(text="", words=[]).mean_confidence == 0.0
 
 
+class TestRepetitionLoop:
+    """Whisper's degenerate output must not reach the CSBG.
+
+    A loop is worse than silence, and not by a little. It repeats a *plausible*
+    word, so every copy is counted as a genuine language choice in one semantic
+    class -- the speaker ends up with their most confident cell built from a
+    word they never said. An empty transcript is handled everywhere; a
+    degenerate one looks like data.
+    """
+
+    #: The real failure, trimmed: prompt 4 from speaker S06, where a price
+    #: given as "three thousand five hundred" came back as `Rs.` sixty times.
+    REAL_LOOP = (
+        "last week was expensive, I bought a keyboard for "
+        "Rs.Ls.Rs.Rs.Rs.Rs.Rs.Rs.Rs.Rs.Rs.Rs.Rs.Rs.Rs which I had been putting "
+        "of for months. metro card recharge, Rs.Ls.Rs.Rs.Rs.Rs.Rs.Rs.Rs.Rs.Rs."
+    )
+
+    def test_the_real_corpus_loop_is_caught(self):
+        found = Transcript(text=self.REAL_LOOP).repetition_loop()
+        assert found is not None
+        token, share = found
+        assert token == "rs"
+        assert share > 0.25
+
+    def test_ordinary_speech_is_not_flagged(self):
+        text = (
+            "last week was expensive I bought a keyboard for three thousand "
+            "five hundred which I had been putting off for months metro card "
+            "recharge five hundred I ate out four times"
+        )
+        assert Transcript(text=text).repetition_loop() is None
+
+    def test_the_control_prompt_is_not_flagged(self):
+        """"my name is ..." repeats `my` at 16.7%, the highest legitimate share
+        measured on the real corpus. The floor sits above it deliberately."""
+        assert Transcript(text="my name is Bavesh my friends").repetition_loop() is None
+
+    def test_short_utterances_are_exempt(self):
+        """In a four-token answer any repeated word is already 25%."""
+        assert Transcript(text="yes yes yes yes").repetition_loop() is None
+
+    def test_the_floor_is_adjustable_rather_than_hardcoded(self):
+        assert Transcript(text=self.REAL_LOOP).repetition_loop(floor=0.99) is None
+
+    def test_non_adjacent_repeats_still_count(self):
+        """The real loop interleaves `Ls` and punctuation, so a run-length
+        check would have missed it entirely."""
+        text = " ".join(["rs x"] * 20)
+        assert Transcript(text=text).repetition_loop() is not None
+
+
+class TestLoopRetry:
+    """A detected loop is re-decoded once with conditioning off."""
+
+    class FakeModel:
+        def __init__(self, texts: list[str]) -> None:
+            self.texts = texts
+            self.calls: list[dict] = []
+
+        def transcribe(self, _samples, **kwargs):
+            self.calls.append(kwargs)
+            text = self.texts[min(len(self.calls) - 1, len(self.texts) - 1)]
+            segment = type("S", (), {"text": text, "words": []})()
+            info = type("I", (), {"language": "en", "language_probability": 0.9})()
+            return [segment], info
+
+    def _asr(self, texts: list[str]):
+        """A real WhisperASR with a fake checkpoint behind its lazy loader.
+
+        `_model` is set rather than the `model` property patched: assigning to
+        `type(asr).model` mutates the class for the rest of the session, and
+        the first version of this test did exactly that -- taking down an
+        unrelated numeral-suppression test three classes away.
+        """
+        asr = WhisperASR(model_size="fake", suppress_numerals=False)
+        model = self.FakeModel(texts)
+        asr._model = model
+        return asr, model
+
+    def test_a_clean_first_decode_is_not_retried(self):
+        asr, model = self._asr(["naan office ku poren today morning at nine"])
+        asr.transcribe(Audio(np.zeros(16000, dtype=np.float32), 16000))
+        assert len(model.calls) == 1, "a second decode is pure cost when the first is fine"
+
+    def test_a_loop_triggers_one_retry_with_conditioning_off(self):
+        clean = "I bought a keyboard for three thousand five hundred last week"
+        asr, model = self._asr([TestRepetitionLoop.REAL_LOOP, clean])
+        out = asr.transcribe(Audio(np.zeros(16000, dtype=np.float32), 16000))
+        assert len(model.calls) == 2
+        assert model.calls[0]["condition_on_previous_text"] is True
+        assert model.calls[1]["condition_on_previous_text"] is False, (
+            "the loop feeds on the model's own previous output; retrying without "
+            "changing that is just rolling the dice again"
+        )
+        assert out.text == clean
+
+    def test_two_loops_do_not_retry_forever(self):
+        asr, model = self._asr([TestRepetitionLoop.REAL_LOOP])
+        out = asr.transcribe(Audio(np.zeros(16000, dtype=np.float32), 16000))
+        assert len(model.calls) == 2
+        assert out.repetition_loop() is not None, (
+            "a transcript that looped twice must still report it, or the "
+            "annotation report will call the corpus clean"
+        )
+
+
 class TestTranscriptComparison:
     @staticmethod
     def _transcript(n_words: int, language: str = "ta") -> Transcript:
