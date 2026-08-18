@@ -20,6 +20,12 @@ data/
 # extensions above already cover the files; this covers the *folder names*,
 # which arrive as people's first names and are therefore direct identifiers.
 recordings/
+# Same thing under whatever name the next drop arrives as. A returned batch is
+# named by whoever sent it, not by this repo's conventions, so the rule has to
+# cover the shape rather than the spelling: any top-level folder of participant
+# audio is unpublishable until `kavach.ingest` has replaced the names with
+# pseudonyms.
+SpeechData/
 
 # ---- Secrets ----
 .env
