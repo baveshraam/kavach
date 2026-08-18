@@ -144,7 +144,19 @@ class Transcript:
         share of alphanumeric tokens rather than a run-length, because the
         loop interleaves punctuation and never repeats a token adjacently.
         """
-        tokens = [t for t in re.findall(r"\w+", self.text.lower()) if t]
+        # `lid.rules.simple_tokenise`, not `\w+`. Python's `\w` excludes Unicode
+        # combining marks, so it cuts every Tamil word at its vowel signs --
+        # "மனோஜ்" arrives as "மன" + "ஜ". That doubles the token count and
+        # halves every share, so a Tamil loop repeated seventeen times measured
+        # 0.20 against a 0.25 floor and passed. The floor was calibrated on an
+        # ASCII `Rs.` loop, where the two tokenisers agree, which is why this
+        # was invisible. Counting in the same units the CSBG counts is also the
+        # only way the share means what the threshold assumes it means.
+        from .lid.rules import simple_tokenise
+
+        tokens = [
+            t.lower() for t in simple_tokenise(self.text) if any(c.isalnum() for c in t)
+        ]
         if len(tokens) < MIN_TOKENS_FOR_REPETITION:
             return None
         top, count = Counter(tokens).most_common(1)[0]

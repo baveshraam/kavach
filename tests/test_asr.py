@@ -18,7 +18,13 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from kavach.asr import Transcript, Word, WhisperASR, compare_transcripts
+from kavach.asr import (
+    REPETITION_FLOOR,
+    Transcript,
+    Word,
+    WhisperASR,
+    compare_transcripts,
+)
 from kavach.audio import Audio
 
 
@@ -188,6 +194,48 @@ class TestRepetitionLoop:
         "Rs.Ls.Rs.Rs.Rs.Rs.Rs.Rs.Rs.Rs.Rs.Rs.Rs.Rs.Rs which I had been putting "
         "of for months. metro card recharge, Rs.Ls.Rs.Rs.Rs.Rs.Rs.Rs.Rs.Rs.Rs."
     )
+
+    #: The Tamil loop this detector used to miss: speaker `aniruth`, prompt 1,
+    #: where a name came back seventeen times. It measured 0.20 against a 0.25
+    #: floor and passed, because `\w+` cut every Tamil word at its vowel signs.
+    REAL_TAMIL_LOOP = "நார் வந்து என்னில் பாரவும்! " + "மனோஜ் அன்பர் " * 17
+
+    def test_a_tamil_loop_is_caught(self):
+        """Regression: the floor is only meaningful if the tokens are whole.
+
+        Python's `\w` excludes Unicode combining marks, so it split "மனோஜ்"
+        into "மன" + "ஜ" -- doubling the token count and halving every share.
+        The detector was calibrated on an ASCII `Rs.` loop, where the two
+        tokenisers agree, so a whole script's worth of loops went unseen.
+        """
+        found = Transcript(text=self.REAL_TAMIL_LOOP).repetition_loop()
+        assert found is not None, (
+            "a Tamil word repeated 17 times is a loop; if this fails the "
+            "tokeniser is fragmenting Tamil again"
+        )
+        token, share = found
+        assert token == "மனோஜ்", f"counted {token!r}, so the word was split"
+        assert share > REPETITION_FLOOR
+
+    def test_tamil_and_ascii_are_counted_in_the_same_units(self):
+        """The share has to mean the same thing in both scripts.
+
+        Otherwise one floor cannot serve both, and the calibration recorded on
+        `REPETITION_FLOOR` silently applies to Latin text only.
+        """
+        tamil = Transcript(text="ஒரு நாள் காலையில " * 6).repetition_loop()
+        latin = Transcript(text="one day morning " * 6).repetition_loop()
+        assert (tamil is None) == (latin is None)
+        if tamil and latin:
+            assert abs(tamil[1] - latin[1]) < 0.01
+
+    def test_normal_tamil_speech_is_not_a_loop(self):
+        """No false alarm on real code-mixed answers."""
+        text = (
+            "என்னுடைய home town திருப்பூர், பிறகு வளர்ந்தது எல்லாமே திருப்பூர்ல தான், "
+            "so திருப்பூர் ரொம்ப favourite place எனக்கு, personal connection இருக்கு"
+        )
+        assert Transcript(text=text).repetition_loop() is None
 
     def test_the_real_corpus_loop_is_caught(self):
         found = Transcript(text=self.REAL_LOOP).repetition_loop()
