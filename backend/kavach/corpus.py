@@ -441,6 +441,18 @@ class UtteranceRecord:
     applies the same rule `PipelineStats.is_corpus_grade` does rather than
     inventing a second standard."""
 
+    asr_confidence: float | None = None
+    """Mean per-word probability from the ASR, or None if not recorded.
+
+    Persisted because it is the cheapest signal that separates a transcript
+    worth keeping from one the decoder guessed at, and it was being computed
+    and discarded. On the free-speech batch the usable clips sat at 0.79-0.88
+    and the gibberish -- Tamil-shaped text with Korean and Cyrillic spliced in
+    -- at 0.25-0.29, which is a wide enough gap to act on.
+
+    None means "not measured", never "bad": a corpus annotated before this
+    field existed must not look like a corpus of failed transcriptions."""
+
     excluded_reason: str = ""
     """Why this recording must not contribute to any graph, or empty.
 
@@ -802,6 +814,7 @@ class Corpus:
                     "transcript": u.transcript,
                     "reference_transcript": u.reference_transcript,
                     "asr_wer": u.asr_wer,
+                    "asr_confidence": u.asr_confidence,
                     "excluded_reason": u.excluded_reason,
                     "annotation_source": (
                         u.annotation_source.value if u.annotation_source else None
@@ -1225,6 +1238,9 @@ def _corpus_from_dict(data: dict[str, Any], *, root: Path | None = None) -> Corp
             transcript=u.get("transcript", ""),
             reference_transcript=u.get("reference_transcript", ""),
             asr_wer=(None if u.get("asr_wer") is None else float(u["asr_wer"])),
+            asr_confidence=(
+                None if u.get("asr_confidence") is None else float(u["asr_confidence"])
+            ),
             excluded_reason=u.get("excluded_reason", ""),
             annotation_source=(
                 AnnotationSource(u["annotation_source"])

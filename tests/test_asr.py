@@ -177,6 +177,39 @@ class TestTranslationDetection:
         assert "ta" in reason and "0.98" in reason
 
 
+class TestHallucinatedScript:
+    """Tamil-shaped text with other alphabets spliced into it.
+
+    The third failure mode, and the one that follows from fixing the second:
+    pushed to keep Tamil on audio it cannot decode, Whisper invents. Unlike a
+    translation this looks wrong to a human -- but nothing was reading the
+    manifest, and "a human would notice" is not a check.
+    """
+
+    def test_the_real_cases_are_caught(self):
+        for text in (
+            "எனக்கு கோயம்த்தூர் சரி விழிவு 초லோகளின் 거야 молодப்பயில்",
+            "毛த சிறமுது குழ்வ இரண்டு ஆ கட்டத்தண்டு",
+        ):
+            assert Transcript(text=text).hallucinated_script() is not None
+
+    def test_genuine_code_mixed_speech_is_clean(self):
+        t = Transcript(
+            text="recently நான் ஒரு movie பாத்தேன், story interesting இருந்தது"
+        )
+        assert t.hallucinated_script() is None
+
+    def test_plain_english_is_clean(self):
+        assert Transcript(text="My hometown is Coimbatore.").hallucinated_script() is None
+
+    def test_it_reports_what_it_found(self):
+        sample, count = Transcript(text="வணக்கம் 거야 молод").hallucinated_script()
+        assert count > 0 and sample
+
+    def test_empty_text_is_clean(self):
+        assert Transcript(text="").hallucinated_script() is None
+
+
 class TestRepetitionLoop:
     """Whisper's degenerate output must not reach the CSBG.
 

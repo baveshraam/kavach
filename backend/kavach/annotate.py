@@ -436,6 +436,7 @@ def transcribe_corpus(
             continue
 
         utterance.transcript = transcript.text
+        utterance.asr_confidence = round(transcript.mean_confidence, 4) or None
         loop = transcript.repetition_loop()
         if loop is not None:
             token, share = loop

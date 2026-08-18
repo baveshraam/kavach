@@ -79,6 +79,23 @@ CODE_MIX_PROMPT = (
 #: see `Transcript.looks_translated`.
 TAMIL_SCRIPT = re.compile(r"[஀-௿]")
 
+#: Scripts nobody in this corpus speaks or writes. Their appearance is not an
+#: accent or a spelling difference -- it is the decoder having stopped decoding
+#: and started guessing, and it arrives mixed into otherwise plausible text.
+#:
+#: Seen on real recordings here: "Naruhodou" and a CJK character inside a Tamil
+#: sentence, "молод" and "거야" inside another, "allemaal"/"Holz"/"besonders"
+#: across a third. Whisper is multilingual, so when the audio defeats it the
+#: nearest token can come from any language it knows.
+#:
+#: Kept to whole blocks that are unambiguous in a Tamil-English corpus. Latin
+#: is obviously excluded, and so is Devanagari -- an Indian-language token is
+#: at least a plausible mishearing here, where Hangul is not.
+FOREIGN_SCRIPT = re.compile(
+    r"[\u0370-\u03ff\u0400-\u04ff\u0590-\u05ff\u0600-\u06ff"
+    r"\u0e00-\u0e7f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]"
+)
+
 
 @dataclass(frozen=True, slots=True)
 class Word:
@@ -162,6 +179,25 @@ class Transcript:
         top, count = Counter(tokens).most_common(1)[0]
         share = count / len(tokens)
         return (top, share) if share >= floor else None
+
+    def hallucinated_script(self) -> tuple[str, int] | None:
+        """Characters from a script this corpus cannot contain, if any.
+
+        The third way Whisper fails here, after looping and translating, and
+        the one that follows from the other two being fixed: pushed to keep
+        Tamil on audio it cannot decode, it emits Tamil-shaped text with
+        fragments of Korean, Cyrillic or CJK mixed in.
+
+        Cheap to detect and worth detecting, because the alternative is a
+        token stream where those fragments get a language and a semantic class
+        like any other word. Unlike a translation this one at least *looks*
+        wrong, but nothing was checking, and "looks wrong to a human reading
+        the manifest" is not a check.
+
+        Returns `(sample, count)` or None.
+        """
+        found = FOREIGN_SCRIPT.findall(self.text)
+        return ("".join(dict.fromkeys(found))[:12], len(found)) if found else None
 
     def looks_translated(self) -> str | None:
         """A reason to believe Whisper translated instead of transcribing.
