@@ -1,0 +1,21 @@
+% ---------------------------------------------------------------
+% NOT A RESULT. This table was generated from data that cannot be
+% reported. Reasons:
+%   - 6 of 70 utterances are excluded and contribute to no graph (6x Whisper translated it into English rather than transcribing the Tamil; three re-decodes with a Tamil-script prompt returned either English again or hallucinated script, so its tokens would be language choices the speaker never made) -- report this count and these reasons alongside any result
+%   - 5 speakers have one session, so no cross-session trial exists for them and §5.3 cannot be computed on this corpus
+%   - the knowledge (answer matcher) branch scored only 8% of trials (knowledge (answer matcher): 72/900 trials scored (8.0%); unmeasured: claimed speaker never answered this prompt at enrolment x828); the unscored trials are fused from the remaining branches, so the table mixes two different systems
+%   - enrolment and probe speech were split within a session, which measures how well the estimator memorises one recording sitting
+% Delete this banner only when kavach.experiments emits the table
+% without it -- do not edit it out by hand.
+% ---------------------------------------------------------------
+\begin{tabular}{rrr}
+\toprule
+Enrolment utterances & Approx.\ seconds & EER \% [95\% CI] \\
+\midrule
+2 & 48 & 47.06 [35.29--63.71] \\
+5 & 120 & 45.59 [34.15--58.49] \\
+\bottomrule
+\end{tabular}
+
+% Read left to right: speech a defender needs. Read as an eavesdropping
+% budget: speech an attacker needs to steal the graph. Same measurement.

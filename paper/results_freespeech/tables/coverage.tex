@@ -1,0 +1,40 @@
+% ---------------------------------------------------------------
+% NOT A RESULT. This table was generated from data that cannot be
+% reported. Reasons:
+%   - 6 of 70 utterances are excluded and contribute to no graph (6x Whisper translated it into English rather than transcribing the Tamil; three re-decodes with a Tamil-script prompt returned either English again or hallucinated script, so its tokens would be language choices the speaker never made) -- report this count and these reasons alongside any result
+%   - 5 speakers have one session, so no cross-session trial exists for them and §5.3 cannot be computed on this corpus
+%   - the knowledge (answer matcher) branch scored only 8% of trials (knowledge (answer matcher): 72/900 trials scored (8.0%); unmeasured: claimed speaker never answered this prompt at enrolment x828); the unscored trials are fused from the remaining branches, so the table mixes two different systems
+%   - enrolment and probe speech were split within a session, which measures how well the estimator memorises one recording sitting
+% Delete this banner only when kavach.experiments emits the table
+% without it -- do not edit it out by hand.
+% ---------------------------------------------------------------
+\begin{tabular}{lrr}
+\toprule
+Semantic class & Choice tokens & Speakers with own evidence \\
+\midrule
+Number & 74 & 5/5 \\
+Time Date & 220 & 5/5 \\
+Kinship & 69 & 5/5 \\
+Food & 178 & 5/5 \\
+Place Local & 102 & 5/5 \\
+Place Global & 20 & 2/5 \\
+Tech Digital & 30 & 3/5 \\
+Edu Work & 85 & 5/5 \\
+Money Commerce & 39 & 4/5 \\
+Emotion State & 90 & 5/5 \\
+Body Health & 54 & 5/5 \\
+Transport & 32 & 4/5 \\
+Religion Festival & 39 & 4/5 \\
+Media Entertain & 67 & 5/5 \\
+Discourse Marker & 129 & 5/5 \\
+Politeness & 3 & 0/5 \\
+Quantity Measure & 214 & 5/5 \\
+Action Verb & 520 & 5/5 \\
+Function Word & 558 & 5/5 \\
+Named Entity & 2 & 0/5 \\
+Other & 280 & 5/5 \\
+\bottomrule
+\end{tabular}
+
+% 'Own evidence' means the speaker produced at least 4 tokens of the class,
+% the point at which their observations outweigh the backoff prior.
