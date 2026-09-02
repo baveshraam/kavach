@@ -22,9 +22,12 @@ The claim the whole system is built to test is one sentence:
 | **[PROJECT.md](PROJECT.md)** | What the system is, every design decision and why, what has been measured versus assumed, and the full session history. |
 | `KAVACH_Project_Idea.md` | The research proposal: novelty argument, experiment design, findings write-up. |
 
-**One thing to know before reading any number in this repository:** no human
-speakers have been recorded. Everything currently runs on `simulation.py`, whose
-speakers differ by construction. See PROJECT.md §4.
+**One thing to know before reading any number in this repository:** two corpora
+of real speakers now exist — 7 reading scripts (`SCRIPTED`) and 5 speaking freely
+(`RECORDED`) — but neither ships here; see [What is not in this
+repository](#what-is-not-in-this-repository). `simulation.py` still exists and its
+speakers differ *by construction*, so a number it produces is never an
+experimental result. See PROJECT.md §4.
 
 ---
 
@@ -44,7 +47,7 @@ backend/kavach/         the system
     audio.py asr.py embedding.py matcher.py skg.py challenge.py fusion.py
 kavach/                 the frontend (Vite + React + TypeScript)
 participant_scripts/    read-speech scripts, one language profile per speaker
-tests/                  660 tests, none of which need a GPU
+tests/                  964 tests, none of which need a GPU
 ```
 
 Recording a corpus? Read **[RECORDING_PROTOCOL.md](RECORDING_PROTOCOL.md)**
@@ -105,7 +108,7 @@ answer, which the backend deliberately never sends.
 ### Tests
 
 ```bash
-pytest                                    # 600 passed, ~36s
+pytest                                    # 964 passed, ~90s
 pytest -m models                          # only the tests needing real checkpoints
 ```
 
@@ -177,6 +180,33 @@ LaTeX), `report.md`, `tables/*.tex` and `figures/*.pdf`, alongside the git
 commit and every seed. Without `--manifest` it runs on `simulation.py`, and
 **every output is stamped unreportable** — in the JSON, in the README it
 writes, and as a banner inside each `.tex` file.
+
+---
+
+## What is not in this repository
+
+A clone of this repository **builds and tests clean, and cannot reproduce a
+single experimental number.** That is deliberate, not an oversight, and the gap
+is exactly one thing: the audio.
+
+| Absent | Why | How a recipient gets it |
+|---|---|---|
+| `recordings/`, `SpeechData/` — 168 audio files, 49 MB | Participant folder names are people's real first names sitting beside their voiceprints. Direct identifiers; nothing pseudonymises them until `kavach.ingest` runs. | Transferred out of band, by the corpus owner, only to someone the consent register covers. |
+| `data/` — 175 MB: `corpus_v1`–`v3`, manifests, `kavach.db` | Voiceprints next to hometowns, schools and family names. Not encrypted. | Rebuilt from the audio with `kavach.ingest`, or transferred with it. |
+| `data/speakers*.csv`, `data/consent_register.csv` | The pseudonym→person mapping and the consent record. These are the *only* files that re-identify a speaker; keeping them beside the corpus would defeat the pseudonymisation. | Held by the corpus owner, outside this repository and outside `data/`. |
+| `.env` | API keys. `.env.example` lists the variable names. | Recipient supplies their own; any one provider key works and a free one will do. |
+| `.venv/`, `kavach/node_modules/`, `pretrained_models/` | Regenerable. | `pip install -r requirements.txt`, `npm install`; the speechbrain checkpoint downloads on first use. |
+
+What *is* here is every line of source, every test, the participant scripts, the
+recording protocol, and the finished results of both runs — `paper/results/`
+(scripted) and `paper/results_freespeech/` — as `results.json`, `report.md`,
+`tables/*.tex` and, for the free-speech run, the figures, since nobody without
+the corpus can regenerate those.
+
+So a recipient can read the code, run the tests, build the UI, run the API in
+degraded mode and read every number this project has measured. To *extend* the
+corpus they need the audio, and the audio needs a consent conversation — see
+[RECORDING_PROTOCOL.md](RECORDING_PROTOCOL.md).
 
 ---
 
