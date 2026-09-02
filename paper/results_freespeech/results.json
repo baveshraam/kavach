@@ -1,0 +1,512 @@
+{
+  "results_version": "1.0",
+  "reportable": false,
+  "blockers": [
+    "6 of 70 utterances are excluded and contribute to no graph (6x Whisper translated it into English rather than transcribing the Tamil; three re-decodes with a Tamil-script prompt returned either English again or hallucinated script, so its tokens would be language choices the speaker never made) -- report this count and these reasons alongside any result",
+    "5 speakers have one session, so no cross-session trial exists for them and §5.3 cannot be computed on this corpus",
+    "the knowledge (answer matcher) branch scored only 8% of trials (knowledge (answer matcher): 72/900 trials scored (8.0%); unmeasured: claimed speaker never answered this prompt at enrolment x828); the unscored trials are fused from the remaining branches, so the table mixes two different systems",
+    "enrolment and probe speech were split within a session, which measures how well the estimator memorises one recording sitting"
+  ],
+  "config": {
+    "out_dir": "paper/results_freespeech",
+    "manifest": "data/corpus_v3/manifest.json",
+    "seed": 0,
+    "dev_fraction": 0.4,
+    "bootstrap": 500,
+    "max_veto_frr_cost": 0.02,
+    "cohort_norm": true,
+    "allow_within_session": true,
+    "stability_budgets": [
+      2,
+      5,
+      10,
+      20,
+      30
+    ],
+    "simulate_branches": false,
+    "real_branches": true,
+    "semantic_matcher": true,
+    "goldset": null,
+    "figures": true,
+    "n_simulated_speakers": 24
+  },
+  "environment": {
+    "generated_utc": "2026-08-18T21:50:34+00:00",
+    "git_commit": "5028cfc93fc1b3204f587ca39f89e612ba25fd61",
+    "git_dirty": false,
+    "python": "3.11.15",
+    "platform": "macOS-26.6.1-arm64-arm-64bit",
+    "packages": {
+      "numpy": "2.1.3",
+      "scipy": "1.17.1",
+      "sklearn": "1.9.0",
+      "matplotlib": "3.11.1"
+    }
+  },
+  "corpus": {
+    "name": "kavach_freespeech_v1",
+    "provenance": "RECORDED",
+    "protocol_version": "v1",
+    "ontology_version": "1.0",
+    "n_speakers": 5,
+    "n_sessions": 5,
+    "n_utterances": 70,
+    "n_annotated": 70,
+    "session_split": "within-session: 5 speakers, 44 enrolment / 20 probe utterances",
+    "dropped_speakers": [],
+    "cross_session": false,
+    "notes": "Ingested from 5 speaker folders.",
+    "branch_coverage": [
+      {
+        "name": "acoustic (ECAPA)",
+        "measured": 900,
+        "unavailable": 0,
+        "coverage": 1.0,
+        "reasons": {}
+      },
+      {
+        "name": "knowledge (answer matcher)",
+        "measured": 72,
+        "unavailable": 828,
+        "coverage": 0.08,
+        "reasons": {
+          "claimed speaker never answered this prompt at enrolment": 828
+        }
+      }
+    ]
+  },
+  "annotation_quality": {
+    "measured": false,
+    "why": "no gold set supplied (--goldset); word-level LID accuracy of the annotations every number here rests on is unmeasured"
+  },
+  "split": {
+    "dev_speakers": [
+      "S09",
+      "S10"
+    ],
+    "test_speakers": [
+      "S08",
+      "S11",
+      "S12"
+    ],
+    "n_dev_trials": 16,
+    "n_test_trials": 36,
+    "n_cohort_trials": 48
+  },
+  "fitted": {
+    "weights": {
+      "speaker_embedding": 1.0,
+      "csbg": 0.0,
+      "knowledge": 0.0
+    },
+    "threshold": 0.8733428470698961,
+    "veto_floor": null,
+    "veto_frr_cost": 0.0,
+    "weights_source": "logistic regression on dev",
+    "threshold_source": "dev EER operating point"
+  },
+  "measured_branches": [
+    "speaker_embedding",
+    "csbg",
+    "knowledge"
+  ],
+  "configurations": [
+    {
+      "name": "ECAPA alone",
+      "branches": [
+        "speaker_embedding"
+      ],
+      "eer": 0.0,
+      "eer_ci": [
+        0.0,
+        0.0
+      ],
+      "min_dcf": 0.0,
+      "min_dcf_params": [
+        0.05,
+        1.0,
+        1.0
+      ],
+      "far_at_frr_1pct": 0.0,
+      "frr_at_far_1pct": 0.0,
+      "auc": 1.0,
+      "n_genuine": 12,
+      "n_impostor": 24,
+      "n_vetoed": 0,
+      "is_reliable": false
+    },
+    {
+      "name": "CSBG alone",
+      "branches": [
+        "csbg"
+      ],
+      "eer": 0.5,
+      "eer_ci": [
+        0.3333333333333333,
+        0.7083333333333334
+      ],
+      "min_dcf": 0.8333333333333334,
+      "min_dcf_params": [
+        0.05,
+        1.0,
+        1.0
+      ],
+      "far_at_frr_1pct": null,
+      "frr_at_far_1pct": 0.8333333333333334,
+      "auc": 0.5416666666666666,
+      "n_genuine": 12,
+      "n_impostor": 24,
+      "n_vetoed": 6,
+      "is_reliable": false
+    },
+    {
+      "name": "+ Knowledge",
+      "branches": [
+        "speaker_embedding",
+        "knowledge"
+      ],
+      "eer": 0.0,
+      "eer_ci": [
+        0.0,
+        0.0
+      ],
+      "min_dcf": 0.0,
+      "min_dcf_params": [
+        0.05,
+        1.0,
+        1.0
+      ],
+      "far_at_frr_1pct": 0.0,
+      "frr_at_far_1pct": 0.0,
+      "auc": 1.0,
+      "n_genuine": 12,
+      "n_impostor": 24,
+      "n_vetoed": 0,
+      "is_reliable": false
+    },
+    {
+      "name": "+ CSBG only",
+      "branches": [
+        "speaker_embedding",
+        "csbg"
+      ],
+      "eer": 0.0,
+      "eer_ci": [
+        0.0,
+        0.0
+      ],
+      "min_dcf": 0.0,
+      "min_dcf_params": [
+        0.05,
+        1.0,
+        1.0
+      ],
+      "far_at_frr_1pct": 0.0,
+      "frr_at_far_1pct": 0.0,
+      "auc": 1.0,
+      "n_genuine": 12,
+      "n_impostor": 24,
+      "n_vetoed": 0,
+      "is_reliable": false
+    },
+    {
+      "name": "Full fusion",
+      "branches": [
+        "speaker_embedding",
+        "knowledge",
+        "csbg"
+      ],
+      "eer": 0.0,
+      "eer_ci": [
+        0.0,
+        0.0
+      ],
+      "min_dcf": 0.0,
+      "min_dcf_params": [
+        0.05,
+        1.0,
+        1.0
+      ],
+      "far_at_frr_1pct": 0.0,
+      "frr_at_far_1pct": 0.0,
+      "auc": 1.0,
+      "n_genuine": 12,
+      "n_impostor": 24,
+      "n_vetoed": 0,
+      "is_reliable": false
+    }
+  ],
+  "ablations": [
+    {
+      "name": "equal branch weights",
+      "scope": "full system",
+      "eer": 0.16666666666666666,
+      "delta": 0.16666666666666666,
+      "note": "What the logistic-regression fit was worth."
+    },
+    {
+      "name": "low-signal classes included",
+      "scope": "csbg",
+      "eer": 0.4166666666666667,
+      "delta": -0.08333333333333331,
+      "note": "FUNCTION_WORD, NAMED_ENTITY and OTHER put back. Excluding them is a hypothesis stated in ontology.LOW_SIGNAL_CLASSES; a positive delta confirms it on this data, a negative one retires it."
+    },
+    {
+      "name": "transition stream removed",
+      "scope": "csbg",
+      "eer": 0.5,
+      "delta": 0.0,
+      "note": "P(lang given class and prev_lang) dropped, its weight redistributed. Transition cells are ~4x sparser than lexical ones, so this is the row that says whether sequence information survives short probes."
+    },
+    {
+      "name": "graph metrics removed",
+      "scope": "csbg",
+      "eer": 0.5,
+      "delta": 0.0,
+      "note": "CMI and I-index dropped. They are already ramped down on short probes by csbg.scoring, so a near-zero delta here is expected and is a check on that ramp rather than a finding."
+    },
+    {
+      "name": "lexical stream removed",
+      "scope": "csbg",
+      "eer": 0.5,
+      "delta": 0.0,
+      "note": "Transitions and metrics alone. The complement of the row above: together they say how much of the CSBG is carried by which language a class takes versus how the speaker moves between them."
+    },
+    {
+      "name": "cohort z-norm removed",
+      "scope": "csbg",
+      "eer": 0.4583333333333333,
+      "delta": -0.041666666666666685,
+      "note": "Raw LLRs are not comparable across claimed speakers: an unusual speaker produces large-magnitude scores for everyone. Expect this row to read ~0 on a single branch and still matter in fusion. EER is rank-based, so a per-speaker rescale only moves it by *reordering* speakers against each other -- which needs the population to vary in score scale in the first place. Fusion is not rank-based: it adds the branch to others on a shared [0, 1] scale, where the shift is exactly what makes the sum comparable. A near-zero delta here alongside a large one in the configuration table is the expected shape, not a contradiction."
+    }
+  ],
+  "stability": [
+    {
+      "n_utterances": 2,
+      "approx_seconds": 47.9992,
+      "eer": 0.47058823529411764,
+      "ci_low": 0.35294117647058826,
+      "ci_high": 0.6371323529411768
+    },
+    {
+      "n_utterances": 5,
+      "approx_seconds": 119.998,
+      "eer": 0.45588235294117646,
+      "ci_low": 0.34154411764705894,
+      "ci_high": 0.5849264705882354
+    }
+  ],
+  "fairness": [],
+  "coverage": {
+    "total_tokens": 3503,
+    "total_choice_tokens": 2805,
+    "n_speakers": 5,
+    "min_tokens_for_own_evidence": 4.0,
+    "classes": [
+      {
+        "class": "NUMBER",
+        "n_tokens": 74,
+        "n_speakers_with_own_evidence": 5
+      },
+      {
+        "class": "TIME_DATE",
+        "n_tokens": 220,
+        "n_speakers_with_own_evidence": 5
+      },
+      {
+        "class": "KINSHIP",
+        "n_tokens": 69,
+        "n_speakers_with_own_evidence": 5
+      },
+      {
+        "class": "FOOD",
+        "n_tokens": 178,
+        "n_speakers_with_own_evidence": 5
+      },
+      {
+        "class": "PLACE_LOCAL",
+        "n_tokens": 102,
+        "n_speakers_with_own_evidence": 5
+      },
+      {
+        "class": "PLACE_GLOBAL",
+        "n_tokens": 20,
+        "n_speakers_with_own_evidence": 2
+      },
+      {
+        "class": "TECH_DIGITAL",
+        "n_tokens": 30,
+        "n_speakers_with_own_evidence": 3
+      },
+      {
+        "class": "EDU_WORK",
+        "n_tokens": 85,
+        "n_speakers_with_own_evidence": 5
+      },
+      {
+        "class": "MONEY_COMMERCE",
+        "n_tokens": 39,
+        "n_speakers_with_own_evidence": 4
+      },
+      {
+        "class": "EMOTION_STATE",
+        "n_tokens": 90,
+        "n_speakers_with_own_evidence": 5
+      },
+      {
+        "class": "BODY_HEALTH",
+        "n_tokens": 54,
+        "n_speakers_with_own_evidence": 5
+      },
+      {
+        "class": "TRANSPORT",
+        "n_tokens": 32,
+        "n_speakers_with_own_evidence": 4
+      },
+      {
+        "class": "RELIGION_FESTIVAL",
+        "n_tokens": 39,
+        "n_speakers_with_own_evidence": 4
+      },
+      {
+        "class": "MEDIA_ENTERTAIN",
+        "n_tokens": 67,
+        "n_speakers_with_own_evidence": 5
+      },
+      {
+        "class": "DISCOURSE_MARKER",
+        "n_tokens": 129,
+        "n_speakers_with_own_evidence": 5
+      },
+      {
+        "class": "POLITENESS",
+        "n_tokens": 3,
+        "n_speakers_with_own_evidence": 0
+      },
+      {
+        "class": "QUANTITY_MEASURE",
+        "n_tokens": 214,
+        "n_speakers_with_own_evidence": 5
+      },
+      {
+        "class": "ACTION_VERB",
+        "n_tokens": 520,
+        "n_speakers_with_own_evidence": 5
+      },
+      {
+        "class": "FUNCTION_WORD",
+        "n_tokens": 558,
+        "n_speakers_with_own_evidence": 5
+      },
+      {
+        "class": "NAMED_ENTITY",
+        "n_tokens": 2,
+        "n_speakers_with_own_evidence": 0
+      },
+      {
+        "class": "OTHER",
+        "n_tokens": 280,
+        "n_speakers_with_own_evidence": 5
+      }
+    ],
+    "prompts": [
+      {
+        "prompt_id": "p01_family",
+        "n_utterances": 5,
+        "mean_tokens": 54.6,
+        "hit_rate": 1.0
+      },
+      {
+        "prompt_id": "p02_food",
+        "n_utterances": 5,
+        "mean_tokens": 43.2,
+        "hit_rate": 1.0
+      },
+      {
+        "prompt_id": "p03_commute",
+        "n_utterances": 5,
+        "mean_tokens": 50.0,
+        "hit_rate": 1.0
+      },
+      {
+        "prompt_id": "p04_money",
+        "n_utterances": 5,
+        "mean_tokens": 45.0,
+        "hit_rate": 0.8
+      },
+      {
+        "prompt_id": "p05_phone",
+        "n_utterances": 5,
+        "mean_tokens": 53.8,
+        "hit_rate": 1.0
+      },
+      {
+        "prompt_id": "p06_study",
+        "n_utterances": 5,
+        "mean_tokens": 74.2,
+        "hit_rate": 0.8
+      },
+      {
+        "prompt_id": "p07_festival",
+        "n_utterances": 5,
+        "mean_tokens": 62.8,
+        "hit_rate": 1.0
+      },
+      {
+        "prompt_id": "p08_travel",
+        "n_utterances": 5,
+        "mean_tokens": 50.4,
+        "hit_rate": 0.8
+      },
+      {
+        "prompt_id": "p09_film",
+        "n_utterances": 5,
+        "mean_tokens": 42.6,
+        "hit_rate": 0.8
+      },
+      {
+        "prompt_id": "p10_numbers",
+        "n_utterances": 5,
+        "mean_tokens": 41.0,
+        "hit_rate": 1.0
+      },
+      {
+        "prompt_id": "p11_health",
+        "n_utterances": 5,
+        "mean_tokens": 60.8,
+        "hit_rate": 1.0
+      },
+      {
+        "prompt_id": "p12_market",
+        "n_utterances": 5,
+        "mean_tokens": 47.6,
+        "hit_rate": 1.0
+      },
+      {
+        "prompt_id": "p13_hometown",
+        "n_utterances": 5,
+        "mean_tokens": 66.6,
+        "hit_rate": 1.0
+      },
+      {
+        "prompt_id": "p14_control_name",
+        "n_utterances": 5,
+        "mean_tokens": 8.0,
+        "hit_rate": 1.0
+      }
+    ],
+    "starved_classes": [],
+    "wrapperless_prompts": []
+  },
+  "speaker_consistency": {
+    "S08": 0.4066238584938189,
+    "S09": 0.5368141172578235,
+    "S10": 0.3643774093261901,
+    "S11": 0.37278092235675303,
+    "S12": 0.384158834462973
+  },
+  "caveats": [
+    "CSBG scores are cohort z-normalised. Statistics are fitted from impostor trials whose *probe* is a dev speaker, which covers test models (3/3 test speakers) without using a test probe -- see `cohort_fitting_trials`. Report un-normalised results too: z-norm usually helps materially, and hiding that is hiding a design decision.",
+    "No veto floor bought any FAR reduction inside the 2% FRR budget on dev. Report that the veto was fitted and discarded -- that is a result about the branch, not an omission."
+  ]
+}
