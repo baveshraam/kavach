@@ -8,6 +8,8 @@ data/processed/
 *.flac
 *.ogg
 *.m4a
+*.mp4
+*.mov
 speakers.db
 *.db
 *.sqlite
