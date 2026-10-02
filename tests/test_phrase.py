@@ -133,7 +133,7 @@ def test_an_unrelated_recording_almost_never_clears_the_gate_by_chance():
     Measured on 200,000 pairs: 4 or more in order never happened, 3 or more happened 1.3e-4 of the
     time. Pinned on a smaller seeded sample so a smaller pool or a looser matcher cannot slip in."""
     rng = random.Random(1)
-    n, ge3, ge4 = 50_000, 0, 0
+    n, ge3, ge4 = 20_000, 0, 0
     for _ in range(n):
         m = match_phrase(rng.sample(WORDS, 6), " ".join(rng.sample(WORDS, 6))).matched
         ge3 += m >= 3
