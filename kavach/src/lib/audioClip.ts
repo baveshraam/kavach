@@ -28,6 +28,24 @@ export async function trimToWav(url: string, startSec: number, durationSec: numb
   return encodeWav(rendered.getChannelData(0), targetRate);
 }
 
+/**
+ * How to cut a staged demo clip from a stored recording without it reading as a
+ * replay. The backend's duplicate detector flags a probe whose energy envelope
+ * correlates >= 0.85 with a stored clip, and for a cut that is about
+ * sqrt(cut / clip) -- so a cut over ~72% of the clip is "the same performance
+ * submitted twice". Mirrors `cut_plan` in backend/kavach/demo_check.py, which
+ * tests/test_demo_staging.py pins to the detector; change them together.
+ */
+export const STAGING_MAX_SHARE = 0.4;
+export const STAGING_MIN_SOURCE_SEC = 20;
+export const STAGING_MAX_CUT_SEC = 12;
+
+export function stagingCut(durationSec: number): { start: number; length: number } | null {
+  if (durationSec < STAGING_MIN_SOURCE_SEC) return null;
+  const length = Math.min(STAGING_MAX_CUT_SEC, STAGING_MAX_SHARE * durationSec);
+  return { start: Math.min(2, durationSec - length), length };
+}
+
 /** Fetch a stored recording unchanged -- a literal replay. */
 export async function fetchExact(url: string): Promise<Blob> {
   const response = await fetch(url);
