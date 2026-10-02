@@ -305,7 +305,7 @@ export function Unlock() {
                         {a.decision === 'ACCEPT' ? <CheckCircle2 className="w-4 h-4 text-app-accept shrink-0" /> : a.decision === 'REJECT' ? <XCircle className="w-4 h-4 text-app-reject shrink-0" /> : <AlertTriangle className="w-4 h-4 text-app-warning shrink-0" />}
                         <span className="tnum text-app-text-subtle whitespace-nowrap shrink-0">{a.at}</span>
                         <span className="tnum whitespace-nowrap shrink-0 font-medium">{a.voice !== undefined ? a.voice.toFixed(2) : '—'}</span>
-                        <span className="text-app-text-muted truncate min-w-0" title={a.note}>{a.decision === 'ACCEPT' ? 'unlocked' : a.note.replace(/^Rejected: /, '')}</span>
+                        <span className="text-app-text-muted truncate min-w-0" title={a.note}>{a.decision === 'ACCEPT' ? 'unlocked' : a.decision === 'BORDERLINE' ? 'voice not conclusive: asked once more' : a.note.replace(/^Rejected: /, '')}</span>
                       </li>
                     ))}
                   </ul>
