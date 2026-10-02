@@ -26,6 +26,20 @@ enrolled speaker, measured on held-out sessions, with claims worded accordingly.
 
 ---
 
+## The demo, in one paragraph
+
+The **Unlock** screen shows six random words. The enrolled speaker reads them; the system accepts only if
+the recording is fresh and untouched, the words spoken are the words shown (so a recording made for
+another attempt is useless), and the **voice** matches the enrolled voiceprint, as a hard gate that no
+correct answer or plausible code-switching can outvote. Someone else reading the same words is refused.
+Failed attempts slow down; a borderline voice earns one stricter second phrase; speech before or after
+the phrase does not count. The voice threshold is not a guess: `python -m kavach.calibrate_voice` measures
+it from the presenter's own recorded sessions against public speech corpora and writes the numbers, with
+their limits, to a file the live system loads. What this does and does not establish is in
+[DEMO_HARDENING.md](DEMO_HARDENING.md); how to present it is in [DEMO_RUNBOOK.md](DEMO_RUNBOOK.md).
+
+---
+
 ## Where to start
 
 | Document | What it is for |
