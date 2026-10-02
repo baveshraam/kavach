@@ -103,6 +103,27 @@ class LIDPipeline:
 
     stats: PipelineStats = field(default_factory=PipelineStats)
 
+    degrade_on_llm_failure: bool = False
+    """Fall back to rules-only tagging when the LLM call fails, instead of raising.
+
+    Off for corpus annotation, where a silently rules-tagged utterance would
+    enter the corpus with every token in OTHER. On for the live API, where the
+    alternative is a login that hangs or 500s because a free-tier provider
+    returned 503: the caller reads `last_llm_error` and reports the CSBG
+    branch as unmeasured rather than scoring rules-only tokens."""
+
+    last_llm_error: str | None = None
+    """Why the most recent `tag_utterance` fell back, or None if it did not."""
+
+    fallback_tagger: object | None = None
+    """Tagger to use when the LLM fails and `degrade_on_llm_failure` is on --
+    in the live API, a `lexicon.LexiconTagger` built from the corpus the LLM
+    already tagged. None means rules only."""
+
+    last_fallback_coverage: float | None = None
+    """Share of tokens the fallback tagger actually knew on the last fallback,
+    or None if no fallback tagger ran."""
+
     def tag_utterance(
         self,
         transcript: str,
@@ -133,8 +154,24 @@ class LIDPipeline:
         # one is configured -- the rules stage saves cost on *language*, and
         # its confident language calls still override the model below.
         llm_tags: list[TaggedToken] | None = None
+        self.last_llm_error = None
+        self.last_fallback_coverage = None
         if self.llm_tagger is not None:
-            llm_tags = self.llm_tagger.tag(surface, context=transcript)
+            try:
+                llm_tags = self.llm_tagger.tag(surface, context=transcript)
+            except Exception as exc:  # noqa: BLE001 -- re-raised unless degrading
+                if not self.degrade_on_llm_failure:
+                    raise
+                self.last_llm_error = f"{type(exc).__name__}: {exc}"[:240]
+                llm_tags = None
+                if self.fallback_tagger is not None:
+                    llm_tags = self.fallback_tagger.tag(surface, context=transcript)  # type: ignore[attr-defined]
+                    self.last_fallback_coverage = getattr(self.fallback_tagger, "last_coverage", None)
+        elif self.degrade_on_llm_failure and self.fallback_tagger is not None:
+            # No LLM configured at all (no key, or offline): same fallback.
+            self.last_llm_error = "no LLM provider configured"
+            llm_tags = self.fallback_tagger.tag(surface, context=transcript)  # type: ignore[attr-defined]
+            self.last_fallback_coverage = getattr(self.fallback_tagger, "last_coverage", None)
 
         tokens = self._merge(surface, rule_results, llm_tags, timings)
         return UtteranceTokens(

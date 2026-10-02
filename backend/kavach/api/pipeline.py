@@ -35,7 +35,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..asr import Transcript, WhisperASR
+from ..asr import FOREIGN_SCRIPT, Transcript, WhisperASR
 from ..audio import Audio, AudioError, check_quality, decode_bytes, load_audio
 from ..challenge import Challenge, ChallengeError, ChallengeGenerator, ChallengeLedger
 from ..config import Settings, get_settings
@@ -52,6 +52,7 @@ from ..fusion import (
     fuse,
 )
 from ..integrity import IntegrityChecker, IntegrityReport, build_integrity_branch
+from ..lid.lexicon import MIN_USEFUL_COVERAGE
 from ..lid.pipeline import LIDPipeline
 from ..matcher import AnswerMatcher, SemanticMatcher
 from .converters import utterance_tokens_from_wire
@@ -76,6 +77,18 @@ class Annotation:
 
     transcript: Transcript
     tokens: UtteranceTokens
+    degraded: str | None = None
+    """Set when the LLM tagger failed (or none is configured). The tokens then
+    came from the corpus lexicon, or from rules alone if that is missing."""
+
+    fallback_coverage: float | None = None
+    """Share of tokens the corpus lexicon knew, when it was the tagger. None
+    means rules-only: every class is OTHER and the tokens must not be scored
+    as a CSBG."""
+
+    dropped_hallucinated: int = 0
+    """Tokens removed because they contained a script this corpus cannot
+    contain (`asr.FOREIGN_SCRIPT`)."""
 
     @property
     def text(self) -> str:
@@ -120,7 +133,7 @@ class Pipeline:
         self._matcher: AnswerMatcher | None = None
         self._challenges: ChallengeGenerator | None = None
 
-        self.integrity = IntegrityChecker()
+        self.integrity = IntegrityChecker(check_splice=self.settings.integrity_check_splice)
         """Edit- and duplicate-artefact tests. Pure NumPy, always available --
         unlike every other component here it has no model to load and no
         network dependency, which is why it is constructed eagerly.
@@ -254,10 +267,25 @@ class Pipeline:
                 if isinstance(tagger, LLMTagger):
                     tagger.model = self.settings.llm_model
                     tagger.effort = self.settings.llm_tagging_effort
+                tagger.max_attempts = self.settings.live_llm_attempts
             except Exception as exc:
                 self._failed["llm_tagger"] = str(exc)
                 tagger = None
-            self._lid = LIDPipeline(llm_tagger=tagger)
+
+            # Offline fallback: the corpus the LLM already tagged, as a lookup.
+            # See `lid.lexicon`. Built once; a failure here only costs the
+            # fallback, never the pipeline.
+            fallback = None
+            if self.settings.live_lexicon_fallback:
+                try:
+                    from ..lid.lexicon import LexiconTagger
+
+                    fallback = LexiconTagger.from_data_dir(self.settings.data_dir) or None
+                except Exception as exc:  # noqa: BLE001
+                    self._failed["lexicon_fallback"] = str(exc)
+            self._lid = LIDPipeline(
+                llm_tagger=tagger, degrade_on_llm_failure=True, fallback_tagger=fallback
+            )
         return self._lid
 
     @property
@@ -265,7 +293,8 @@ class Pipeline:
         """Answer matcher. The three string matchers always run; the semantic
         one reports its own availability."""
         if self._matcher is None:
-            self._matcher = AnswerMatcher(semantic_matcher=SemanticMatcher())
+            # Cache-only on the live path: see `SemanticMatcher.allow_download`.
+            self._matcher = AnswerMatcher(semantic_matcher=SemanticMatcher(allow_download=False))
         return self._matcher
 
     @property
@@ -419,7 +448,8 @@ class Pipeline:
         missing = self.availability()
         out: list[str] = []
         if "asr" not in missing:
-            out.append(f"faster-whisper/{self.settings.whisper_model}")
+            device = getattr(self._asr, "resolved_device", None) if self._asr else None
+            out.append(f"faster-whisper/{self.settings.whisper_model}" + (f" ({device})" if device else ""))
         if "speaker_embedding" not in missing:
             out.append(self.settings.ecapa_model)
         if "llm" not in missing:
@@ -453,14 +483,27 @@ class Pipeline:
         asr = self.asr
         if asr is None:
             return None
-        transcript = asr.transcribe(audio)
+        transcript = asr.transcribe(audio, fast=self.settings.live_fast_asr)
         tokens = self.lid.tag_utterance(
             transcript.text,
             utterance_id=utterance_id,
             speaker_id=speaker_id,
             timings=transcript.timings,
         )
-        return Annotation(transcript=transcript, tokens=tokens)
+        # Whisper's third failure mode: Hangul / Cyrillic / CJK fragments in
+        # Tamil-English speech (13 of the 161 stored transcripts carry some).
+        # `Transcript.hallucinated_script` detects it; nothing acted on it, so
+        # those fragments were tagged and scored like real words. Drop them.
+        kept = [t for t in tokens.tokens if not FOREIGN_SCRIPT.search(t.text)]
+        dropped = len(tokens.tokens) - len(kept)
+        tokens.tokens = kept
+        return Annotation(
+            transcript=transcript,
+            tokens=tokens,
+            degraded=self.lid.last_llm_error,
+            fallback_coverage=self.lid.last_fallback_coverage,
+            dropped_hallucinated=dropped,
+        )
 
     def stored_tokens(self, speaker_id: str) -> list[UtteranceTokens]:
         """Annotated tokens for every one of a speaker's utterances.
@@ -476,7 +519,10 @@ class Pipeline:
             out.append(
                 utterance_tokens_from_wire(
                     row["id"],
-                    [_as_token(t) for t in row["tokens"]],
+                    # Hallucinated-script fragments are not words anyone said;
+                    # see `annotate`. Filtered here too so a rebuilt graph
+                    # drops the ones already stored.
+                    [_as_token(t) for t in row["tokens"] if not FOREIGN_SCRIPT.search(t.get("text", ""))],
                     speaker_id=speaker_id,
                     transcript=row.get("transcript", ""),
                 )
@@ -680,6 +726,11 @@ class Pipeline:
         branches.append(self._speaker_branch(speaker_id, audio, notes))
 
         annotation = self.annotate(audio, utterance_id=challenge.id, speaker_id=speaker_id)
+        if annotation is not None and annotation.dropped_hallucinated:
+            notes.append(
+                f"Dropped {annotation.dropped_hallucinated} transcript fragment(s) in a script "
+                "no Tamil-English speaker produces (a speech-recognition hallucination)."
+            )
         csbg_score = None
         if annotation is None:
             notes.append("ASR unavailable; the CSBG and knowledge branches could not run.")
@@ -703,6 +754,42 @@ class Pipeline:
                     detail="No transcript: speech recognition is not available.",
                 )
             )
+        elif annotation.degraded and (annotation.fallback_coverage or 0.0) >= MIN_USEFUL_COVERAGE:
+            # The LLM failed but the corpus lexicon knew most of the words, so
+            # the tokens do carry semantic classes. Score it, and say how.
+            notes.append(
+                "The language tagger (LLM) was unavailable "
+                f"({annotation.degraded}); words were tagged offline from the "
+                f"corpus lexicon instead ({annotation.fallback_coverage:.0%} of words known)."
+            )
+            csbg_branch, csbg_score = self._csbg_branch(speaker_id, annotation)
+            branches.append(csbg_branch)
+            branches.append(self._knowledge_branch(challenge, annotation))
+        elif annotation.degraded:
+            # Rules-only tokens (or a lexicon that knew too few words) carry
+            # no usable semantic class, so a CSBG scored on them would compare
+            # "everything is OTHER" against the enrolled graph. Unmeasured is
+            # the honest answer; the knowledge branch reads the transcript,
+            # not the tags, so it still runs.
+            coverage = (
+                f"; the offline lexicon knew only {annotation.fallback_coverage:.0%} of the words"
+                if annotation.fallback_coverage is not None else ""
+            )
+            notes.append(
+                "The language tagger (LLM) was unavailable for this login "
+                f"({annotation.degraded}{coverage}), so the code-switch graph was not scored."
+            )
+            branches.append(
+                BranchScore(
+                    branch=Branch.CSBG,
+                    score=0.0,
+                    threshold=self.settings.csbg_threshold,
+                    weight=0.0,
+                    available=False,
+                    detail="LLM tagger unavailable; tokens have no semantic class.",
+                )
+            )
+            branches.append(self._knowledge_branch(challenge, annotation))
         else:
             csbg_branch, csbg_score = self._csbg_branch(speaker_id, annotation)
             branches.append(csbg_branch)
@@ -728,10 +815,16 @@ class Pipeline:
         fits them on a dev split, and the fitted numbers are what the paper
         reports.
         """
-        return FusionPolicy(
+        policy = FusionPolicy(
             threshold=self.settings.fused_threshold,
             borderline_margin=self.settings.borderline_margin,
         )
+        if not self.settings.csbg_veto_enabled:
+            # The offline run fitted the veto on dev and discarded it: no floor
+            # bought any FAR reduction inside the 2% FRR budget. See
+            # `Settings.csbg_veto_enabled`.
+            policy.veto_thresholds = {}
+        return policy
 
     def _speaker_branch(
         self, speaker_id: str, audio: Audio, notes: list[str]

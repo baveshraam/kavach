@@ -108,6 +108,11 @@ RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504, 529})
 _T = TypeVar("_T")
 
 
+#: Per-request ceiling for any LLM call. Tagging one utterance is a few
+#: hundred tokens; a request still open after this long has stalled.
+LLM_REQUEST_TIMEOUT_SEC = 45.0
+
+
 def _retry_after(exc: BaseException) -> float | None:
     """The provider's own `Retry-After`, in seconds, if it sent one.
 
@@ -420,9 +425,9 @@ class LLMTagger:
                     "kavach.lid.rules for rule-only tagging."
                 ) from exc
             self._client = (
-                anthropic.Anthropic(api_key=self._api_key)
+                anthropic.Anthropic(api_key=self._api_key, timeout=LLM_REQUEST_TIMEOUT_SEC, max_retries=0)
                 if self._api_key
-                else anthropic.Anthropic()
+                else anthropic.Anthropic(timeout=LLM_REQUEST_TIMEOUT_SEC, max_retries=0)
             )
         return self._client
 
@@ -494,7 +499,7 @@ class LLMTagger:
             return []
 
         params = self._request_params(tokens, context)
-        response = with_retries(lambda: self.client.messages.create(**params))
+        response = with_retries(lambda: self.client.messages.create(**params), attempts=getattr(self, 'max_attempts', MAX_ATTEMPTS))
         self.stats.record(response.usage)
 
         if response.stop_reason == "refusal":
@@ -790,6 +795,9 @@ class OpenAICompatibleTagger:
         from the same model as one that needed none, but it also means the run
         was fighting a rate limit rather than staying under it."""
         self.retry_seconds = 0.0
+        self.max_attempts = MAX_ATTEMPTS
+        """Attempts per request. The corpus pass keeps the full budget; the
+        live API lowers it, because a login cannot wait out a provider outage."""
         self._pacer = Pacer(
             min_interval if min_interval is not None
             else self.provider.min_interval_seconds
@@ -847,7 +855,16 @@ class OpenAICompatibleTagger:
                     f"{' or '.join(self.provider.env_keys)}; free keys at "
                     f"{self.provider.signup}"
                 )
-            self._client = OpenAI(api_key=key, base_url=self.provider.base_url)
+            # The SDK default is a 600 s read timeout plus 2 hidden retries,
+            # stacked under `with_retries`' own six: one stalled connection
+            # held a live login for over ten minutes. Fail fast and let the
+            # visible, paced retry loop above decide what happens next.
+            self._client = OpenAI(
+                api_key=key,
+                base_url=self.provider.base_url,
+                timeout=LLM_REQUEST_TIMEOUT_SEC,
+                max_retries=0,
+            )
         return self._client
 
     def tag(self, tokens: list[str], *, context: str | None = None) -> list[TaggedToken]:
@@ -889,7 +906,7 @@ class OpenAICompatibleTagger:
                 },
             )
 
-        response = with_retries(call, on_retry=self._note_retry)
+        response = with_retries(call, attempts=self.max_attempts, on_retry=self._note_retry)
         self.stats.record(_usage_adapter(response.usage))
 
         choice = response.choices[0]

@@ -518,10 +518,10 @@ class TestFrontendContract:
             ("CSBGNode", schemas.CSBGNode, set()),
             ("CSBGEdge", schemas.CSBGEdge, set()),
             ("CSBG", schemas.CSBGGraph, set()),
-            # The three extras are backend-only. TypeScript ignores unknown
-            # keys, and omitting them would let the Attack Lab's simulated
-            # numbers be screenshotted without their caveats.
-            ("AttackRun", schemas.AttackRun, {"simulated", "yieldRate", "notes"}),
+            # `simulated`, `yieldRate` and `notes` are declared in types.ts
+            # and rendered by the Attack Lab: omitting them would let its
+            # simulated numbers be screenshotted without their caveats.
+            ("AttackRun", schemas.AttackRun, set()),
             ("SpeakerIapmr", schemas.SpeakerIapmr, set()),
             ("PerSpeakerIapmr", schemas.PerSpeakerIapmr, set()),
         ],
@@ -1306,6 +1306,32 @@ class TestAttackLab:
         listed = client.get("/api/attacks").json()
         assert len(listed) == 1
         assert schemas.AttackRun.model_validate(listed[0])
+
+    def test_two_empty_runs_of_the_same_type_do_not_collide(
+        self, client: TestClient, store: Store
+    ) -> None:
+        """Regression: `_empty_run` used a fixed `atk_{type}_empty` id, so a
+        second cohort-less speaker attacked with the same type hit the same
+        primary key as the first and 500'd -- the same failure mode as trap
+        10 (a seeded RNG minting a run id), but in the zero-trials path that
+        RNG-based fix never touched."""
+        alone_a = store.create_speaker({"display_name": "AloneA"})["id"]
+        enrol_tokens(store, alone_a, speaker_utterances(TAMIL_NUMBERS, n=4))
+        alone_b = store.create_speaker({"display_name": "AloneB"})["id"]
+        enrol_tokens(store, alone_b, speaker_utterances(TAMIL_NUMBERS, n=4))
+
+        first = client.post(
+            "/api/attacks/generate",
+            json={"attackType": "A2_SPLICE", "targetSpeakerId": alone_a, "trials": 10},
+        )
+        second = client.post(
+            "/api/attacks/generate",
+            json={"attackType": "A2_SPLICE", "targetSpeakerId": alone_b, "trials": 10},
+        )
+        assert first.status_code == 200, first.text
+        assert second.status_code == 200, second.text
+        assert first.json()["id"] != second.json()["id"]
+        assert len(client.get("/api/attacks").json()) == 2
 
     def test_an_unknown_attack_type_is_a_400(self, client: TestClient, store: Store) -> None:
         victim = self._corpus(store)

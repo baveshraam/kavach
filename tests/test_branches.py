@@ -25,6 +25,7 @@ from __future__ import annotations
 import math
 import wave
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -150,7 +151,7 @@ class _StubEmbedder:
     def embed(self, audio):
         source = str(getattr(audio, "source", ""))
         self.calls.append(source)
-        speaker = source.split("/")[-1][:3]
+        speaker = Path(source).name[:3]
         if speaker in self.fail_on:
             from kavach.audio import AudioError
 

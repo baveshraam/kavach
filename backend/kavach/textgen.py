@@ -33,12 +33,18 @@ from .lid.llm import (
     available_providers,
     load_api_keys,
     with_retries,
+    LLM_REQUEST_TIMEOUT_SEC,
 )
 
 #: Enough for one question or one short conversational answer. Unlike tagging,
 #: neither caller's output scales with input length, so a flat ceiling is
 #: right here -- see `lid.llm.output_budget` for the case where it is not.
 DEFAULT_MAX_TOKENS = 2048
+
+#: Attempts per request. Every caller here is interactive -- a challenge
+#: someone is waiting to read, or an attack string -- and both have a template
+#: fallback, so a provider outage should reach it in seconds, not minutes.
+LIVE_TEXTGEN_ATTEMPTS = 2
 
 
 class TextError(RuntimeError):
@@ -167,9 +173,9 @@ class TextGenerator:
 
         if self._client is None:
             self._client = (
-                anthropic.Anthropic(api_key=self._api_key)
+                anthropic.Anthropic(api_key=self._api_key, timeout=LLM_REQUEST_TIMEOUT_SEC, max_retries=0)
                 if self._api_key
-                else anthropic.Anthropic()
+                else anthropic.Anthropic(timeout=LLM_REQUEST_TIMEOUT_SEC, max_retries=0)
             )
         from .lid.llm import DEFAULT_MODEL
 
@@ -190,7 +196,7 @@ class TextGenerator:
                 messages=[{"role": "user", "content": user}],
             )
 
-        response = with_retries(call, on_retry=self._note_retry)
+        response = with_retries(call, attempts=LIVE_TEXTGEN_ATTEMPTS, on_retry=self._note_retry)
         if getattr(response, "stop_reason", None) == "refusal":
             raise TextError("the model refused the request")
         text = next((b.text for b in response.content if b.type == "text"), "").strip()
@@ -209,7 +215,10 @@ class TextGenerator:
                     f"No API key for provider {name!r}. Set "
                     f"{' or '.join(provider.env_keys)}; free keys at {provider.signup}"
                 )
-            self._client = OpenAI(api_key=key, base_url=provider.base_url)
+            self._client = OpenAI(
+                api_key=key, base_url=provider.base_url,
+                timeout=LLM_REQUEST_TIMEOUT_SEC, max_retries=0,
+            )
             self._pacer = Pacer(provider.min_interval_seconds)
 
         def call() -> Any:
@@ -225,7 +234,7 @@ class TextGenerator:
                 ],
             )
 
-        response = with_retries(call, on_retry=self._note_retry)
+        response = with_retries(call, attempts=LIVE_TEXTGEN_ATTEMPTS, on_retry=self._note_retry)
         choice = response.choices[0]
         text = (choice.message.content or "").strip()
         if choice.finish_reason == "length" and not text:

@@ -97,6 +97,50 @@ FOREIGN_SCRIPT = re.compile(
 )
 
 
+def _ctranslate2_cuda_usable() -> bool:
+    """True if faster-whisper can actually run on the GPU here.
+
+    Asking torch was wrong twice over: the project installs a CPU build of
+    torch, so it always answered "no" on a machine with a working GPU; and
+    faster-whisper runs on CTranslate2, not torch, so torch's answer was never
+    about the right library. CTranslate2 needs cuBLAS 12 and cuDNN 9 at
+    *encode* time -- a model constructs fine without them and then fails on
+    the first transcription -- so both are loaded here, up front, and any
+    failure means CPU. On Windows the pip wheels (`nvidia-cublas-cu12`,
+    `nvidia-cudnn-cu12`) put their DLLs under site-packages/nvidia/*/bin,
+    which is not on the loader path until added.
+    """
+    try:
+        import ctranslate2
+
+        if ctranslate2.get_cuda_device_count() < 1:
+            return False
+    except Exception:  # noqa: BLE001
+        return False
+
+    import os
+    import sys
+
+    if sys.platform == "win32":
+        import ctypes
+        import glob
+        import site
+
+        for root in site.getsitepackages():
+            for bin_dir in glob.glob(os.path.join(root, "nvidia", "*", "bin")):
+                os.environ["PATH"] = bin_dir + os.pathsep + os.environ.get("PATH", "")
+                try:
+                    os.add_dll_directory(bin_dir)
+                except (OSError, AttributeError):
+                    pass
+        try:
+            ctypes.WinDLL("cublas64_12.dll")
+            ctypes.WinDLL("cudnn64_9.dll")
+        except OSError:
+            return False
+    return True
+
+
 @dataclass(frozen=True, slots=True)
 class Word:
     """One recognised word with timing."""
@@ -335,17 +379,24 @@ class WhisperASR:
 
             device = self.device
             if device == "auto":
-                try:
-                    import torch
+                device = "cuda" if _ctranslate2_cuda_usable() else "cpu"
 
-                    device = "cuda" if torch.cuda.is_available() else "cpu"
-                except ImportError:
-                    device = "cpu"
+            # int8 is the CPU setting; on a GPU keep int8 weights with float16
+            # activations, which is what CTranslate2 is fastest at.
+            compute_type = self.compute_type
+            if device == "cuda" and compute_type == "int8":
+                compute_type = "int8_float16"
+            self.resolved_device = device
+
+            import os
 
             self._model = WhisperModel(
                 self.model_size,
                 device=device,
-                compute_type=self.compute_type,
+                compute_type=compute_type,
+                # CTranslate2 defaults to 4 threads; this machine class has far
+                # more, and decode time on CPU scales with them.
+                cpu_threads=min(8, os.cpu_count() or 4),
                 download_root=self.download_root,
             )
         return self._model
@@ -358,6 +409,7 @@ class WhisperASR:
         initial_prompt: str | None = None,
         beam_size: int = 5,
         vad_filter: bool = True,
+        fast: bool = False,
         **_: Any,
     ) -> Transcript:
         """Transcribe with word-level timestamps.
@@ -372,6 +424,13 @@ class WhisperASR:
             vad_filter: Drop non-speech regions before decoding. Reduces
                 hallucinated text on silence -- a real Whisper failure mode
                 that would otherwise inject phantom tokens into the CSBG.
+            fast: One greedy pass (beam 1, temperature 0, no conditioning on
+                previous text) and no retry. For live logins on CPU. Measured
+                on an 18 s code-mixed clip with `small`: 6.8 s, against 49 s
+                for beam 5 and 219 s when a repetition loop triggered the
+                re-decode on top of faster-whisper's temperature fallback.
+                Not conditioning on previous text is the same remedy the
+                retry applies, so there is nothing for a retry to fix.
 
         Returns:
             A Transcript. Empty audio yields an empty Transcript rather than
@@ -383,6 +442,17 @@ class WhisperASR:
             `_decode`. The returned transcript is whichever attempt did not
             loop, and still carries `repetition_loop()` if both did.
         """
+        if fast:
+            return self._decode(
+                audio,
+                language=language,
+                initial_prompt=initial_prompt,
+                beam_size=1,
+                vad_filter=vad_filter,
+                condition_on_previous_text=False,
+                temperature=0.0,
+            )
+
         first = self._decode(
             audio,
             language=language,
@@ -422,9 +492,11 @@ class WhisperASR:
         beam_size: int,
         vad_filter: bool,
         condition_on_previous_text: bool,
+        temperature: float | None = None,
     ) -> Transcript:
         """One decode pass. See `transcribe` for the arguments."""
         lang = language if language is not None else self.language
+        extra: dict[str, Any] = {} if temperature is None else {"temperature": temperature}
 
         segments, info = self.model.transcribe(
             audio.samples,
@@ -438,6 +510,7 @@ class WhisperASR:
             # one of the most discriminative CSBG classes. See _numeral_tokens.
             suppress_tokens=self._numeral_tokens() if self.suppress_numerals else [-1],
             condition_on_previous_text=condition_on_previous_text,
+            **extra,
         )
 
         words: list[Word] = []
