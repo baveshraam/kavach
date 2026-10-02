@@ -119,3 +119,43 @@ class TestPipelineUsesIt:
         assert h["voiceThreshold"] == pytest.approx(settings.speaker_threshold)
         assert h["voicePolicySource"] == "default"
         assert h["voicePolicyError"]
+
+
+class TestEvidenceRoute:
+    """What the panel is shown: the measured numbers behind the threshold, with their limits."""
+
+    def app_for(self, store, settings, pipeline):
+        from kavach.api.app import create_app, get_pipeline, get_settings, get_store
+        app = create_app(settings)
+        app.dependency_overrides[get_store] = lambda: store
+        app.dependency_overrides[get_pipeline] = lambda: pipeline
+        app.dependency_overrides[get_settings] = lambda: settings
+        return TestClient(app)
+
+    def test_without_a_policy_it_says_nothing_was_measured(self, store, settings, pipeline, speaker):
+        body = self.app_for(store, settings, pipeline).get("/api/voice-policy").json()
+        assert body["source"] == "default" and body["measured"] is False
+        assert body["threshold"] == pytest.approx(settings.speaker_threshold)
+        assert body["nGenuine"] == 0 and body["frr"] is None
+
+    def test_with_a_policy_it_carries_the_measurements_and_their_intervals(self, store, settings, pipeline, speaker, tmp_path):
+        r = np.random.default_rng(0)
+        o = choose_operating_point(r.normal(0.85, 0.05, 200), r.normal(0.2, 0.1, 5000))
+        write_voice_policy(Path(settings.data_dir) / "voice_policy.json", o, sessions=["S1", "S2", "S3"], cohorts=["libri-dev", "tamil-m"], limits="LIMITS...")
+        from kavach.api.pipeline import Pipeline
+        p = Pipeline(store, settings)
+        body = self.app_for(store, settings, p).get("/api/voice-policy").json()
+        assert body["source"] == "calibrated" and body["measured"] is True
+        assert body["nGenuine"] == 200 and body["nImpostor"] == 5000
+        assert body["frr"]["rate"] == 0.0 and body["frr"]["high"] > 0.0
+        assert body["far"]["rate"] == 0.0 and body["far"]["high"] > 0.0
+        assert body["sessions"] == ["S1", "S2", "S3"] and body["cohorts"] == ["libri-dev", "tamil-m"]
+        assert body["limits"] == "LIMITS..."
+        assert body["provisional"] is False
+
+    def test_a_damaged_policy_is_reported_not_hidden(self, store, settings, speaker):
+        from kavach.api.pipeline import Pipeline
+        (Path(settings.data_dir) / "voice_policy.json").write_text("{broken", encoding="utf-8")
+        p = Pipeline(store, settings)
+        body = self.app_for(store, settings, p).get("/api/voice-policy").json()
+        assert body["source"] == "default" and body["error"]

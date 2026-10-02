@@ -130,6 +130,13 @@ export interface AttackRun {
   notes?: string[];
 }
 
+export interface Rate { rate: number; low: number; high: number }
+export interface VoiceEvidence {
+  source: 'default' | 'calibrated'; measured: boolean; threshold: number; greyMargin: number;
+  provisional: boolean; ready: boolean; builtAt: string; sessions: string[]; cohorts: string[];
+  nGenuine: number; nImpostor: number; frr: Rate | null; far: Rate | null; farAtFloor: number | null;
+  notes: string[]; limits: string; error: string;
+}
 export interface Voiceprint {
   nClips: number; selfConsistency: number;
   provenance: { source: string; sessions: string[]; devices: string[]; n_clips: number } | null;

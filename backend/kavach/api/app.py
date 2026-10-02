@@ -230,6 +230,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _require_speaker(store, speaker_id)
         return [conv.utterance_to_wire(r) for r in store.list_utterances(speaker_id)]
 
+    @app.get("/api/voice-policy", response_model=schemas.VoiceEvidence)
+    def voice_policy(pipeline: PipelineDep) -> schemas.VoiceEvidence:
+        """The measured operating point and the numbers behind it (or the default, said plainly)."""
+        pol = pipeline.voice_policy
+        if pol is None:
+            return schemas.VoiceEvidence(
+                source="default", measured=False, threshold=pipeline.voice_threshold,
+                grey_margin=pipeline.voice_grey_margin, error=pipeline.voice_policy_error,
+            )
+        raw = pol.raw
+
+        def rate(key: str, iv: str) -> schemas.Rate | None:
+            if key not in raw or iv not in raw:
+                return None
+            lo, hi = raw[iv]
+            return schemas.Rate(rate=float(raw[key]), low=float(lo), high=float(hi))
+
+        return schemas.VoiceEvidence(
+            source="calibrated", measured=True, threshold=pol.threshold, grey_margin=pol.grey_margin,
+            provisional=pol.provisional, ready=pol.ready, built_at=pol.built_at, sessions=pol.sessions,
+            cohorts=[str(c) for c in raw.get("cohorts", [])],
+            n_genuine=int(raw.get("n_genuine", 0)), n_impostor=int(raw.get("n_impostor", 0)),
+            frr=rate("frr_at_threshold", "frr_interval"), far=rate("far_at_threshold", "far_interval"),
+            far_at_floor=raw.get("far_at_floor"), notes=pol.notes, limits=str(raw.get("limits", "")),
+        )
+
     @app.get("/api/speakers/{speaker_id}/voiceprint", response_model=schemas.Voiceprint)
     def voiceprint(speaker_id: str, store: StoreDep, pipeline: PipelineDep) -> schemas.Voiceprint:
         """How the enrolled voiceprint was built: clip count, consistency, sessions and devices."""
