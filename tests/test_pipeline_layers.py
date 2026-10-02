@@ -594,6 +594,40 @@ class TestFusion:
         assert result.decision is Decision.BORDERLINE
         assert any("inconclusive" in line for line in result.explanation)
 
+    def test_it_reports_the_weight_each_branch_actually_carried(self):
+        """Callers pass a placeholder `weight=0.0` and the policy owns the real
+        one, so the UI showed 'w 0.00' beside branches carrying 40% of the
+        decision. The result is the one place that knows the effective weight."""
+        policy = FusionPolicy()
+        result = fuse([
+            branch(Branch.SPEAKER, 0.9),
+            branch(Branch.CSBG, 0.8),
+            branch(Branch.KNOWLEDGE, 0.95),
+        ], policy)
+        got = {b.branch: b.weight for b in result.branches}
+        assert got == pytest.approx({b: policy.weights[b] for b in policy.weights})
+
+    def test_a_dropped_branch_carries_no_weight_and_the_rest_renormalise(self):
+        result = fuse([
+            branch(Branch.SPEAKER, 0.9),
+            branch(Branch.CSBG, 0.8),
+            branch(Branch.KNOWLEDGE, 0.9, available=False),
+        ])
+        got = {b.branch: b.weight for b in result.branches}
+        assert got[Branch.KNOWLEDGE] == 0.0
+        assert got[Branch.SPEAKER] + got[Branch.CSBG] == pytest.approx(1.0)
+
+    def test_a_gate_carries_no_weight(self):
+        result = fuse([
+            branch(Branch.SPEAKER, 0.9),
+            branch(Branch.CSBG, 0.8),
+            branch(Branch.KNOWLEDGE, 0.95),
+            branch(Branch.INTEGRITY, 0.9, threshold=0.25),
+        ])
+        got = {b.branch: b.weight for b in result.branches}
+        assert got[Branch.INTEGRITY] == 0.0
+        assert sum(got.values()) == pytest.approx(1.0)
+
     def test_liveness_failure_overrides_everything(self):
         """A replayed challenge cannot be outvoted by a strong voice match."""
         result = fuse([

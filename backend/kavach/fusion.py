@@ -55,7 +55,7 @@ measured is not a result.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any
 
@@ -318,6 +318,15 @@ def fuse(
 
     total_weight = sum(policy.weights[b.branch] for b in scored)
     fused = sum(policy.weights[b.branch] * b.score for b in scored) / total_weight
+
+    # Report the weight each branch actually carried. Callers build branches
+    # with a placeholder `weight=0.0` and the policy owns the real one, so
+    # without this the result shows 'w 0.00' beside branches carrying most of
+    # the decision. Renormalised over the branches that were measured, which
+    # is the weight the fused score was computed with; gates and dropped
+    # branches carry none.
+    carried = {b.branch: policy.weights[b.branch] / total_weight for b in scored}
+    branches = [replace(b, weight=carried.get(b.branch, 0.0)) for b in branches]
 
     # --- Decision. ------------------------------------------------------
     if abs(fused - policy.threshold) <= policy.borderline_margin:
