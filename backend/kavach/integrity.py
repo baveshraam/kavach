@@ -107,9 +107,16 @@ from .fusion import Branch, BranchScore
 #: splice sound better makes it easier to detect here, which means the
 #: attacker's best move against this particular defence is the crude one.
 #:
-#: **These are synthetic recordings.** Real room tone from one sitting will
-#: narrow the gap further. Re-run the calibration on genuine recordings from
-#: the study hardware before reporting any number that depends on this gate.
+#: **Everything above was measured on synthetic recordings, and it did not
+#: transfer.** Re-run on the 168 genuine corpus clips (2026-10-02,
+#: `python -m kavach.calibrate_integrity`): the splice tests reject 167 of them,
+#: and at a matched duration no cue separates a same-sitting splice from a
+#: genuine window (AUC 0.49-0.60; at most 11% detected at a 5% false-reject
+#: rate). Real pauses are reverb tails, not stationary room tone, and the click
+#: test fires on ordinary fricatives. The table above describes the synthetic
+#: generator, not speech. `Settings.integrity_check_splice` is therefore off,
+#: this constant only matters if it is turned back on, and no number that
+#: depends on the splice tests may be reported from this corpus.
 INTEGRITY_FLOOR = 0.25
 
 
@@ -212,7 +219,20 @@ class IntegrityChecker:
                 reasons.extend(replay_report.reasons)
 
         if not reasons:
-            reasons.append("No edit or duplicate artefacts found.")
+            # Say only what ran. "No edit artefacts found" after a pass that
+            # never looked for edits is false assurance, and it is the line the
+            # UI shows beside the integrity branch.
+            if self.check_splice and self.check_replay:
+                reasons.append("No edit or duplicate artefacts found.")
+            elif self.check_replay:
+                reasons.append(
+                    "No duplicate found. Edit (splice) detection is off, so this "
+                    "says nothing about whether the recording was edited."
+                )
+            elif self.check_splice:
+                reasons.append("No edit artefacts found. Duplicate detection is off.")
+            else:
+                reasons.append("No integrity test ran: edit and duplicate detection are both off.")
 
         return IntegrityReport(
             score=1.0 - evidence,
