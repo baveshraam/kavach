@@ -35,6 +35,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 
+from ..attacks.bank import BankError, CloneBank
 from ..audio import AudioError, decode_bytes, warm_resample
 from ..challenge import ChallengeError
 from ..config import Settings, get_settings
@@ -377,6 +378,110 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except StoreError as exc:
             raise HTTPException(404, str(exc)) from exc
         return FileResponse(path)
+
+    # ------------------------------------------------------------ clone bank
+
+    def _require_bank_enabled(cfg: Settings) -> None:
+        """A clip *says* the answer, so these routes exist only in a demo build
+        that announces itself (`/api/health` -> demoAttackBank). Off, they are a
+        plain 404, indistinguishable from routes that do not exist."""
+        if not cfg.demo_attack_bank:
+            raise HTTPException(404, "Not found.")
+
+    def _load_bank(pipeline: Pipeline) -> CloneBank | None:
+        try:
+            return pipeline.clone_bank()
+        except BankError as exc:
+            raise HTTPException(503, f"The clone bank cannot be used: {exc}") from exc
+
+    @app.get("/api/clone-bank", response_model=schemas.CloneBankInfo)
+    def clone_bank_info(pipeline: PipelineDep, cfg: SettingsDep) -> schemas.CloneBankInfo:
+        _require_bank_enabled(cfg)
+        bank = _load_bank(pipeline)
+        if bank is None:
+            return schemas.CloneBankInfo(
+                enabled=True, problems=["No clone bank has been generated yet."]
+            )
+        summary = bank.yield_summary()
+        problems: list[str] = []
+        if summary.annotated < summary.generated:
+            problems.append(
+                f"{summary.generated - summary.annotated} clip(s) are not annotated yet and "
+                "are not served; run kavach.attacks.annotate_bank."
+            )
+        return schemas.CloneBankInfo(
+            enabled=True,
+            victim_speaker_id=bank.victim_speaker_id,
+            clips=[
+                schemas.CloneClipInfo(
+                    id=c.clip_id,
+                    attack_type=conv.ATTACK_TO_WIRE[c.attack],
+                    backend=c.backend,
+                    fact_key=c.fact_key,
+                    similarity=c.ecapa_similarity,
+                    admissible=c.admissible,
+                    duration_sec=c.duration_sec,
+                )
+                for c in bank.clips
+                if c.usable
+            ],
+            covered_facts=bank.covered_facts(),
+            n_generated=summary.generated,
+            n_annotated=summary.annotated,
+            n_admissible=summary.admissible,
+            yield_rate=summary.yield_rate,
+            n_sources=summary.sources,
+            problems=problems,
+        )
+
+    @app.post("/api/clone-bank/match", response_model=schemas.CloneMatch)
+    def clone_bank_match(
+        payload: schemas.CloneMatchRequest, pipeline: PipelineDep, cfg: SettingsDep
+    ) -> schemas.CloneMatch:
+        """The attacker's pre-cloned answer to the challenge just issued.
+
+        Realistic by construction: an attacker who knows every fact can
+        pre-clone an answer to every possible question, so the bank is looked
+        up *after* the random challenge is issued. The challenge is not
+        consumed -- the clip is then submitted to /api/authenticate as usual.
+        """
+        _require_bank_enabled(cfg)
+        challenge = pipeline.ledger.get(payload.challenge_id)
+        if challenge is None:
+            raise HTTPException(404, "Unknown challenge.")
+        if challenge.consumed or challenge.is_expired:
+            raise HTTPException(409, "That challenge is no longer valid; issue a new one.")
+        bank = _load_bank(pipeline)
+        if bank is None or bank.victim_speaker_id != challenge.speaker_id:
+            raise HTTPException(404, "No clone bank exists for this speaker.")
+        clip = bank.match(challenge.expected_predicate)
+        if clip is None:
+            covered = ", ".join(bank.covered_facts()) or "none"
+            raise HTTPException(
+                404,
+                f"No cloned answer for this question ({challenge.expected_predicate}). "
+                f"The bank covers: {covered}. Issue a new challenge.",
+            )
+        return schemas.CloneMatch(
+            clip_id=clip.clip_id,
+            audio_url=f"/api/clone-bank/{clip.clip_id}/audio",
+            attack_type=conv.ATTACK_TO_WIRE[clip.attack],
+            backend=clip.backend,
+            similarity=float(clip.ecapa_similarity or 0.0),
+        )
+
+    @app.get("/api/clone-bank/{clip_id}/audio")
+    def clone_bank_audio(clip_id: str, pipeline: PipelineDep, cfg: SettingsDep) -> FileResponse:
+        _require_bank_enabled(cfg)
+        bank = _load_bank(pipeline)
+        clip = (
+            next((c for c in bank.clips if c.clip_id == clip_id and c.usable), None)
+            if bank
+            else None
+        )
+        if clip is None:
+            raise HTTPException(404, "Not found.")
+        return FileResponse(bank.audio_file(clip), media_type="audio/wav")
 
     # ------------------------------------------------- challenge and auth
 

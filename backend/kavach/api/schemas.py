@@ -379,6 +379,43 @@ class EvalMetrics(Model):
 # --------------------------------------------------------------------------
 
 
+class CloneClipInfo(Model):
+    """One clone, described by its measured scores. Never its words."""
+
+    id: str
+    attack_type: AttackTypeStr
+    backend: str
+    fact_key: str | None = None
+    similarity: float | None = None
+    admissible: bool | None = None
+    duration_sec: float
+
+
+class CloneBankInfo(Model):
+    enabled: bool
+    victim_speaker_id: str = ""
+    clips: list[CloneClipInfo] = Field(default_factory=list)
+    covered_facts: list[str] = Field(default_factory=list)
+    n_generated: int = 0
+    n_annotated: int = 0
+    n_admissible: int = 0
+    yield_rate: float | None = None
+    n_sources: int = 0
+    problems: list[str] = Field(default_factory=list)
+
+
+class CloneMatchRequest(Model):
+    challenge_id: str
+
+
+class CloneMatch(Model):
+    clip_id: str
+    audio_url: str
+    attack_type: AttackTypeStr
+    backend: str
+    similarity: float
+
+
 class Health(Model):
     status: str
     models: list[str] = Field(default_factory=list)
@@ -406,6 +443,10 @@ __all__ = [
     "CSBGGraph",
     "CSBGNode",
     "Challenge",
+    "CloneBankInfo",
+    "CloneClipInfo",
+    "CloneMatch",
+    "CloneMatchRequest",
     "ChallengeRequest",
     "ClassDivergence",
     "DETPoint",

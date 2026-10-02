@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..asr import FOREIGN_SCRIPT, Transcript, WhisperASR
+from ..attacks.bank import BANK_FILE, CloneBank, resolve_speaker_id
 from ..audio import Audio, AudioError, check_quality, decode_bytes, load_audio
 from ..challenge import Challenge, ChallengeError, ChallengeGenerator, ChallengeLedger
 from ..config import Settings, get_settings
@@ -628,6 +629,35 @@ class Pipeline:
         return build_background_model(others)
 
     # ------------------------------------------------------------- challenge
+
+    def clone_bank(self) -> CloneBank | None:
+        """The pre-generated clone bank, or None when the feature is off or no bank exists.
+
+        Raises:
+            BankError: A bank exists but cannot be trusted. Callers report it;
+                they do not fall back silently, because a measured row quietly
+                replaced by a modelled one looks exactly the same on screen.
+        """
+        if not self.settings.demo_attack_bank:
+            return None
+        cache = self.__dict__.setdefault("_bank_cache", {})
+        for victim in self.settings.clone_victims:
+            root = self.settings.attack_dir / "clones" / victim
+            path = root / BANK_FILE
+            if not path.exists():
+                continue
+            mtime = path.stat().st_mtime
+            cached = cache.get(victim)
+            if cached and cached[0] == mtime:
+                return cached[1]
+            bank = CloneBank.load(
+                root,
+                allowed_victims=self.settings.clone_victims,
+                expected_speaker_id=resolve_speaker_id(self.store.list_speakers(), victim),
+            )
+            cache[victim] = (mtime, bank)
+            return bank
+        return None
 
     def issue_challenge(self, speaker_id: str) -> Challenge:
         """Generate an adaptive challenge for a login attempt.
