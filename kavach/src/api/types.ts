@@ -125,6 +125,13 @@ export interface AttackRun {
   notes?: string[];
 }
 
+export interface CloneBankInfo {
+  enabled: boolean;
+  coveredFacts: string[];
+  yieldRate?: number | null;
+  problems: string[];
+}
+
 export interface CloneMatch {
   clipId: string;
   audioUrl: string;

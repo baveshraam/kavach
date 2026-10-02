@@ -194,3 +194,23 @@ class TestBrokenBank:
         client.app.dependency_overrides[get_settings] = lambda: narrowed
         body = client.get("/api/clone-bank").json()
         assert body["clips"] == [] and body["problems"]
+
+    def test_a_clip_changed_after_the_first_load_is_not_served(self, tmp_path) -> None:
+        """Hashes were checked only when the bank loaded, then cached on the mtime
+        of bank.json -- so a WAV replaced afterwards was still served."""
+        client, store, pipeline, settings, speaker, bank = with_bank(tmp_path)
+        clip = add_clip(bank)
+        bank.save()
+        assert client.get("/api/clone-bank").status_code == 200  # loads and caches
+        save_wav(tone(seed=7), bank.root / clip.audio_path)
+        r = client.get(f"/api/clone-bank/{clip.clip_id}/audio")
+        assert r.status_code == 503 and "hash" in r.json()["detail"], r.text
+
+    def test_a_clip_deleted_after_the_first_load_is_a_503_not_a_500(self, tmp_path) -> None:
+        client, store, pipeline, settings, speaker, bank = with_bank(tmp_path)
+        clip = add_clip(bank)
+        bank.save()
+        assert client.get("/api/clone-bank").status_code == 200
+        (bank.root / clip.audio_path).unlink()
+        r = client.get(f"/api/clone-bank/{clip.clip_id}/audio")
+        assert r.status_code == 503 and "missing" in r.json()["detail"], r.text

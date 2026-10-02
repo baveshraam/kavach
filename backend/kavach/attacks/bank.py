@@ -240,14 +240,7 @@ class CloneBank:
 
         bank = cls(victim=victim, victim_speaker_id=speaker_id, root=root, clips=clips)
         for clip in clips:
-            file = bank.audio_file(clip)
-            if not file.exists():
-                raise BankError(f"clip {clip.clip_id}: audio file is missing ({clip.audio_path})")
-            if sha256_file(file) != clip.sha256:
-                raise BankError(
-                    f"clip {clip.clip_id}: audio does not match its recorded hash -- "
-                    "the file was changed after it was generated"
-                )
+            bank.verified_audio_file(clip)
         return bank
 
     # ------------------------------------------------------------------ I/O
@@ -277,6 +270,23 @@ class CloneBank:
         if root != path and root not in path.parents:
             raise BankError(f"clip {clip.clip_id}: audio path escapes the bank directory")
         return path
+
+    def verified_audio_file(self, clip: CloneClip) -> Path:
+        """The clip's file, after proving it is the one that was screened.
+
+        Called on load AND every time a clip is served: the loader's result is
+        cached, so a hash checked only at load time would let a file replaced or
+        deleted afterwards be served (or raise a 500).
+        """
+        file = self.audio_file(clip)
+        if not file.exists():
+            raise BankError(f"clip {clip.clip_id}: audio file is missing ({clip.audio_path})")
+        if sha256_file(file) != clip.sha256:
+            raise BankError(
+                f"clip {clip.clip_id}: audio does not match its recorded hash -- "
+                "the file was changed after it was generated"
+            )
+        return file
 
     def read_audio(self, clip: CloneClip) -> Audio:
         return load_audio(self.audio_file(clip))

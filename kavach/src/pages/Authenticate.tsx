@@ -29,6 +29,13 @@ export function Authenticate() {
   });
 
   const { data: health } = useQuery({ queryKey: ['health'], queryFn: apiClient.health });
+  // The flag alone is not enough: with the bank on but empty the button could
+  // only ever fail, so it appears only when some clone can answer a question.
+  const { data: cloneBank } = useQuery({
+    queryKey: ['cloneBank'],
+    queryFn: apiClient.cloneBankInfo,
+    enabled: !!health?.demoAttackBank,
+  });
 
   const issue = useMutation({
     mutationFn: (id: string) => apiClient.issueChallenge(id),
@@ -142,7 +149,7 @@ export function Authenticate() {
                   <AudioRecorder allowUpload busy={auth.isPending} acceptLabel="Verify"
                     onAccept={(blob, _d, name) => auth.mutate({ blob, name, label: name ? `Uploaded file · ${name}` : 'Live answer' })} />
                   <DemoClips claimedId={speakerId} speakers={speakers ?? []} busy={auth.isPending}
-                    challengeId={challenge.id} cloneEnabled={!!health?.demoAttackBank}
+                    challengeId={challenge.id} cloneEnabled={!!health?.demoAttackBank && (cloneBank?.coveredFacts.length ?? 0) > 0}
                     onSubmit={(blob, name, label) => auth.mutate({ blob, name, label })} />
                   {auth.isPending && <div className="mt-3"><Spinner label="Transcribing, tagging and scoring… (a few seconds on CPU)" /></div>}
                   {auth.error && <Notice tone="reject" className="mt-3" title="Verification failed">{(auth.error as Error).message}</Notice>}

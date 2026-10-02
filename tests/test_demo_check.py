@@ -239,3 +239,23 @@ def test_an_empty_bank_never_reads_as_covered_even_when_there_are_no_facts() -> 
     )
     check = got["clone bank covers the presenter's facts"]
     assert check.level == WARN and "no usable clips" in check.detail, check
+
+
+def _clone_flow(match_error) -> dict:
+    h = dict(HEALTH, demoAttackBank=True)
+    bank = {"enabled": True, "clips": [], "coveredFacts": ["hometown"], "yieldRate": 0.5, "problems": []}
+    f = flows()
+    f.routes.update({"/api/health": h, "/api/clone-bank": bank, ("POST", "/api/clone-bank/match"): match_error})
+    return by_name(run_checks(f, presenter="S04", flows=True))
+
+
+def test_no_cloned_answer_for_this_question_only_warns() -> None:
+    got = _clone_flow(TransportError(404, "No cloned answer for this question"))
+    assert got["flow: clone attack"].level == WARN
+
+
+def test_a_server_error_in_the_clone_flow_fails_instead_of_reading_as_no_clone() -> None:
+    """A 503 (broken bank) or 500 used to be swallowed as 'no cloned answer', so
+    the preflight could print READY over a demo whose clone button was broken."""
+    got = _clone_flow(TransportError(503, "The clone bank cannot be used: hash"))
+    assert got["flow: clone attack"].level == FAIL and "503" in got["flow: clone attack"].detail

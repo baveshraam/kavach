@@ -122,3 +122,28 @@ def test_a_bank_for_another_speaker_is_not_used(tmp_path) -> None:
         pipeline=pipeline,
     )
     assert run.acoustic_source == "modelled"
+
+
+def test_the_yield_in_the_notes_is_the_yield_of_the_row(tmp_path) -> None:
+    """Two definitions of yield on one screen: the notes used each clip's stored
+    `admissible` flag, the row re-thresholded against the current setting."""
+    store, pipeline, _, victim, bank = lab(tmp_path, clips=0)
+    for similarity in (0.9, 0.9, 0.9, 0.3, 0.3):
+        add_clip(bank, similarity=similarity, admissible=True)  # the stored flag disagrees
+    bank.save()
+    run = a4(store, pipeline, victim)
+    assert run.yield_rate == pytest.approx(0.6)
+    assert any("3/5" in n for n in run.notes), run.notes
+
+
+def test_a_clip_with_no_real_answer_score_is_not_used_where_the_attacker_knows_the_answer(
+    tmp_path,
+) -> None:
+    """A measured row must not contain a modelled knowledge score."""
+    store, pipeline, _, victim, bank = lab(tmp_path, clips=0)
+    add_clip(bank, similarity=0.9, answer_score=0.9)
+    add_clip(bank, similarity=0.9, answer_score=None)
+    bank.save()
+    run = a4(store, pipeline, victim)
+    assert run.trials <= 1
+    assert any("answer score" in n for n in run.notes), run.notes
