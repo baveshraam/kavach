@@ -71,7 +71,11 @@ class PhraseMatch:
 def _same_word(expected: str, heard: str) -> bool:
     if heard == expected:
         return True
-    return SequenceMatcher(None, expected, heard).ratio() >= FUZZY_RATIO
+    sm = SequenceMatcher(None, expected, heard)
+    # difflib's documented cheap upper bounds first: most pairs of unrelated words fail them.
+    if sm.real_quick_ratio() < FUZZY_RATIO or sm.quick_ratio() < FUZZY_RATIO:
+        return False
+    return sm.ratio() >= FUZZY_RATIO
 
 
 def match_phrase(expected: Sequence[str], transcript: str, *, words: Sequence[Any] | None = None) -> PhraseMatch:
