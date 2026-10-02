@@ -82,6 +82,13 @@ This file is the memory of the pass. Read it top to bottom to resume.
   0.03% and WavLM-SV's 3.73% (raw cosine; centring did not help). ResNet embedding was abandoned for CPU.
   A second embedder is not worth the risk this close to the demo.
 
+- **R11. No per-owner discriminative back-end.** Tried on LibriSpeech cross-chapter (30 owners; negatives: the
+  Tamil cohorts plus 10 other speakers; strangers: the other 29 owners): cosine to the centroid has an owner-2nd-
+  percentile-to-stranger-99.9th margin of 1.14 stranger-standard-deviations; a per-owner logistic regression 1.41
+  (C=0.01), 1.52 (C=0.1), 1.67 (C=1); shrinkage LDA 0.68. About half a standard deviation of gain on clean audio,
+  against a real risk that a model trained on the owner's laptop-microphone clips versus other people's studio
+  clips learns the channel, which a same-room judge would then share. Not worth it for this demo.
+
 ## 3. Measurements so far (all on this laptop, ECAPA `speechbrain/spkrec-ecapa-voxceleb`, cosine)
 
 - 12 corpus speakers, phone recordings, 1,771 cross-speaker pairs: mean 0.240, sd 0.119, p95 0.450,
