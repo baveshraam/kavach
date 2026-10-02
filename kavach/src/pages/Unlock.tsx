@@ -97,6 +97,7 @@ const retrySeconds = (msg: string) => {
 export function Unlock() {
   const { data: speakers } = useQuery({ queryKey: ['speakers'], queryFn: apiClient.getSpeakers });
   const { data: health } = useQuery({ queryKey: ['health'], queryFn: apiClient.health });
+  const { data: evidence } = useQuery({ queryKey: ['voicePolicy'], queryFn: apiClient.voicePolicy, retry: false });
   const [speakerId, setSpeakerId] = useState('');
   const [challenge, setChallenge] = useState<Challenge | null>(null);
   const [result, setResult] = useState<AuthResult | null>(null);
@@ -293,6 +294,7 @@ export function Unlock() {
                 </div>
               </CardBody>
             </Card>
+            <EvidenceCard e={evidence} />
             <Card>
               <CardHeader title="Attempts this session" />
               <CardBody>
@@ -424,5 +426,42 @@ function VoiceMeter({ score, threshold, margin }: { score: number; threshold: nu
         <span className="absolute" style={{ left: `${clamp(threshold) * 100}%`, transform: 'translateX(-50%)' }}>{threshold.toFixed(2)}</span>
       </div>
     </div>
+  );
+}
+
+const pctText = (v: number, digits = 1) => `${(100 * v).toFixed(digits)}%`;
+
+/** The numbers behind the threshold, stated with their limits; nothing here is a claim about people in general. */
+function EvidenceCard({ e }: { e?: import('../api/types').VoiceEvidence }) {
+  if (!e) return null;
+  return (
+    <Card>
+      <CardHeader title="What it has been measured on" subtitle={e.measured ? `Threshold ${e.threshold.toFixed(2)}, chosen from data` : 'Not measured yet'} />
+      <CardBody className="flex flex-col gap-3 text-[13px]">
+        {!e.measured ? (
+          <p className="text-app-text-muted">The threshold is the default, 0.62, a starting point. Record the Studio sessions and run the calibration to replace it with a measured one.</p>
+        ) : (
+          <>
+            {e.frr && (
+              <div>
+                <div className="font-semibold">The enrolled speaker</div>
+                <div className="text-app-text-muted">Turned away {pctText(e.frr.rate)} of {e.nGenuine} held-out attempts (95% interval {pctText(e.frr.low)}–{pctText(e.frr.high)}), across {e.sessions.length} recording sessions.</div>
+              </div>
+            )}
+            {e.far && (
+              <div>
+                <div className="font-semibold">Other people</div>
+                <div className="text-app-text-muted">Let in {pctText(e.far.rate, 2)} of {e.nImpostor.toLocaleString()} attempts by recorded strangers (95% interval up to {pctText(e.far.high, 2)}).</div>
+              </div>
+            )}
+            <div className="flex flex-wrap gap-1.5">
+              {e.provisional && <Badge tone="warning">provisional</Badge>}
+              {e.cohorts.map(c => <Badge key={c}>{c}</Badge>)}
+            </div>
+            {e.limits && <p className="text-[12px] text-app-text-subtle leading-relaxed">{e.limits}</p>}
+          </>
+        )}
+      </CardBody>
+    </Card>
   );
 }

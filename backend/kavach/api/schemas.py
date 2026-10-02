@@ -113,6 +113,34 @@ class SpeakerCreate(Model):
     consent_given: bool = False
 
 
+class Rate(Model):
+    rate: float
+    low: float
+    high: float
+
+
+class VoiceEvidence(Model):
+    """The measurements behind the voice threshold, with their limits; what the panel is shown."""
+
+    source: str
+    measured: bool
+    threshold: float
+    grey_margin: float
+    provisional: bool = False
+    ready: bool = False
+    built_at: str = ""
+    sessions: list[str] = Field(default_factory=list)
+    cohorts: list[str] = Field(default_factory=list)
+    n_genuine: int = 0
+    n_impostor: int = 0
+    frr: Rate | None = None
+    far: Rate | None = None
+    far_at_floor: float | None = None
+    notes: list[str] = Field(default_factory=list)
+    limits: str = ""
+    error: str = ""
+
+
 class Voiceprint(Model):
     n_clips: int
     self_consistency: float

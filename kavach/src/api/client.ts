@@ -1,4 +1,4 @@
-import { AuthResult, Challenge, Voiceprint, CloneBankInfo, CloneMatch, CSBG, StudioPlan, StudioSummary, EvalMetrics, Speaker, Utterance, Triple, AttackRun, AttackType, PerSpeakerIapmr, OfflineRun } from './types';
+import { AuthResult, Challenge, Voiceprint, VoiceEvidence, CloneBankInfo, CloneMatch, CSBG, StudioPlan, StudioSummary, EvalMetrics, Speaker, Utterance, Triple, AttackRun, AttackType, PerSpeakerIapmr, OfflineRun } from './types';
 import { mockSpeakers, mockUtterances, mockTriples, mockCSBG, mockAuthResults, mockAttacks, mockEvalMetrics } from './mock';
 
 // @ts-ignore
@@ -171,6 +171,12 @@ export const apiClient = {
   deleteUtterance: async (id: string): Promise<{ deleted: true }> => {
     if (USE_MOCK) return delay(300).then(() => ({ deleted: true }));
     return fetchApi(`/api/utterances/${id}`, { method: 'DELETE' });
+  },
+
+  /** The measured operating point and the numbers behind it. */
+  voicePolicy: async (): Promise<VoiceEvidence> => {
+    if (USE_MOCK) throw new Error('The evidence needs the real backend.');
+    return fetchApi('/api/voice-policy');
   },
 
   /** How the enrolled voiceprint was built (clip count, Studio sessions, devices). */

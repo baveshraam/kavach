@@ -241,6 +241,8 @@ class VoicePolicy:
     built_at: str = ""
     sessions: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    raw: dict[str, Any] = field(default_factory=dict)
+    """The file's own content, for the evidence route (measurements, cohorts, limits)."""
 
 
 def write_voice_policy(path: Path | str, op: OperatingPoint, **provenance: Any) -> Path:
@@ -290,6 +292,7 @@ def load_voice_policy(path: Path | str) -> VoicePolicy | None:
         built_at=str(raw.get("built_at", "")),
         sessions=[str(x) for x in raw.get("sessions", [])],
         notes=[str(x) for x in raw.get("notes", [])],
+        raw=raw,
     )
 
 
