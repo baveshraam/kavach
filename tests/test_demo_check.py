@@ -206,3 +206,18 @@ def test_render_ends_in_a_verdict() -> None:
     assert ok.strip().splitlines()[-1].startswith("READY")
     bad = render(run_checks(Fake({"/api/health": OSError("x")}), presenter="S04"))
     assert bad.strip().splitlines()[-1].startswith("NOT READY")
+
+
+def test_an_empty_bank_never_reads_as_covered_even_when_there_are_no_facts() -> None:
+    """Vacuous truth: with no facts to cover, 'nothing is missing' used to read
+    as 'all covered', on a bank that did not exist."""
+    h = dict(HEALTH, demoAttackBank=True)
+    bank = {"enabled": True, "clips": [], "coveredFacts": [], "yieldRate": None, "problems": ["none yet"]}
+    got = by_name(
+        run_checks(
+            good({"/api/health": h, "/api/clone-bank": bank, "/api/speakers/spk_p/skg": []}),
+            presenter="S04",
+        )
+    )
+    check = got["clone bank covers the presenter's facts"]
+    assert check.level == WARN and "no usable clips" in check.detail, check
