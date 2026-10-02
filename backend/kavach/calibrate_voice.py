@@ -1,16 +1,20 @@
 """Choose the voice threshold and the inconclusive band from measured scores.
 
-Two different questions, answered from two different sets of scores:
+Two edges, one from each set of scores:
 
-* **How often may a stranger get through?** The threshold. Set so that at most `far_target` of
-  the impostor trials score at or above it: the `1 - far_target` quantile of the impostor scores,
-  never below `MIN_THRESHOLD`. With too few impostor trials to resolve that quantile (fewer than
-  about 5 expected events) it stays above the worst impostor seen, and the result says it is
-  provisional.
-* **How often may the owner be asked twice?** The floor. The inconclusive band sits under the
-  threshold; its lower edge is the quantile of the owner's own held-out scores that covers
-  `genuine_cover` of them, so nearly every genuine attempt lands at or above the floor (and is
-  asked for one more sample at worst) rather than being flatly rejected.
+* **The strangers' edge `U`.** The `1 - far_target` quantile of the impostor scores (the worst
+  impostor seen, when there are too few trials, fewer than about 5 expected events, to resolve it).
+* **The owner's edge `G`.** The quantile of the owner's own held-out scores that `genuine_cover` of
+  them reach: nearly every genuine attempt is at or above it.
+
+When the classes are separated (`G` clears `U` by at least twice `MIN_BAND`) the accept threshold is the
+**midpoint**: the same margin to the strangers' tail as to the owner's, so an unseen judge who scores a
+little above the strangers measured here is still well below it, and the owner on a worse day is still
+well above it. The inconclusive band reaches down halfway from the threshold to `U`. When the classes
+overlap, nothing can be balanced: the false-accept rate has priority, the threshold is `U`, and the
+owner's false-reject rate is reported plainly with the remedy (more enrolment audio, longer phrases).
+
+The threshold never goes below `MIN_THRESHOLD`.
 
 Both rates are reported with intervals, and the false-accept rate at the floor is reported too:
 those are the people who get a second chance, and a second chance is only worth what the strict
@@ -143,18 +147,15 @@ def choose_operating_point(
     resolvable = i.size * far_target >= MIN_EXPECTED_EVENTS
     quantile = float(np.quantile(i, 1.0 - far_target))
     if resolvable:
-        threshold = quantile
+        stranger_edge = quantile
     else:
         provisional = True
-        threshold = max(quantile, float(i.max()))
+        stranger_edge = max(quantile, float(i.max()))
         notes.append(
             f"Only {i.size} impostor trials: too few to resolve a {far_target:.2%} false-accept rate "
-            f"(about {MIN_EXPECTED_EVENTS / far_target:.0f} are needed), so the threshold is held above "
-            "the worst impostor seen. Add impostor voices before trusting it."
+            f"(about {MIN_EXPECTED_EVENTS / far_target:.0f} are needed), so the strangers' edge is the "
+            "worst impostor seen. Add impostor voices before trusting it."
         )
-    if threshold < MIN_THRESHOLD:
-        threshold = MIN_THRESHOLD
-    threshold = float(threshold)
 
     if g.size < MIN_GENUINE:
         provisional = True
@@ -162,10 +163,20 @@ def choose_operating_point(
             f"Only {g.size} genuine scores (under {MIN_GENUINE}): the owner's spread, and so the band "
             "under the threshold, is a guess. Record more held-out sessions."
         )
+    owner_edge = float(np.quantile(g, 1.0 - genuine_cover))
 
-    lower = float(np.quantile(g, 1.0 - genuine_cover))
-    floor = min(lower, threshold - MIN_BAND)
-    floor = float(max(floor, 0.0))
+    if owner_edge - stranger_edge >= 2 * MIN_BAND:
+        threshold = stranger_edge + (owner_edge - stranger_edge) / 2.0
+        floor = threshold - max(MIN_BAND, (threshold - stranger_edge) / 2.0)
+    else:
+        threshold = stranger_edge
+        floor = min(owner_edge, threshold - MIN_BAND)
+        notes.append(
+            f"The owner's low end ({owner_edge:.3f}) is not clear of the strangers' tail ({stranger_edge:.3f}), so "
+            "the margin cannot be balanced: the threshold sits at the strangers' tail (false accepts have priority)."
+        )
+    threshold = float(max(threshold, MIN_THRESHOLD))
+    floor = float(max(min(floor, threshold - MIN_BAND), 0.0))
 
     frr_t = float((g < threshold).mean())
     frr_f = float((g < floor).mean())
