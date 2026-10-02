@@ -52,3 +52,8 @@ def test_the_estimate_is_positive_and_grows_with_repeats() -> None:
     assert 0 < estimate_minutes(build_plan("S3", facts("hometown"))) < estimate_minutes(
         build_plan("S1", facts("hometown", "college"))
     )
+
+
+def test_there_are_two_held_out_sessions_so_the_session_interval_can_mean_something() -> None:
+    """One held-out sitting is one cluster; the false-reject interval needs at least two."""
+    assert "S4" in RECIPES and "S5" in RECIPES

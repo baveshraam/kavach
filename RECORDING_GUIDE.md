@@ -1,4 +1,4 @@
-# Recording guide — about two to three hours
+# Recording guide — about two and a half to three hours
 
 You are recording your own voice so the system can be measured on **you**, on sessions it has never
 heard. Everything stays on this laptop under `data/studio/S04/` (git-ignored). Nothing is uploaded.
@@ -15,7 +15,7 @@ heard. Everything stays on this laptop under `data/studio/S04/` (git-ignored). N
    actually say.
 4. Close other apps that use the microphone. Plug in the headset and charge the phone.
 
-## The four sessions
+## The five sessions
 
 A **session is one sitting: one device, one room.** Do not change the device or room in the middle.
 Set them in the Studio before pressing Start. Take a real break between sessions.
@@ -26,9 +26,10 @@ Set them in the Studio before pressing Start. Take a real break between sessions
 | **S2** | **Phone** (open the Studio page on the phone, or use the laptop with the phone as the mic), quiet room | enrols you | 35 min |
 | **S3** | **Demo laptop mic**, a *different* spot: another room, or standing, or farther from the mic | enrols you | 25 min |
 | **S4** | **Demo laptop mic**, as the demo will be, **after a break of at least 30 minutes** | **held out: never enrolled** | 25 min |
+| **S5** | **Headset**, or the laptop in a noisier room, after another break | **held out #2: never enrolled** | 20 min |
 
-**S4 is the one that matters.** It is scored against a voiceprint built from S1-S3 only, so it tells
-us what happens when you walk in on demo day. Do not look at any results between S3 and S4, and do not
+**S4 and S5 are the ones that matter.** Two, because one held-out sitting is one cluster and cannot give a meaningful error interval on its own. They are scored against a voiceprint built from S1-S3 only, so it tells
+us what happens when you walk in on demo day. Do not look at any results between S3 and S5, and do not
 adjust anything after seeing them.
 
 ## How to speak
@@ -53,7 +54,7 @@ Tell me the session ids. I will run the evaluation:
 
 ```
 PYTHONPATH=backend .venv/Scripts/python.exe -m kavach.eval.enrollee \
-    --studio data/studio/S04 --enrol-sessions S1,S2,S3 --test-sessions S4 \
+    --studio data/studio/S04 --enrol-sessions S1,S2,S3 --test-sessions S4,S5 \
     --impostors data/corpus_v2/manifest.json --impostors data/corpus_v3/manifest.json \
     --exclude-speaker S04
 ```
