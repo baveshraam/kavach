@@ -1,0 +1,63 @@
+# Recording guide — about two to three hours
+
+You are recording your own voice so the system can be measured on **you**, on sessions it has never
+heard. Everything stays on this laptop under `data/studio/S04/` (git-ignored). Nothing is uploaded.
+
+## Before you start (15 minutes)
+
+1. **Start the Studio:** `powershell -ExecutionPolicy Bypass -File .\run_studio.ps1`. It opens
+   `http://localhost:3000/studio`. (This is a *different* launcher from the demo on purpose.)
+2. **Add your personal facts:** Speakers → S04 → knowledge facts. At least five: hometown, college,
+   school, favourite food, a sibling's name, anything only you would know. The Studio asks you
+   questions about them, and the demo does too.
+3. **Read the three sentences once** (the first screen of a session shows them). If one is awkward to
+   say, tell me and I will replace it before you record: they should feel like things you would
+   actually say.
+4. Close other apps that use the microphone. Plug in the headset and charge the phone.
+
+## The four sessions
+
+A **session is one sitting: one device, one room.** Do not change the device or room in the middle.
+Set them in the Studio before pressing Start. Take a real break between sessions.
+
+| Session | Device and room | What it is | Time |
+|---|---|---|---|
+| **S1** | **Demo laptop mic**, quiet room | enrols you | 35 min |
+| **S2** | **Phone** (open the Studio page on the phone, or use the laptop with the phone as the mic), quiet room | enrols you | 35 min |
+| **S3** | **Demo laptop mic**, a *different* spot: another room, or standing, or farther from the mic | enrols you | 25 min |
+| **S4** | **Demo laptop mic**, as the demo will be, **after a break of at least 30 minutes** | **held out: never enrolled** | 25 min |
+
+**S4 is the one that matters.** It is scored against a voiceprint built from S1-S3 only, so it tells
+us what happens when you walk in on demo day. Do not look at any results between S3 and S4, and do not
+adjust anything after seeing them.
+
+## How to speak
+
+- **Naturally**, at the volume and distance you will use in the demo. Do not over-enunciate.
+- **Free prompts:** answer in your own Tamil-English mix, 20-40 seconds. Do not translate; say it the
+  way you would to a friend.
+- **Read-aloud sentences:** the same sentence many times is the point (it is the same-sentence test).
+  Vary it a little between takes the way you naturally would; do not perform it.
+- **Mistakes:** if you stumble, press **Redo** before saving. Saved clips are never overwritten.
+- A cold, a tired evening or a hurried take are *fine and useful*: write it in the Note field.
+  The demo will not happen on your best day.
+
+## If the page is refreshed
+
+The queue restarts from the top. Use **Skip this one** to jump forward to where you were. Nothing
+already saved is lost or duplicated in the index.
+
+## When you are done
+
+Tell me the session ids. I will run the evaluation:
+
+```
+PYTHONPATH=backend .venv/Scripts/python.exe -m kavach.eval.enrollee \
+    --studio data/studio/S04 --enrol-sessions S1,S2,S3 --test-sessions S4 \
+    --impostors data/corpus_v2/manifest.json --impostors data/corpus_v3/manifest.json \
+    --exclude-speaker S04
+```
+
+The report starts with what it can and cannot claim. It is one enrolled speaker, measured on a held-out
+session, against 11 other recorded people. It is evidence about *your* enrolment, not about people in
+general, and it says so in its own first paragraph.
