@@ -57,6 +57,7 @@ from ..lid.lexicon import MIN_USEFUL_COVERAGE
 from ..lid.pipeline import LIDPipeline
 from ..matcher import AnswerMatcher, SemanticMatcher
 from ..phrase import match_phrase
+from ..throttle import AttemptThrottle
 from .converters import utterance_tokens_from_wire
 from .store import Store, StoreError
 
@@ -128,6 +129,12 @@ class Pipeline:
         self.settings = settings or get_settings()
         self.store = store
         self.ledger = ChallengeLedger(ttl_seconds=self.settings.challenge_ttl_seconds)
+        self.throttle = AttemptThrottle(
+            enabled=self.settings.throttle_enabled,
+            free_attempts=self.settings.throttle_free_attempts,
+            base_delay=self.settings.throttle_base_delay,
+            max_delay=self.settings.throttle_max_delay,
+        )
 
         self._asr: WhisperASR | None = None
         self._embedder: ECAPAEmbedder | None = None
@@ -692,6 +699,21 @@ class Pipeline:
     # ---------------------------------------------------------- verification
 
     def verify(self, challenge_id: str, audio_bytes: bytes, *, extension: str) -> VerificationOutcome:
+        """Score a response, then tell the throttle how the attempt went.
+
+        Only an attempt whose voice was actually measured counts: silence, a file that cannot
+        be read, a dead challenge or a missing model say nothing about who was speaking, so
+        they must not slow the owner down.
+        """
+        outcome = self._verify(challenge_id, audio_bytes, extension=extension)
+        measured = any(
+            b.branch is Branch.SPEAKER and b.available for b in outcome.fusion.branches
+        )
+        if outcome.speaker_id and measured:
+            self.throttle.record(outcome.speaker_id, accepted=outcome.fusion.accepted)
+        return outcome
+
+    def _verify(self, challenge_id: str, audio_bytes: bytes, *, extension: str) -> VerificationOutcome:
         """Score a spoken response against the challenge it answers.
 
         The liveness gate runs first and on the *ledger*, not on the audio: an

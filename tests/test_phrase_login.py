@@ -217,3 +217,74 @@ class TestVerifying:
         assert first["decision"] == "ACCEPT"
         assert second["decision"] == "REJECT"
         assert any("already been used" in line for line in second["explanation"])
+
+
+class TestThrottle:
+    def fail_once(self, client, pipeline, tmp_path, sid):
+        c = issue(client, sid)
+        result, _ = login(client, pipeline, tmp_path, c, heard=" ".join(c["phrase"]), cosine=0.2)
+        assert result["decision"] == "REJECT"
+
+    def test_repeated_failures_make_the_next_challenge_wait(self, client, pipeline, speaker, tmp_path):
+        for _ in range(3):
+            self.fail_once(client, pipeline, tmp_path, speaker)
+        r = client.post("/api/challenge", json={"speakerId": speaker, "kind": "phrase"})
+        assert r.status_code == 200  # three free attempts
+        c = r.json()
+        login(client, pipeline, tmp_path, c, heard=" ".join(c["phrase"]), cosine=0.2)  # the fourth failure
+        blocked = client.post("/api/challenge", json={"speakerId": speaker, "kind": "phrase"})
+        assert blocked.status_code == 429
+        assert int(blocked.headers["Retry-After"]) >= 1
+        assert "wait" in blocked.json()["detail"].lower()
+
+    def test_a_success_clears_the_failures(self, client, pipeline, speaker, tmp_path):
+        for _ in range(3):
+            self.fail_once(client, pipeline, tmp_path, speaker)
+        c = issue(client, speaker)
+        ok, _ = login(client, pipeline, tmp_path, c, heard=" ".join(c["phrase"]), cosine=0.9)
+        assert ok["decision"] == "ACCEPT"
+        for _ in range(3):
+            self.fail_once(client, pipeline, tmp_path, speaker)
+        assert client.post("/api/challenge", json={"speakerId": speaker, "kind": "phrase"}).status_code == 200
+
+    def test_a_recording_problem_is_not_a_failed_attempt(self, client, pipeline, speaker, tmp_path):
+        """Silence and undecodable audio say nothing about who was speaking."""
+        pipeline._embedder = FakeEmbedder(probe_with_cosine(0.9))
+        pipeline._asr = FakeASR("")
+        silent = Audio(np.zeros(16_000 * 3, dtype=np.float32), 16_000)
+        path = tmp_path / "silent.wav"
+        save_wav(silent, path)
+        for _ in range(6):
+            c = issue(client, speaker)
+            r = client.post(
+                "/api/authenticate",
+                files={"audio": ("a.wav", path.read_bytes(), "audio/wav")},
+                data={"challengeId": c["id"]},
+            ).json()
+            assert r["decision"] == "REJECT"
+        assert client.post("/api/challenge", json={"speakerId": speaker, "kind": "phrase"}).status_code == 200
+
+    def test_a_system_failure_is_not_a_failed_attempt(self, client, pipeline, speaker, tmp_path):
+        pipeline._embedder = None
+        pipeline._failed["embedder"] = "not installed"
+        for _ in range(6):
+            c = issue(client, speaker)
+            client.post(
+                "/api/authenticate",
+                files={"audio": ("a.wav", wav_bytes(tmp_path), "audio/wav")},
+                data={"challengeId": c["id"]},
+            )
+        assert client.post("/api/challenge", json={"speakerId": speaker, "kind": "phrase"}).status_code == 200
+
+    def test_the_wait_is_for_that_identity_only(self, client, pipeline, speaker, store, tmp_path):
+        other = client.post("/api/speakers", json={"displayName": "Other", "consentGiven": True}).json()["id"]
+        for _ in range(4):
+            self.fail_once(client, pipeline, tmp_path, speaker)
+        assert client.post("/api/challenge", json={"speakerId": speaker, "kind": "phrase"}).status_code == 429
+        assert client.post("/api/challenge", json={"speakerId": other, "kind": "phrase"}).status_code == 200
+
+    def test_it_can_be_switched_off(self, client, pipeline, speaker, settings, tmp_path):
+        pipeline.throttle.enabled = False
+        for _ in range(6):
+            self.fail_once(client, pipeline, tmp_path, speaker)
+        assert client.post("/api/challenge", json={"speakerId": speaker, "kind": "phrase"}).status_code == 200

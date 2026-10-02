@@ -159,6 +159,14 @@ class Settings(BaseSettings):
     One misheard word is forgiven; a recording made for another attempt matches
     none of them."""
 
+    throttle_enabled: bool = True
+    throttle_free_attempts: int = 3
+    throttle_base_delay: float = 5.0
+    throttle_max_delay: float = 30.0
+    """Failed attempts at one identity slow down: three are free, then each makes the
+    next challenge wait 5, 10, 20, 30 s (capped). A success clears them. Mild on purpose,
+    so the owner is never locked out for long; see `kavach.throttle`."""
+
     csbg_threshold: float = 0.0
     """Cohort-normalised LLR. 0.0 = 'as likely this speaker as the average
     impostor', the natural neutral point for a z-normed LLR."""
