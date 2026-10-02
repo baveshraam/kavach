@@ -493,6 +493,8 @@ class Health(Model):
     voice_grey_margin: float = 0.08
     """The voice zones the Unlock screen draws: accepted at or above `voice_threshold`,
     borderline in the `voice_grey_margin` band beneath it, rejected below that."""
+    phrase_words: int = 10
+    """How many words the Unlock screen shows (the Studio plan uses the same number)."""
     voice_policy_source: str = "default"
     """'calibrated' when `data/voice_policy.json` is in force, else 'default'."""
     voice_policy_provisional: bool = False

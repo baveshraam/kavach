@@ -165,6 +165,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             studio_enabled=cfg.studio_enabled,
             demo_tools=cfg.demo_tools,
             voice_gate=cfg.voice_gate,
+            phrase_words=cfg.phrase_words,
             voice_threshold=pipeline.voice_threshold,
             voice_grey_margin=pipeline.voice_grey_margin,
             voice_policy_source="calibrated" if pipeline.voice_policy else "default",
@@ -455,7 +456,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             facts = list(store.get_skg(resolve_speaker_id(store.list_speakers(), speaker)))
         except BankError:
             facts = []
-        items = build_plan(session_id, facts)
+        items = build_plan(session_id, facts, phrase_words=cfg.phrase_words)
         return {
             "speaker": speaker,
             "sessionId": session_id,

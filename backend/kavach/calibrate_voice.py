@@ -467,7 +467,7 @@ def main(argv: list[str] | None = None, *, embedder=None) -> int:
     p.add_argument("--exclude-speaker", action="append", default=None, help="cohort speaker ids to leave out; default: the enrollee")
     p.add_argument("--probe-seconds", type=float, default=5.0)
     p.add_argument("--probe-kind", default="auto",
-                   help="'words' scores the six-words clips whole; 'none' cuts every clip into chunks; "
+                   help="'words' scores the words clips whole; 'none' cuts every clip into chunks; "
                         "'auto' (default) uses words clips when every session has them")
     p.add_argument("--far-target", type=float, default=0.001)
     p.add_argument("--out", type=Path, default=cfg.data_dir / POLICY_FILE)
@@ -484,7 +484,7 @@ def main(argv: list[str] | None = None, *, embedder=None) -> int:
         except Exception:  # noqa: BLE001 -- surfaced properly by calibrate_from_studio below
             have = set()
         probe_kind = "words" if sessions and all(s in have for s in sessions) else None
-        print(f"probes: {'six-words clips scored whole' if probe_kind else 'every clip cut into chunks (not every session has six-words clips)'}")
+        print(f"probes: {'words clips scored whole' if probe_kind else 'every clip cut into chunks (not every session has words clips)'}")
     cohort_files = args.cohort or [Path(f) for f in sorted(glob.glob(str(cfg.data_dir / "cohort" / "emb" / "*@5s.npz")))]
     if not cohort_files:
         print("refused: no cohort embedding files found (build them with the cohort embedding step first)", file=sys.stderr)

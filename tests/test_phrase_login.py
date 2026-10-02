@@ -155,7 +155,7 @@ def branch(result: dict, name: str) -> dict | None:
 class TestIssuing:
     def test_a_speaker_with_no_facts_can_still_be_challenged_for_a_phrase(self, client, speaker):
         c = issue(client, speaker)
-        assert c["kind"] == "phrase" and len(c["phrase"]) == 6
+        assert c["kind"] == "phrase" and len(c["phrase"]) == 10
         assert all(w in c["questionText"] for w in c["phrase"])
 
     def test_every_challenge_is_a_different_phrase(self, client, speaker):
@@ -372,13 +372,14 @@ class TestVoiceIsJudgedOnThePhraseSpan:
 
     def test_a_judge_speaking_after_the_phrase_is_not_part_of_the_voice_sample(self, client, pipeline, speaker, tmp_path):
         def layout(w):
-            phrase = [(x, 1000 + i * 500, 1400 + i * 500) for i, x in enumerate(w)]  # 1.0 s .. 3.9 s
-            judge = [("let", 6000, 6200), ("me", 6200, 6300), ("try", 6300, 6600)]
+            phrase = [(x, 1000 + i * 500, 1400 + i * 500) for i, x in enumerate(w)]  # 1.0 s .. 5.9 s
+            judge = [("let", 6500, 6700), ("me", 6700, 6800), ("try", 6800, 7100)]
             return phrase + judge
 
         r, spy = self.run(client, pipeline, tmp_path, speaker, seconds=8.0, layout=layout)
         assert r["decision"] == "ACCEPT", r["explanation"]
-        assert spy.seen_seconds and spy.seen_seconds[0] == pytest.approx(3.3, abs=0.2)  # 1.0..3.9 plus margins, not 8 s
+        # ten words from 1.0 s to 5.9 s, plus 0.2 s of margin each side: 5.3 s, not the whole 8 s
+        assert spy.seen_seconds and spy.seen_seconds[0] == pytest.approx(5.3, abs=0.1)
 
     def test_with_no_word_timings_the_whole_recording_is_used(self, client, pipeline, speaker, tmp_path):
         c = issue(client, speaker)
@@ -394,7 +395,7 @@ class TestVoiceIsJudgedOnThePhraseSpan:
 
     def test_a_span_too_short_to_embed_falls_back_to_the_whole_recording(self, client, pipeline, speaker, tmp_path):
         def layout(w):
-            return [(x, 2000 + i * 100, 2090 + i * 100) for i, x in enumerate(w)]  # six words in 0.6 s
+            return [(x, 2000 + i * 50, 2045 + i * 50) for i, x in enumerate(w)]  # ten words in half a second
 
         r, spy = self.run(client, pipeline, tmp_path, speaker, seconds=5.0, layout=layout)
         assert spy.seen_seconds[0] == pytest.approx(5.0, abs=0.05)
@@ -403,8 +404,8 @@ class TestVoiceIsJudgedOnThePhraseSpan:
         def layout(w):
             return [(x, 100 + i * 500, 500 + i * 500) for i, x in enumerate(w)]  # starts almost at 0
 
-        r, spy = self.run(client, pipeline, tmp_path, speaker, seconds=3.2, layout=layout)
-        assert 0 < spy.seen_seconds[0] <= 3.2 + 1e-6
+        r, spy = self.run(client, pipeline, tmp_path, speaker, seconds=5.5, layout=layout)
+        assert 0 < spy.seen_seconds[0] <= 5.5 + 1e-6
 
     def test_the_explanation_says_which_part_was_scored(self, client, pipeline, speaker, tmp_path):
         def layout(w):

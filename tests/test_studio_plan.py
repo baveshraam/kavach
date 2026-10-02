@@ -73,12 +73,12 @@ def test_every_session_asks_for_the_phrase_task_once_per_take_with_different_wor
     assert len({i.text_ta for i in items}) == len(items)
 
 
-def test_each_prompt_is_six_random_pool_words() -> None:
-    from kavach.phrase import WORDS
+def test_each_prompt_is_the_login_s_number_of_random_pool_words() -> None:
+    from kavach.phrase import DEFAULT_PHRASE_WORDS, WORDS
 
     for i in words_items("S2"):
         shown = i.text_ta.split(": ", 1)[1].split(", ")
-        assert len(shown) == 6 and set(shown) <= set(WORDS)
+        assert len(shown) == DEFAULT_PHRASE_WORDS and set(shown) <= set(WORDS)
 
 
 def test_the_words_are_the_same_every_time_the_plan_is_built() -> None:

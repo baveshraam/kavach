@@ -6,7 +6,7 @@ import { PageHeader, PageBody } from '../components/layout/PageHeader';
 import { Card, CardHeader, CardBody, Button, Field, Select, Badge, Notice, cn } from '../components/ui/kit';
 import type { AuthResult, BranchScore, Challenge } from '../api/types';
 
-const MIN_MS = 2000;   // shorter than this cannot hold six words; ask again without spending the challenge
+const MIN_MS = 3500;   // shorter than this cannot hold the words; ask again without spending the challenge
 const MAX_MS = 15000;  // a recorder left running
 
 /**
@@ -200,7 +200,7 @@ export function Unlock() {
                   <div className="w-20 h-20 rounded-full bg-app-surface-muted flex items-center justify-center"><Lock className="w-8 h-8 text-app-text-muted" /></div>
                   <div>
                     <div className="font-serif text-[26px] leading-tight">Say it to open it</div>
-                    <p className="text-[13.5px] text-app-text-muted mt-1.5 max-w-sm">You will be shown {health ? 'six random words' : 'a few random words'} to read aloud, about five seconds. They are different every time.</p>
+                    <p className="text-[13.5px] text-app-text-muted mt-1.5 max-w-sm">You will be shown {health?.phraseWords ?? 10} random words to read aloud, about seven seconds. They are different every time, and a longer sample is what makes the voice check reliable.</p>
                   </div>
                   <Button variant="primary" size="lg" onClick={() => issue.mutate(false)} loading={issue.isPending} disabled={wait > 0} icon={<Mic className="w-4 h-4" />}>
                     {wait > 0 ? `Wait ${wait} s` : `Unlock as ${firstName}`}
@@ -222,7 +222,7 @@ export function Unlock() {
 
                   <div className="flex flex-wrap justify-center gap-x-5 gap-y-3 max-w-xl" aria-label="Words to read">
                     {challenge.phrase.map((w, i) => (
-                      <span key={i} className="font-serif text-[40px] leading-none tracking-tight text-app-text">{w}</span>
+                      <span key={i} className="font-serif text-[34px] leading-none tracking-tight text-app-text">{w}</span>
                     ))}
                   </div>
 

@@ -1,11 +1,11 @@
-"""Does speech recognition hear the presenter's six words?
+"""Does speech recognition hear the presenter's ten words?
 
     python -m kavach.studio.words_check --speaker S04
 
 The login accepts only when the words on screen are heard, in order. Whisper `small` on a
 Tamil-English speaker reading isolated English nouns is not guaranteed to hear them, and a login the
 speech recognition cannot follow is rejected no matter how good the voice match is. So before demo
-day the presenter's own six-word clips are transcribed exactly as the login transcribes them
+day the presenter's own words clips are transcribed exactly as the login transcribes them
 (English, no code-mix prompt, greedy) and scored with the login's own matcher: the pass rate is the
 share of attempts that would have cleared the words gate.
 """
@@ -53,16 +53,16 @@ class WordsCheck:
         for f in self.failures[:10]:
             L.append(f"- {f['clip']}: expected [{f['expected']}] heard {f['heard']!r}; missing {f['missing']}")
         L.append(
-            f"At 3 of 6 words (0.50) the pass rate would be {self.pass_rate_at(0.5):.1%}. The price: a recording made for "
-            "another attempt matches 3 or more of the shown words, in order, about 1.3e-4 of the time (measured on 200,000 "
-            "random pairs; at 4 of 6 it never happened), and it would still need the voice to match."
+            f"At half the words (0.50) the pass rate would be {self.pass_rate_at(0.5):.1%}. The price, for ten shown words: "
+            "a recording made for another attempt matched 4 or more of them in order 1.4e-4 of the time and 5 or more never "
+            "(100,000 random pairs), and it would still need the voice to match."
         )
         if self.pass_rate < 0.95:
             L.append(
                 "Fewer than 95% of the presenter's own attempts would pass the words gate. Options, in order: use a "
                 "larger speech-recognition model (KAVACH_WHISPER_MODEL=medium, if the machine can run it live), "
-                "lower `phrase_min_match` (4 of 6 is 0.67; 3 of 6 is 0.50, which weakens replay resistance), or show "
-                "fewer words (`phrase_words`)."
+                "lower `phrase_min_match` (6 of 10 is 0.60; 5 of 10 is 0.50, which still never matched by chance), or show "
+                "fewer words (`phrase_words`, at the cost of a shorter voice sample)."
             )
         else:
             L.append("The words gate is not what will fail on demo day.")

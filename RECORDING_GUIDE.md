@@ -37,7 +37,7 @@ adjust anything after seeing them.
 - **Naturally**, at the volume and distance you will use in the demo. Do not over-enunciate.
 - **Free prompts:** answer in your own Tamil-English mix, 20-40 seconds. Do not translate; say it the
   way you would to a friend.
-- **Six words:** every session also asks for six random words ("Say: tiger, river, mango ...") a dozen
+- **Ten words:** every session also asks for ten random words ("Say: tiger, river, mango, ...") a dozen
   times. This is exactly what the Unlock screen asks for, so these clips are what the demo's voice
   threshold is measured on. Read them the way you will on stage: one breath, normal pace, then stop.
 - **Read-aloud sentences:** the same sentence many times is the point (it is the same-sentence test).
@@ -68,7 +68,7 @@ PYTHONPATH=backend .venv/Scripts/python.exe -m kavach.eval.enrollee \
 # 2. The demo's voice threshold, measured: each session scored against the other four
 PYTHONPATH=backend .venv/Scripts/python.exe -m kavach.calibrate_voice --sessions S1,S2,S3,S4,S5
 
-# 2b. Does speech recognition hear your six words? (the login also needs the words, not just the voice)
+# 2b. Does speech recognition hear your ten words? (the login also needs the words, not just the voice)
 PYTHONPATH=backend .venv/Scripts/python.exe -m kavach.studio.words_check --speaker S04
 
 # 3. Enrol the demo from all five sessions (the database is backed up first)
@@ -86,10 +86,10 @@ What each does:
    and with fewer than five sessions (or no errors) it says the cluster interval is *not informative* rather than
    printing a tight range. Per-trial scores are written to `data/studio/S04/eval/trials.csv`.
 2. **The calibration.** Chooses the voice threshold midway between where strangers stop and where *you* start,
-   from your six-word clips against the public cohorts (LibriSpeech, Google's Tamil speakers) and the 11 corpus
+   from your words clips against the public cohorts (LibriSpeech, Google's Tamil speakers) and the 11 corpus
    speakers. Writes `data/voice_policy.json`; the demo loads it at start. If it says `provisional` or not `ready`,
    it tells you why (usually: record another session).
-2b. **The words check.** Transcribes your six-word clips exactly as the login does and reports the share that
+2b. **The words check.** Transcribes your words clips exactly as the login does and reports the share that
    would have cleared the words gate. Under 95% it names the options (a larger Whisper, a looser match).
 3. **The enrolment.** Replaces the demo's voiceprint (built from phone recordings) with one built from the
    same browser-microphone path the login uses, and records what it was built from.

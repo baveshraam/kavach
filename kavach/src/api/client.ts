@@ -27,7 +27,7 @@ async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> 
 }
 
 export const apiClient = {
-  health: async (): Promise<{ status: string, models: string[], device: string, demoAttackBank?: boolean, voiceGate?: boolean, voiceThreshold?: number, voiceGreyMargin?: number, voicePolicySource?: string, voicePolicyProvisional?: boolean, voicePolicyError?: string }> => {
+  health: async (): Promise<{ status: string, models: string[], device: string, demoAttackBank?: boolean, voiceGate?: boolean, phraseWords?: number, voiceThreshold?: number, voiceGreyMargin?: number, voicePolicySource?: string, voicePolicyProvisional?: boolean, voicePolicyError?: string }> => {
     if (USE_MOCK) {
       await delay(200);
       return { status: 'connected', models: ['ecapa-tdnn-v2', 'wav2vec2-large-xlsr-ta', 'llama-3-8b-instruct'], device: 'cuda:0' };

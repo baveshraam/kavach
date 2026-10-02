@@ -140,3 +140,15 @@ def test_an_unrelated_recording_almost_never_clears_the_gate_by_chance():
         ge4 += m >= 4
     assert ge4 == 0
     assert ge3 / n < 5e-4
+
+
+def test_the_default_phrase_is_long_enough_for_the_voice_and_never_matches_by_chance():
+    """Ten words, six needed: an unrelated ten-word recording never reached six in order."""
+    from kavach.phrase import DEFAULT_MIN_MATCH, DEFAULT_PHRASE_WORDS
+
+    assert DEFAULT_PHRASE_WORDS >= 10 and DEFAULT_MIN_MATCH >= 0.6
+    rng = random.Random(2)
+    best = 0
+    for _ in range(5_000):
+        best = max(best, match_phrase(rng.sample(WORDS, DEFAULT_PHRASE_WORDS), " ".join(rng.sample(WORDS, DEFAULT_PHRASE_WORDS))).matched)
+    assert best < DEFAULT_PHRASE_WORDS * DEFAULT_MIN_MATCH
