@@ -283,6 +283,15 @@ class Settings(BaseSettings):
     `demo_reveal_answers`. `/api/health` reports the flag so a demo build
     announces itself."""
 
+    studio_enabled: bool = False
+    """Accept uploads into the recording Studio (labelled sessions of the presenter's own voice).
+
+    **Off by default and never turned on by the demo build.** Recording is a deliberate act: a separate
+    switch (`run_studio.ps1`) enables it. `/api/health` reports the flag."""
+
+    studio_speakers: list[str] = Field(default_factory=list)
+    """Corpus pseudonyms the Studio may record. **Empty: nobody.** Fail closed, like `clone_victims`."""
+
     @field_validator("data_dir", "audio_dir", "attack_dir")
     @classmethod
     def _resolve(cls, v: Path) -> Path:
