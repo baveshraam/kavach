@@ -886,6 +886,8 @@ class Pipeline:
         policy = FusionPolicy(
             threshold=self.settings.fused_threshold,
             borderline_margin=self.settings.borderline_margin,
+            voice_gate=self.settings.voice_gate,
+            voice_grey_margin=self.settings.voice_grey_margin,
         )
         if not self.settings.csbg_veto_enabled:
             # The offline run fitted the veto on dev and discarded it: no floor

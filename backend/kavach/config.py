@@ -139,6 +139,16 @@ class Settings(BaseSettings):
     """ECAPA cosine similarity. ~0.6-0.7 is the usual operating range for
     this checkpoint on clean audio; phone recordings sit lower."""
 
+    voice_gate: bool = True
+    """The live login treats the voiceprint as a necessary condition: nobody is
+    accepted on a voice below `speaker_threshold`, however well they answer. See
+    `FusionPolicy.voice_gate` for the arithmetic of the hole this closes. The
+    research ablations keep the weighted rule; only the live pipeline gates."""
+
+    voice_grey_margin: float = 0.08
+    """Inconclusive band under `speaker_threshold` (cosine units). A score inside
+    it is BORDERLINE (ask for a second sample); below it is a hard reject."""
+
     csbg_threshold: float = 0.0
     """Cohort-normalised LLR. 0.0 = 'as likely this speaker as the average
     impostor', the natural neutral point for a z-normed LLR."""
