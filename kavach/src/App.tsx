@@ -10,6 +10,7 @@ import { AttackLab } from './pages/AttackLab';
 import { Evaluation } from './pages/Evaluation';
 import { Corpus } from './pages/Corpus';
 import { Studio } from './pages/Studio';
+import { Unlock } from './pages/Unlock';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -28,6 +29,7 @@ export default function App() {
           <Route path="/" element={<AppLayout />}>
             <Route index element={<Overview />} />
             <Route path="enrolment" element={<Enrolment />} />
+            <Route path="unlock" element={<Unlock />} />
             <Route path="authenticate" element={<Authenticate />} />
             <Route path="speakers" element={<Speakers />} />
             <Route path="graph-explorer" element={<GraphExplorer />} />

@@ -446,6 +446,12 @@ class Health(Model):
     studio_enabled: bool = False
     """True when the recording Studio accepts uploads."""
 
+    voice_gate: bool = True
+    voice_threshold: float = 0.62
+    voice_grey_margin: float = 0.08
+    """The voice zones the Unlock screen draws: accepted at or above `voice_threshold`,
+    borderline in the `voice_grey_margin` band beneath it, rejected below that."""
+
     reportable: dict[str, Any] = Field(default_factory=dict)
     """The settings that must accompany any reported number, from
     `Settings.reportable()`."""
