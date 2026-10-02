@@ -35,7 +35,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 
-from ..attacks.bank import BankError, CloneBank
+from ..attacks.bank import BankError, CloneBank, resolve_speaker_id
+from ..studio.plan import build_plan, estimate_minutes
+from ..studio.store import DEVICES, ENVIRONMENTS, StudioError, StudioStore
 from ..audio import AudioError, decode_bytes, warm_resample
 from ..challenge import ChallengeError
 from ..config import Settings, get_settings
@@ -379,6 +381,79 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except StoreError as exc:
             raise HTTPException(404, str(exc)) from exc
         return FileResponse(path)
+
+    # ---------------------------------------------------------------- studio
+
+    def _studio(cfg: Settings, pseudonym: str) -> StudioStore:
+        """The Studio exists only for allowlisted speakers, in a build that opted in.
+
+        Off, it is a plain 404; on, a pseudonym not on the list is a 403. Nothing
+        here can name another person: the speaker is the allowlist's."""
+        if not cfg.studio_enabled:
+            raise HTTPException(404, "Not found.")
+        if pseudonym not in cfg.studio_speakers:
+            raise HTTPException(403, f"{pseudonym!r} is not on the studio allowlist (Settings.studio_speakers).")
+        return StudioStore(cfg.data_dir / "studio" / pseudonym, pseudonym)
+
+    @app.get("/api/studio/plan")
+    def studio_plan(speaker: str, store: StoreDep, cfg: SettingsDep, session: str = "") -> dict[str, Any]:
+        studio = _studio(cfg, speaker)
+        session_id = session or studio.next_session_id()
+        try:
+            facts = list(store.get_skg(resolve_speaker_id(store.list_speakers(), speaker)))
+        except BankError:
+            facts = []
+        items = build_plan(session_id, facts)
+        return {
+            "speaker": speaker,
+            "sessionId": session_id,
+            "hasFacts": bool(facts),
+            "devices": list(DEVICES),
+            "environments": list(ENVIRONMENTS),
+            "estimatedMinutes": estimate_minutes(items),
+            "items": [
+                {"kind": i.kind, "promptId": i.prompt_id, "textEn": i.text_en, "textTa": i.text_ta, "repeat": i.repeat}
+                for i in items
+            ],
+        }
+
+    @app.get("/api/studio/summary")
+    def studio_summary(speaker: str, cfg: SettingsDep) -> dict[str, Any]:
+        return _studio(cfg, speaker).summary()
+
+    @app.post("/api/studio/clips")
+    async def studio_add_clip(
+        cfg: SettingsDep,
+        audio: Annotated[UploadFile, File()],
+        speaker: Annotated[str, Form()],
+        session_id: Annotated[str, Form()],
+        kind: Annotated[str, Form()],
+        prompt_id: Annotated[str, Form()],
+        device: Annotated[str, Form()],
+        environment: Annotated[str, Form()],
+        text_hint: Annotated[str, Form()] = "",
+        state_note: Annotated[str, Form()] = "",
+    ) -> dict[str, Any]:
+        studio = _studio(cfg, speaker)
+        raw = await audio.read()
+        if not raw:
+            raise HTTPException(400, "The uploaded audio is empty.")
+        suffix = Path(audio.filename or "clip.webm").suffix or ".webm"
+
+        def work() -> Any:
+            return studio.add_clip(
+                session_id=session_id, kind=kind, prompt_id=prompt_id, device=device,
+                environment=environment, audio=decode_bytes(raw, suffix=suffix),
+                orig_bytes=raw, orig_ext=suffix, text_hint=text_hint, state_note=state_note,
+            )
+
+        try:
+            record = await run_in_threadpool(work)
+        except AudioError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except StudioError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return {"clip": record.to_dict(), "summary": studio.summary()}
 
     # ------------------------------------------------------------ clone bank
 
