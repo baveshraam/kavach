@@ -12,7 +12,7 @@ import {
 } from '../components/ui/kit';
 import { RefreshCw, ShieldCheck, Timer, CheckCircle2, XCircle, MinusCircle, ArrowRight } from 'lucide-react';
 
-const GATES = ['liveness', 'signal_integrity'];
+const GATES = ['liveness', 'signal_integrity', 'phrase'];
 
 export function Authenticate() {
   const queryClient = useQueryClient();

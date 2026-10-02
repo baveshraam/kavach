@@ -53,7 +53,9 @@ export interface Triple { subject: string; predicate: string; object: string; }
 export interface Challenge {
   id: string;
   speakerId: string;
-  questionText: string;        // code-mixed Tamil-English
+  questionText: string;        // code-mixed Tamil-English, or the instruction for a phrase challenge
+  kind: 'question' | 'phrase'; // 'phrase' = read these random words (no facts, no network)
+  phrase: string[];            // the words to read, for a phrase challenge; empty otherwise
   targetClass: SemanticClass;
   expectedAnswerEntity: string;
   issuedAt: string;
@@ -64,7 +66,7 @@ export interface BranchScore {
   // 'liveness' and 'signal_integrity' are gates, not weighted factors: they
   // carry weight 0 and reject on their own. Render them as pass/fail, not as
   // a contribution to the fused score.
-  name: 'speaker_embedding' | 'csbg' | 'knowledge' | 'liveness' | 'signal_integrity';
+  name: 'speaker_embedding' | 'csbg' | 'knowledge' | 'liveness' | 'signal_integrity' | 'phrase';
   score: number;               // 0..1
   threshold: number;
   weight: number;

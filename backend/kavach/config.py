@@ -149,6 +149,16 @@ class Settings(BaseSettings):
     """Inconclusive band under `speaker_threshold` (cosine units). A score inside
     it is BORDERLINE (ask for a second sample); below it is a hard reject."""
 
+    phrase_words: int = 6
+    """Random words shown in a 'read these words' challenge. Six is about five
+    seconds of speech -- long enough for a stable voiceprint, short enough to read
+    in one breath."""
+
+    phrase_min_match: float = 0.67
+    """Share of the shown words (in order) the transcript must contain. 4 of 6.
+    One misheard word is forgiven; a recording made for another attempt matches
+    none of them."""
+
     csbg_threshold: float = 0.0
     """Cohort-normalised LLR. 0.0 = 'as likely this speaker as the average
     impostor', the natural neutral point for a z-normed LLR."""

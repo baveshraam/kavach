@@ -50,7 +50,7 @@ UtteranceType = Literal[
 DecisionStr = Literal["ACCEPT", "REJECT", "BORDERLINE"]
 
 BranchName = Literal[
-    "speaker_embedding", "csbg", "knowledge", "liveness", "signal_integrity"
+    "speaker_embedding", "csbg", "knowledge", "liveness", "signal_integrity", "phrase"
 ]
 
 #: The frontend's attack identifiers. They differ from
@@ -162,12 +162,17 @@ class Triple(Model):
 
 class ChallengeRequest(Model):
     speaker_id: str
+    kind: Literal["question", "phrase"] = "question"
+    """'phrase' is the read-these-random-words login: no facts, no network."""
 
 
 class Challenge(Model):
     id: str
     speaker_id: str
     question_text: str
+    kind: Literal["question", "phrase"] = "question"
+    phrase: list[str] = Field(default_factory=list)
+    """The words to read, for a phrase challenge; empty for a question."""
     target_class: SemanticClassStr
     expected_answer_entity: str = ""
     """Empty unless `demo_reveal_answers` is on. See the module docstring:

@@ -577,7 +577,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """Issue a single-use, expiring, adaptively-targeted challenge."""
         _require_speaker(store, payload.speaker_id)
         try:
-            challenge = pipeline.issue_challenge(payload.speaker_id)
+            challenge = pipeline.issue_challenge(payload.speaker_id, kind=payload.kind)
         except ChallengeError as exc:
             raise HTTPException(409, str(exc)) from exc
         return conv.challenge_to_wire(challenge, reveal_answer=cfg.demo_reveal_answers)

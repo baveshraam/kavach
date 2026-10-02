@@ -332,4 +332,5 @@ export const branchLabel: Record<string, string> = {
   knowledge: 'Knowledge answer',
   liveness: 'Liveness',
   signal_integrity: 'Signal integrity',
+  phrase: 'Spoken words',
 };

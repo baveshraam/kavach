@@ -37,6 +37,7 @@ from typing import Any
 from .csbg.graph import CSBG
 from .csbg.ontology import ELICITABLE_CLASSES, SemanticClass
 from .csbg.scoring import discriminative_classes
+from .phrase import new_phrase
 from .skg import FACTS_BY_CLASS, Fact, SpeakerKG
 
 #: Template questions per fact type, used when no LLM is configured and as a
@@ -94,6 +95,19 @@ class Challenge:
     """Set once an answer is scored. A challenge is single-use: without this,
     a captured challenge-answer pair could be replayed."""
 
+    kind: str = "question"
+    """'question' (answer a personal question) or 'phrase' (read these random
+    words). A phrase challenge needs no facts and no language tagger."""
+
+    phrase: tuple[str, ...] = ()
+    """The words shown to the speaker, for a phrase challenge. Not a secret:
+    they are meant to be read aloud; their value is that they are fresh."""
+
+    strict_voice: bool = False
+    """A step-up challenge: the voice must pass outright, with no inconclusive
+    band. Set by the server when it asks for a second sample after a borderline
+    voice, never by the client."""
+
     @property
     def is_expired(self) -> bool:
         return time.time() > self.expires_at
@@ -123,6 +137,8 @@ class Challenge:
             "expires_at": self.expires_at,
             "seconds_remaining": round(self.seconds_remaining, 1),
             "generator": self.generator,
+            "kind": self.kind,
+            "phrase": list(self.phrase),
         }
 
 
@@ -380,6 +396,29 @@ class ChallengeGenerator:
             expires_at=now + self.ttl_seconds,
             generator=generator,
             discriminability=discriminability,
+        )
+        self.ledger.record(challenge)
+        return challenge
+
+    def generate_phrase(
+        self, speaker_id: str, *, n_words: int = 6, strict_voice: bool = False
+    ) -> Challenge:
+        """Issue a 'read these words' challenge: random words, no facts, no network."""
+        words = tuple(new_phrase(n_words))
+        now = time.time()
+        challenge = Challenge(
+            id=f"chg_{secrets.token_hex(6)}",
+            speaker_id=speaker_id,
+            question_text="Please read aloud, clearly: " + ", ".join(words),
+            target_class=SemanticClass.OTHER,
+            expected_predicate="",
+            expected_answer="",
+            issued_at=now,
+            expires_at=now + self.ttl_seconds,
+            generator="random_words",
+            kind="phrase",
+            phrase=words,
+            strict_voice=strict_voice,
         )
         self.ledger.record(challenge)
         return challenge
