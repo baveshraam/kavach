@@ -6,6 +6,37 @@ things stand and what is left.
 
 ---
 
+## Update 2026-10-03 -- the evidence pipeline: record yourself, measure the voice
+
+Branch `feature/evidence-pipeline` (pushed to `baveshraam/kavach`, spec and plan in `docs/superpowers/`).
+1150 tests pass offline. This answers "can the system be shown to work for the presenter, with numbers?".
+
+- **Recording Studio** (`/studio`, `kavach/studio/`): guided sessions recorded through the browser microphone
+  (the demo's own path, decoded by the login's `decode_bytes`), each clip labelled by session, device
+  (`DEMO_LAPTOP_MIC | PHONE | HEADSET | OTHER`) and room, saved under git-ignored `data/studio/S04/` with an
+  append-only index written last. Off by default, allowlist-only (`Settings.studio_enabled`,
+  `studio_speakers`), never enabled by the demo build. Start it with `run_studio.ps1`; follow `RECORDING_GUIDE.md`
+  (five sessions: S1-S3 enrol; **S4 and S5 are held out**, after breaks and on other devices/rooms).
+- **Evaluation**: `python -m kavach.eval.enrollee --studio data/studio/S04 --enrol-sessions S1,S2,S3
+  --test-sessions S4,S5 --impostors data/corpus_v2/manifest.json --impostors data/corpus_v3/manifest.json
+  --exclude-speaker S04`. Enrolment and test never share a session; false-reject and false-accept each get a
+  Wilson interval *and* a cluster bootstrap (over sessions / over impostor speakers: clips from one sitting are
+  not independent); per-condition and per-impostor tables; a fitted-threshold operating point chosen on a dev
+  partition and applied to a test partition split by speaker and session. The report opens with its limits:
+  one enrollee, 11 impostors who read different material (not yet the same-sentence test), voice only.
+- **Found while building it:** with a single held-out session the false-reject interval over sessions is a
+  meaningless 0-100% (one sitting is one cluster), so a second held-out session is part of the plan, and the
+  report says so when it has only one.
+- **Smoke-tested with real ECAPA** on the presenter's 13 existing clips split into pseudo-sessions (one sitting,
+  a plumbing check, NOT a result): 154 impostor trials over 11 speakers, report written. Even there the margin
+  between the worst genuine score (0.62) and the best impostor (0.54, S12) was thin: exactly what the held-out
+  recordings are for.
+
+**Not built yet** (later sub-projects): the interruption guard (reject a clip with two voices), the "read this
+sentence" login mode, the results write-up, and the CSBG analysis of the free-speech recordings.
+
+---
+
 ## Update 2026-10-02 (b) -- the clone-attack bank, a demo preflight, and what rehearsal found
 
 Executed from `docs/superpowers/plans/2026-10-02-clone-attack-bank.md` (spec:
