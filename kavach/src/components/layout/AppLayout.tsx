@@ -5,7 +5,7 @@ import { apiClient } from '../../api/client';
 import { cn } from '../ui/kit';
 import {
   Moon, Sun, LayoutDashboard, UserPlus, ShieldCheck, Users, Network,
-  Swords, LineChart, Database, Mic, type LucideIcon,
+  Swords, LineChart, Database, Mic, LockOpen, type LucideIcon,
 } from 'lucide-react';
 
 export { cn };
@@ -18,6 +18,7 @@ const navGroups: { label: string; items: { path: string; label: string; icon: Lu
   {
     label: 'Live system',
     items: [
+      { path: '/unlock', label: 'Unlock', icon: LockOpen },
       { path: '/authenticate', label: 'Authenticate', icon: ShieldCheck },
       { path: '/enrolment', label: 'Enrol a speaker', icon: UserPlus },
     ],
