@@ -14,6 +14,18 @@ The claim the whole system is built to test is one sentence:
 > a code-switching profile is hard to steal even when the voice and the secret
 > have both already been stolen.
 
+## Lineage and credit
+
+KAVACH began as [PremKxmar/speech](https://github.com/PremKxmar/speech): the research core (the
+Code-Switch Behaviour Graph, word-level language ID, the A1-A5 threat model, the evaluation and the
+recording protocol) is Prem Kumar's work, and his 51 commits are preserved in this history. This
+repository continues from where that left off. Since then: a live demo build on twelve recorded
+speakers, a rebuilt UI, a clone-attack bank, a demo preflight, and measurements of what does and does
+not hold (see `HANDOFF.md` and `DEMO_RUNBOOK.md`). The direction from here is evidence for a single
+enrolled speaker, measured on held-out sessions, with claims worded accordingly.
+
+---
+
 ## Where to start
 
 | Document | What it is for |
