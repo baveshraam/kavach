@@ -387,6 +387,10 @@ class Health(Model):
     demo_reveal_answers: bool = False
     """Surfaced so a build that leaks challenge answers announces itself."""
 
+    demo_attack_bank: bool = False
+    """True when the clone-bank routes are live. Those routes return audio that
+    says the answer to a challenge, so a build with them on must announce it."""
+
     reportable: dict[str, Any] = Field(default_factory=dict)
     """The settings that must accompany any reported number, from
     `Settings.reportable()`."""
