@@ -6,6 +6,70 @@ things stand and what is left.
 
 ---
 
+## Update 2026-10-02 (b) -- the clone-attack bank, a demo preflight, and what rehearsal found
+
+Executed from `docs/superpowers/plans/2026-10-02-clone-attack-bank.md` (spec:
+`docs/superpowers/specs/2026-10-02-clone-attack-bank-design.md`) on the branch
+`feature/clone-attack-bank`. **Nothing is pushed.** 1089 tests pass offline.
+
+### What exists now
+
+- **Clone bank** (`attacks/bank.py`): clips of the presenter's voice with provenance and a strict
+  loader (allowlist, hashes, speaker, path escape). Only annotated clips without a translated/looping
+  flag are ever measured or served.
+- **Two stages, two environments.** `attacks/make_clone_bank.py` (clone env, `.venv-clone`, kNN-VC)
+  and `attacks/annotate_bank.py` (main env: real Whisper, tagger, ECAPA, answer matcher). Setup recipe
+  in `requirements-clone.txt`. kNN-VC verified on the GPU: 6 s converted in 6.7 s cold, 1.2 s warm.
+- **Gated routes** `GET /api/clone-bank`, `POST /api/clone-bank/match`, `GET /api/clone-bank/{id}/audio`:
+  404 unless `Settings.demo_attack_bank`; a clip *says* the answer, so `/api/health` reports the flag.
+  `Settings.clone_victims` defaults to `[]` (nobody may be cloned).
+- **Attack Lab**: with a bank, A4 rows are *measured* (real ECAPA similarity, real CSBG on the real
+  transcript, real answer matcher), trials are capped at the number of distinct clips, yield is printed,
+  the run stays `simulated` and `paper_ready()` still refuses it.
+- **UI**: a "Clone attack" demo button (only when the bank is on) and an "acoustic measured/modelled"
+  label on every lab run. Verified in a real browser against the real backend with a throwaway
+  *synthetic* bank (no real person, no real voice): button, match, audio fetch, submit, label; and the
+  button absent with the bank off.
+- **`python -m kavach.demo_check --presenter S04 --flows`**: the preflight. Names the fix for every
+  gap and drives the genuine, replay, impostor and clone logins. **`DEMO_RUNBOOK.md`** records the
+  drills as observed.
+
+### Found by rehearsing against the real backend (all fixed, each with a test)
+
+1. **The impostor demo clip was rejected by the integrity gate before the voiceprint ran.** Turning
+   splice detection off had not fixed this (the 2026-10-02 (a) note said it probably would). The replay
+   detector's envelope similarity is about sqrt(cut / clip): a 20 s cut of a 24 s stored clip scores
+   ~0.91 against a 0.85 threshold. Staged clips are now at most 40% of the clip and 12 s
+   (`demo_check.cut_plan`, UI `stagingCut`, pinned by `tests/test_demo_staging.py`).
+2. **A real `.m4a` failed with "Decoded audio is empty"**: moov atom at the end of the file, ffmpeg
+   reading a pipe. `decode_bytes` now uses a seekable temp file; tests encode m4a, webm, ogg and mp3.
+3. The first non-16 kHz upload stalled for seconds (librosa's lazy import): warmed at start-up.
+   Silence and sub-second clips used to reach Whisper, which invents text: rejected early with a reason.
+   Garbage uploads showed raw ffmpeg output: now a plain message.
+4. The preflight read an empty bank as "covered" (vacuous truth), and demanded ACCEPT from a stand-in
+   that cannot answer the random challenge. Both corrected (a stand-in is expected to be BORDERLINE).
+
+### Blocked on the presenter, not faked
+
+- **S04 has no knowledge-graph facts.** Until they are entered the preflight says `NOT READY` for S04
+  and S04 cannot be challenged. Only S08 (4 facts) and S09 (3) have any.
+- **No real bank exists.** It needs a teammate's spoken answer per S04 fact
+  (`data/clone_sources/<predicate>.wav`), then the two commands in `DEMO_RUNBOOK.md` section 6.
+- **S04's agreement to be cloned** is recorded only as the user's decision in this session.
+- **The live browser microphone path was not exercised** and must be rehearsed once.
+- Stage 2 (IndicF5, behind a go/no-go probe) is unplanned, as the spec says.
+- The 88-slide deck's screenshots predate the UI fixes and show `w 0.00`.
+
+### Rehearsal numbers (2026-10-02, S08 as stand-in presenter)
+
+Preflight with `--flows`, three runs in a row: identical results. Replay rejected at the integrity
+gate; impostor rejected by the voiceprint (integrity passes); stand-in BORDERLINE 0.52 with the voice
+passing. Cold start: health in ~5 s; first login 15 s after launch 2.3 s + 8.3 s, then 1.0 s + 4.9 s.
+LLM provider unreachable: challenges fall back to the template bank (6-7 s), logins complete in 8-12 s
+and say the CSBG was not scored. Details and the drills table: `DEMO_RUNBOOK.md`.
+
+---
+
 ## Update 2026-10-02 -- the demo is verified end to end; splice tests are off, with the measurement
 
 Goal of this pass: finish the demo-ready prototype on the 12 speakers on disk
@@ -187,8 +251,8 @@ with the 12 speakers on disk; anything that needs more data stays pending.
 
 ## Current state
 
-- **989 tests passing**, offline, in about 2-5 minutes on this laptop (as of 2026-10-02).
-- Working tree clean as of the last commit; **not pushed** -- see the 2026-10-02 update.
+- **1089 tests passing**, offline, in about 2-5 minutes on this laptop (as of 2026-10-02).
+- Working tree clean as of the last commit; **not pushed** -- see the 2026-10-02 updates.
 - Backend runs and serves the UI. All eight pages render, `tsc --noEmit` is
   clean, `vite build` succeeds, and the Graph Explorer now draws the SKG as
   well as the CSBG. `/api/health` reports `connected` on a Gemini key alone.
@@ -237,7 +301,7 @@ Neither of these depends on the script, so both survive into the paper:
 git clone https://github.com/PremKxmar/speech.git
 cd speech
 pip install -r requirements-core.txt
-pytest                    # expect 989 passed
+pytest                    # expect 1089 passed
 ```
 
 The suite reaches no network and loads no checkpoint. Two autouse fixtures in

@@ -21,6 +21,7 @@ The claim the whole system is built to test is one sentence:
 | **[HANDOFF.md](HANDOFF.md)** | Current state, what is left, and the traps already hit. Read this first if you are picking the work up. |
 | **[PROJECT.md](PROJECT.md)** | What the system is, every design decision and why, what has been measured versus assumed, and the full session history. |
 | `KAVACH_Project_Idea.md` | The research proposal: novelty argument, experiment design, findings write-up. |
+| **[DEMO_RUNBOOK.md](DEMO_RUNBOOK.md)** | Preflight, rehearsed drills with what actually happened, and honest answers for presenting the demo. |
 
 **One thing to know before reading any number in this repository:** two corpora
 of real speakers now exist — 7 reading scripts (`SCRIPTED`) and 5 speaking freely
@@ -47,7 +48,7 @@ backend/kavach/         the system
     audio.py asr.py embedding.py matcher.py skg.py challenge.py fusion.py
 kavach/                 the frontend (Vite + React + TypeScript)
 participant_scripts/    read-speech scripts, one language profile per speaker
-tests/                  989 tests, none of which need a GPU
+tests/                  1089 tests, none of which need a GPU
 ```
 
 Recording a corpus? Read **[RECORDING_PROTOCOL.md](RECORDING_PROTOCOL.md)**
@@ -108,7 +109,7 @@ answer, which the backend deliberately never sends.
 ### Tests
 
 ```bash
-pytest                                    # 989 passed, ~2-5 min
+pytest                                    # 1089 passed, ~2-5 min
 pytest -m models                          # only the tests needing real checkpoints
 ```
 
@@ -193,6 +194,7 @@ is exactly one thing: the audio.
 |---|---|---|
 | `recordings/`, `SpeechData/` — 168 audio files, 49 MB | Participant folder names are people's real first names sitting beside their voiceprints. Direct identifiers; nothing pseudonymises them until `kavach.ingest` runs. | Transferred out of band, by the corpus owner, only to someone the consent register covers. |
 | `data/` — 175 MB: `corpus_v1`–`v3`, manifests, `kavach.db` | Voiceprints next to hometowns, schools and family names. Not encrypted. | Rebuilt from the audio with `kavach.ingest`, or transferred with it. |
+<!-- data/attacks/clones/ holds synthetic clips of a consenting presenter (one voice); never distribute it. -->
 | `data/speakers*.csv`, `data/consent_register.csv` | The pseudonym→person mapping and the consent record. These are the *only* files that re-identify a speaker; keeping them beside the corpus would defeat the pseudonymisation. | Held by the corpus owner, outside this repository and outside `data/`. |
 | `.env` | API keys. `.env.example` lists the variable names. | Recipient supplies their own; any one provider key works and a free one will do. |
 | `.venv/`, `kavach/node_modules/`, `pretrained_models/` | Regenerable. | `pip install -r requirements.txt`, `npm install`; the speechbrain checkpoint downloads on first use. |
