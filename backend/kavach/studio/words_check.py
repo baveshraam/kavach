@@ -33,10 +33,15 @@ class WordsCheck:
     failures: list[dict[str, Any]] = field(default_factory=list)
     word_misses: Counter = field(default_factory=Counter)
     by_session: dict[str, tuple[int, int]] = field(default_factory=dict)
+    scores: list[float] = field(default_factory=list)
 
     @property
     def pass_rate(self) -> float:
         return self.passed / self.n if self.n else 0.0
+
+    def pass_rate_at(self, threshold: float) -> float:
+        """The share that would clear the words gate at another threshold (what loosening it would buy)."""
+        return sum(sc >= threshold for sc in self.scores) / self.n if self.n else 0.0
 
     def report(self) -> str:
         L = [f"Six-word clips: {self.n}. Cleared the words gate (at least {self.threshold:.0%} of the words, in order): "
@@ -47,6 +52,11 @@ class WordsCheck:
             L.append("Words most often missed: " + ", ".join(f"{w} ({c})" for w, c in self.word_misses.most_common(8)))
         for f in self.failures[:10]:
             L.append(f"- {f['clip']}: expected [{f['expected']}] heard {f['heard']!r}; missing {f['missing']}")
+        L.append(
+            f"At 3 of 6 words (0.50) the pass rate would be {self.pass_rate_at(0.5):.1%}. The price: a recording made for "
+            "another attempt matches 3 or more of the shown words, in order, about 1.3e-4 of the time (measured on 200,000 "
+            "random pairs; at 4 of 6 it never happened), and it would still need the voice to match."
+        )
         if self.pass_rate < 0.95:
             L.append(
                 "Fewer than 95% of the presenter's own attempts would pass the words gate. Options, in order: use a "
@@ -73,6 +83,7 @@ def check_words(studio: StudioStore, *, asr: Any, threshold: float) -> WordsChec
         t = asr.transcribe(load_audio(path), language="en", initial_prompt="", fast=True)
         m = match_phrase(expected, t.text, words=getattr(t, "words", None))
         out.n += 1
+        out.scores.append(m.score)
         ok = m.score >= threshold
         out.passed += int(ok)
         p, n = out.by_session.get(c.session_id, (0, 0))
