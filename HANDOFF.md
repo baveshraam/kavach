@@ -6,6 +6,65 @@ things stand and what is left.
 
 ---
 
+## Update 2026-10-03 (b) -- demo hardening: the Unlock demo, a voice that is a gate, a measured threshold
+
+Branch `feature/demo-hardening` (pushed to `baveshraam/kavach`, on top of `feature/evidence-pipeline`). The
+reasoning, every decision (R1-R10, each with its cost if wrong) and every measurement are in
+**[DEMO_HARDENING.md](DEMO_HARDENING.md)**; how to present it is **[DEMO_RUNBOOK.md](DEMO_RUNBOOK.md)** section 0.
+1361 tests pass offline, `tsc` and `vite build` are clean.
+
+**What was wrong, and is fixed**
+
+- The login was a weighted average, so a wrong voice that knew the answer was *accepted* (voice 0.45 + answer 1.0 +
+  coin-flip CSBG = 0.72). The voiceprint is now a hard gate (`FusionPolicy.voice_gate`, on in `Settings`): below
+  `threshold - margin` is a reject, the band under the threshold is at best BORDERLINE, an unmeasurable voice fails
+  closed. `FusionPolicy()` itself still averages, so the paper's ablations are unchanged.
+- A re-recorded replay of the presenter passed voice and knowledge. The new **phrase login** (`kind="phrase"`) shows
+  ten random words per attempt, transcribes them as English with no code-mix prompt, and requires six in order; a
+  recording made for another attempt cannot contain them. Needs no facts, no tagger, no network. About 2 s per login.
+- Unlimited free retries. `kavach.throttle`: three failures free, then 5/10/20/30 s waits (HTTP 429), a success
+  clears them; only attempts whose voice was measured count.
+- Speech before or after the phrase diluted the voiceprint. The voice is now scored on the span where the shown words
+  were spoken (Whisper word timings; whole recording as the fallback).
+- A borderline voice earns one stricter second phrase (`stepUp`, granted by the server only).
+
+**New tools** (all with tests; `PYTHONPATH=backend .venv/Scripts/python.exe -m ...`)
+
+| Command | What it does |
+|---|---|
+| `kavach.studio.enrol --speaker S04 --sessions S1,..,S5` | rebuild the demo voiceprint from Studio sessions (the browser-microphone path); DB backed up first; stores provenance |
+| `kavach.calibrate_voice --sessions S1,..,S5` | leave-one-session-out threshold from the presenter's `words` clips against the cached cohorts; writes `data/voice_policy.json` + a report that opens with its limits |
+| `kavach.studio.words_check --speaker S04` | does Whisper hear the presenter's words? pass rate, misses, what a looser gate would cost |
+| `kavach.demo_check --presenter S04 --flows` | now also: voice gate on, calibrated policy, voiceprint provenance, a synthetic stranger and a recording of other words must be refused |
+
+Cohort embeddings (public: LibriSpeech dev-clean 40 speakers; Google Tamil SLR65 25 male + 25 female) are cached under
+`data/cohort/emb/` (git-ignored; built by scratch scripts, not in the repo: rebuild by embedding those corpora with
+the ECAPA wrapper in 5 s chunks, `*@5s.npz`). The demo screen is `/unlock`; `run_demo.ps1` opens it.
+
+**Blocked on the presenter, not faked**
+
+1. **The Studio sessions** (`RECORDING_GUIDE.md`, now with the ten-word task and the four commands to run after).
+   Until then the threshold is the default 0.62 (the Unlock screen and the preflight say "not yet measured") and
+   the voiceprint is built from phone clips. S04's own 5 s probes against that template, *same sitting*, already
+   reach a minimum of 0.624: expect real laptop-microphone scores to need the measured threshold.
+2. A live read-through on the real microphone in the presenter's room. Everything here was rehearsed with Windows'
+   synthetic voices and Chrome's fake microphone; those prove the gates and the plumbing, not human variation.
+3. S04's facts (only the personal-question step-up needs them now; the phrase login does not).
+
+**Not done, and why**
+
+- A second-voice (interruption) guard: the span change already stops speech outside the phrase from mattering, and a
+  voice talking *over* the phrase only lowers the score; the guard would add messaging, not safety.
+- A second speaker embedder: WavLM-SV scored EER 3.73% against ECAPA's 0.03% on the 12 corpus speakers.
+- Anti-spoofing / live voice-conversion detection: a clone that says the shown words defeats the phrase and voice
+  gates; the personal question (a secret the cloner lacks) is the only defence here. Stated, not hidden.
+- Code-switched phrases (a Tamil frame with random English words): attractive for the theme, but Whisper's
+  Tamil-script rendering of English words would put the words gate at risk; `words_check` is the tool to decide.
+- Final fresh-reviewer pass: done by the author only (no subagent was used); `/code-review` on this branch is the
+  independent check.
+
+---
+
 ## Update 2026-10-03 -- the evidence pipeline: record yourself, measure the voice
 
 Branch `feature/evidence-pipeline` (pushed to `baveshraam/kavach`, spec and plan in `docs/superpowers/`).
