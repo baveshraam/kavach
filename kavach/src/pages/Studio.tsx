@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../api/client';
 import { PageHeader, PageBody } from '../components/layout/PageHeader';
@@ -13,15 +13,31 @@ function expand(items: StudioPlanItem[]) {
   return items.flatMap(it => Array.from({ length: it.repeat }, (_, rep) => ({ ...it, rep: rep + 1 })));
 }
 
+/**
+ * Where you were, kept across a refresh. Without it a refresh forgot the session id and the
+ * server offered the *next unused* one, so the rest of a sitting landed in the next session --
+ * and a refresh during S3 would have put it in S4, the held-out session.
+ */
+const SAVED_KEY = 'kavach.studio.v1';
+type Saved = { speaker?: string; session?: string; index?: number; started?: boolean; device?: string; environment?: string };
+function loadSaved(): Saved {
+  try { return JSON.parse(localStorage.getItem(SAVED_KEY) ?? '{}'); } catch { return {}; }
+}
+
 export function Studio() {
   const queryClient = useQueryClient();
-  const [speaker, setSpeaker] = useState('S04');
-  const [session, setSession] = useState('');
-  const [device, setDevice] = useState('DEMO_LAPTOP_MIC');
-  const [environment, setEnvironment] = useState('QUIET_ROOM');
+  const saved = useMemo(loadSaved, []);
+  const [speaker, setSpeaker] = useState(saved.speaker ?? 'S04');
+  const [session, setSession] = useState(saved.session ?? '');
+  const [device, setDevice] = useState(saved.device ?? 'DEMO_LAPTOP_MIC');
+  const [environment, setEnvironment] = useState(saved.environment ?? 'QUIET_ROOM');
   const [note, setNote] = useState('');
-  const [started, setStarted] = useState(false);
-  const [index, setIndex] = useState(0);
+  const [started, setStarted] = useState(saved.started ?? false);
+  const [index, setIndex] = useState(saved.index ?? 0);
+
+  useEffect(() => {
+    localStorage.setItem(SAVED_KEY, JSON.stringify({ speaker, session, index, started, device, environment }));
+  }, [speaker, session, index, started, device, environment]);
 
   const plan = useQuery({ queryKey: ['studioPlan', speaker, session], queryFn: () => apiClient.studioPlan(speaker, session || undefined), retry: false });
   const summary = useQuery({ queryKey: ['studioSummary', speaker], queryFn: () => apiClient.studioSummary(speaker), retry: false, enabled: plan.isSuccess });
@@ -72,7 +88,16 @@ export function Studio() {
               <CardBody>
                 {plan.isLoading && <Spinner label="Loading the plan…" />}
                 {plan.data && !plan.data.hasFacts && <Notice tone="warning" className="mb-3" title="No personal facts yet">Add a few on the Speakers page to include the answer-about-yourself recordings.</Notice>}
-                {plan.data && !started && <Button variant="primary" onClick={() => { setStarted(true); setIndex(0); }}>Start session {sessionId}</Button>}
+                {plan.data && !started && (
+                  // Pin the id now: from here on this sitting is `sessionId`, whatever the server would offer next.
+                  <Button variant="primary" onClick={() => { setSession(plan.data!.sessionId); setStarted(true); setIndex(0); }}>Start session {sessionId}</Button>
+                )}
+                {plan.data && started && (
+                  <p className="text-[12.5px] text-app-text-muted mb-3">
+                    Recording into <span className="font-semibold">{sessionId}</span> on {device}, {environment}. A refresh keeps your place.
+                    {' '}<button type="button" className="underline" onClick={() => { setSession(''); setStarted(false); setIndex(0); upload.reset(); }}>Start a new session instead</button>
+                  </p>
+                )}
                 {started && current && (
                   <div className="flex flex-col gap-4">
                     <div className="flex items-center gap-2"><Badge tone="accent">{KIND_LABEL[current.kind]}</Badge><Badge>{index + 1} of {queue.length}</Badge>{current.repeat > 1 && <Badge>take {current.rep} of {current.repeat}</Badge>}</div>
@@ -80,7 +105,7 @@ export function Studio() {
                     {current.kind !== 'fact' && <p className="text-[13px] text-app-text-muted">{current.textEn}</p>}
                     <AudioRecorder key={index} busy={upload.isPending} acceptLabel="Save" onAccept={(blob, _d, name) => upload.mutate({ blob, name })} />
                     {upload.error && <Notice tone="reject" title="Not saved">{(upload.error as Error).message}</Notice>}
-                    <div><Button size="sm" variant="ghost" onClick={() => setIndex(i => i + 1)}>Skip this one</Button></div>
+                    <div><Button size="sm" variant="ghost" disabled={upload.isPending} onClick={() => { upload.reset(); setIndex(i => i + 1); }}>Skip this one</Button></div>
                   </div>
                 )}
                 {started && !current && <Notice tone="accept" title="Session complete">Everything planned for {sessionId} is saved. Change the session, device or room above to start the next one.</Notice>}

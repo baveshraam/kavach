@@ -102,3 +102,30 @@ def test_a_real_browser_or_phone_encoding_is_stored_as_a_16k_wav(tmp_path, ext, 
     assert r.status_code == 200, r.text
     clip = r.json()["clip"]
     assert clip["duration_sec"] == pytest.approx(6.0, abs=0.6) and clip["orig_ext"] == f".{ext}"
+
+
+def test_an_upload_over_the_size_cap_is_a_413(tmp_path) -> None:
+    client, *_ = studio(tmp_path)
+    assert post(client, b"x" * (31 * 1024 * 1024)).status_code == 413
+
+
+def test_audio_over_the_length_cap_is_a_422(tmp_path) -> None:
+    client, _, _, settings = studio(tmp_path)
+    r = post(client, wav_bytes(tmp_path, seconds=125.0))
+    assert r.status_code == 422 and "longer than" in r.json()["detail"]
+    assert not (settings.data_dir / "studio" / "S04" / "index.jsonl").exists()
+
+
+@needs_ffmpeg
+def test_undecodable_bytes_are_a_400_and_write_nothing(tmp_path) -> None:
+    client, _, _, settings = studio(tmp_path)
+    r = post(client, b"this is not audio at all" * 40)
+    assert r.status_code == 400
+    assert not (settings.data_dir / "studio" / "S04" / "index.jsonl").exists()
+
+
+def test_a_second_device_in_the_same_session_is_a_422(tmp_path) -> None:
+    client, *_ = studio(tmp_path)
+    assert post(client, wav_bytes(tmp_path)).status_code == 200
+    r = post(client, wav_bytes(tmp_path, seed=1), device="PHONE")
+    assert r.status_code == 422 and "one sitting" in r.json()["detail"]
