@@ -37,7 +37,7 @@ from starlette.concurrency import run_in_threadpool
 
 from ..attacks.bank import BankError, CloneBank, resolve_speaker_id
 from ..studio.plan import build_plan, estimate_minutes
-from ..studio.store import DEVICES, ENVIRONMENTS, StudioError, StudioStore
+from ..studio.store import DEVICES, ENVIRONMENTS, MAX_UPLOAD_BYTES, StudioError, StudioStore
 from ..audio import AudioError, decode_bytes, warm_resample
 from ..challenge import ChallengeError
 from ..config import Settings, get_settings
@@ -436,6 +436,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         studio = _studio(cfg, speaker)
         raw = await audio.read()
+        if len(raw) > MAX_UPLOAD_BYTES:
+            raise HTTPException(413, f"That upload is over {MAX_UPLOAD_BYTES // (1024 * 1024)} MB; a recording this long was not intended.")
         if not raw:
             raise HTTPException(400, "The uploaded audio is empty.")
         suffix = Path(audio.filename or "clip.webm").suffix or ".webm"

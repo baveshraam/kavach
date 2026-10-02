@@ -95,16 +95,91 @@ def test_summary_counts_minutes_and_slices(tmp_path) -> None:
     assert set(summ["by_session"]) == {"S1", "S2"}
 
 
-def test_a_corrupt_index_line_names_its_line(tmp_path) -> None:
+def test_a_corrupt_complete_line_fails_loudly_and_is_not_built_on(tmp_path) -> None:
+    """A truncated TAIL is repaired; a corrupt COMPLETE line is real damage. Reading names
+    it, and adding refuses to extend a damaged index."""
     s = store(tmp_path)
     s.add_clip(audio=tone(seconds=2.0), **KW)
     with s.index_path.open("a", encoding="utf-8") as fh:
-        fh.write("{not json\n")
+        fh.write("{not json" + chr(10))
     with pytest.raises(StudioError, match="line 2"):
         s.clips()
+    with pytest.raises(StudioError, match="line 2"):
+        s.add_clip(audio=tone(seconds=2.0, seed=1), **KW)
 
 
 def test_the_closed_sets_are_what_the_spec_says() -> None:
     assert KINDS == ("read", "free", "fact")
     assert DEVICES == ("DEMO_LAPTOP_MIC", "PHONE", "HEADSET", "OTHER")
     assert "QUIET_ROOM" in ENVIRONMENTS
+
+
+def test_a_session_is_one_device_and_one_room(tmp_path) -> None:
+    """A refresh used to carry the rest of a sitting into the next session id, and
+    nothing stopped a sitting from mixing devices. One sitting, one device, one room."""
+    s = store(tmp_path)
+    s.add_clip(audio=tone(seconds=2.0), **KW)
+    with pytest.raises(StudioError, match="one sitting"):
+        s.add_clip(audio=tone(seconds=2.0), **{**KW, "device": "PHONE"})
+    with pytest.raises(StudioError, match="one sitting"):
+        s.add_clip(audio=tone(seconds=2.0), **{**KW, "environment": "OFFICE"})
+    assert len(s.clips()) == 1
+
+
+def test_a_clip_over_the_length_cap_is_refused(tmp_path) -> None:
+    """A recorder left running through a break must not become a stored, indexed clip."""
+    s = store(tmp_path)
+    with pytest.raises(StudioError, match="longer than"):
+        s.add_clip(audio=tone(seconds=125.0), **KW)
+    assert s.clips() == []
+
+
+@pytest.mark.parametrize("session_id", ["CON", "NUL", "COM1", "s4", "S", "S1000", "Session1", "S1 "])
+def test_session_ids_are_S_and_a_number_so_windows_cannot_alias_them(tmp_path, session_id) -> None:
+    """`s4` and `S4` are one folder on NTFS; `CON` and `NUL` are reserved device names."""
+    with pytest.raises(StudioError):
+        store(tmp_path).add_clip(audio=tone(seconds=2.0), **{**KW, "session_id": session_id})
+
+
+def test_a_truncated_last_line_does_not_take_the_studio_down(tmp_path) -> None:
+    """A crash mid-write leaves a partial line. Reading must survive it, and the next
+    clip must not be glued onto it; the fragment is kept, not discarded."""
+    s = store(tmp_path)
+    first = s.add_clip(audio=tone(seconds=2.0), **KW)
+    with s.index_path.open("a", encoding="utf-8") as fh:
+        fh.write('{"clip_id": "S1_partial", "sess')  # no newline: the process died here
+    assert [c.clip_id for c in s.clips()] == [first.clip_id]
+    second = s.add_clip(audio=tone(seconds=2.0, seed=1), **KW)
+    assert [c.clip_id for c in s.clips()] == [first.clip_id, second.clip_id]
+    quarantine = s.root / "index.quarantine.jsonl"
+    assert quarantine.exists() and "S1_partial" in quarantine.read_text(encoding="utf-8")
+    assert s.summary()["clips"] == 2 and s.next_session_id() == "S2"
+
+
+def test_concurrent_adds_do_not_interleave(tmp_path) -> None:
+    import threading
+
+    s = store(tmp_path)
+
+    def work(i: int) -> None:
+        for j in range(4):
+            s.add_clip(audio=tone(seconds=1.2, seed=i * 10 + j), **KW)
+
+    threads = [threading.Thread(target=work, args=(i,)) for i in range(6)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert len(s.clips()) == 24  # every line parses; none merged
+
+
+def test_a_wav_changed_after_it_was_indexed_is_not_trusted(tmp_path) -> None:
+    from kavach.audio import save_wav
+
+    s = store(tmp_path)
+    rec = s.add_clip(audio=tone(seconds=2.0), **KW)
+    assert s.verified_wav_path(rec).exists()
+    save_wav(tone(seconds=2.0, seed=9), s.wav_path(rec))
+    with pytest.raises(StudioError, match="hash"):
+        s.verified_wav_path(rec)
+    s.wav_path(rec).unlink()
+    with pytest.raises(StudioError, match="missing"):
+        s.verified_wav_path(rec)
