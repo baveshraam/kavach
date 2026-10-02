@@ -66,3 +66,10 @@ PYTHONPATH=backend .venv/Scripts/python.exe -m kavach.eval.enrollee \
 The report starts with what it can and cannot claim. It is one enrolled speaker, measured on a held-out
 session, against 11 other recorded people. It is evidence about *your* enrolment, not about people in
 general, and it says so in its own first paragraph.
+
+Two things to know before you quote a number from it. The intervals are never narrower than a plain Wilson
+interval, and with fewer than five sessions (or no errors at all) the report says the cluster interval is
+*not informative* rather than printing a tight range. And the template it scores against is built from the
+enrolment sessions you name, not from the demo's live enrolment: re-enrol the demo from those same
+sessions before saying the numbers describe it. Per-trial scores are written to
+`data/studio/S04/eval/trials.csv` (git-ignored) so any figure can be audited.
