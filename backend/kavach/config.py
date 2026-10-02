@@ -266,6 +266,23 @@ class Settings(BaseSettings):
     answer beside the spoken one. `/api/health` reports the flag so a demo
     build announces itself and its numbers cannot be mistaken for results."""
 
+    clone_victims: list[str] = Field(default_factory=list)
+    """Corpus pseudonyms (`S04`) whose voice may be cloned. **Empty: nobody.**
+
+    Fail closed. Cloning a person's voice needs that person's permission (the
+    consent register's public-release OK does not cover it), so the generator
+    and the bank loader both refuse anyone not listed here. `run_demo.ps1`
+    sets it for the presenter only."""
+
+    demo_attack_bank: bool = False
+    """Serve the clone bank and let the Attack Lab use it.
+
+    **Off, and it must stay off outside a demo.** A clip *says* the answer to a
+    challenge, so a route that returns the clip for an issued challenge hands
+    the knowledge factor to whoever calls it -- the same reasoning as
+    `demo_reveal_answers`. `/api/health` reports the flag so a demo build
+    announces itself."""
+
     @field_validator("data_dir", "audio_dir", "attack_dir")
     @classmethod
     def _resolve(cls, v: Path) -> Path:
@@ -292,6 +309,7 @@ class Settings(BaseSettings):
             "min_enrolment_seconds": self.min_enrolment_seconds,
             "challenge_ttl_seconds": self.challenge_ttl_seconds,
             "demo_reveal_answers": self.demo_reveal_answers,
+            "demo_attack_bank": self.demo_attack_bank,
             "integrity_check_splice": self.integrity_check_splice,
         }
 
