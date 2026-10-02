@@ -26,6 +26,7 @@ TWO THINGS A REVIEWER WILL LOOK FOR
 
 from __future__ import annotations
 
+import math
 import time
 from pathlib import Path
 from typing import Annotated, Any
@@ -576,6 +577,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> schemas.Challenge:
         """Issue a single-use, expiring, adaptively-targeted challenge."""
         _require_speaker(store, payload.speaker_id)
+        wait = pipeline.throttle.wait_seconds(payload.speaker_id)
+        if wait > 0:
+            seconds = max(1, math.ceil(wait))
+            raise HTTPException(
+                429,
+                f"Too many failed attempts for this identity. Please wait {seconds} s before "
+                "the next one.",
+                headers={"Retry-After": str(seconds)},
+            )
         try:
             challenge = pipeline.issue_challenge(payload.speaker_id, kind=payload.kind)
         except ChallengeError as exc:
