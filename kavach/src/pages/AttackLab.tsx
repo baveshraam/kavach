@@ -164,7 +164,7 @@ function AttackRow({ run, target }: { run: AttackRun; target: string }) {
       <tr className="hover:bg-app-surface-muted/50 cursor-pointer" onClick={() => setOpen(o => !o)}>
         <Td>
           <div className="font-medium">{atk?.code} · {atk?.name}</div>
-          <div className="text-[11.5px] text-app-text-subtle tnum">{run.trials} trials · {new Date(run.generatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}{run.simulated ? ' · simulated' : ''}</div>
+          <div className="text-[11.5px] text-app-text-subtle tnum">{run.trials} trials · {new Date(run.generatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}{run.simulated ? ' · simulated' : ''}{run.acousticSource === 'measured' ? ' · acoustic measured' : ' · acoustic modelled'}</div>
         </Td>
         <Td>{target}</Td>
         {CONFIGS.map(c => <Td key={c.key} align="center"><RateCell rate={run.successRateByConfig[c.key]} /></Td>)}
