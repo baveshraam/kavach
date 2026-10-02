@@ -234,8 +234,16 @@ class SemanticMatcher:
     silently scored as a mismatch.
     """
 
-    def __init__(self, model_name: str = "sentence-transformers/LaBSE") -> None:
+    def __init__(self, model_name: str = "sentence-transformers/LaBSE", *, allow_download: bool = True) -> None:
         self.model_name = model_name
+        self.allow_download = allow_download
+        """False on the live path. LaBSE is ~1.9 GB, and loading it lazily let
+        the first login that reached the matcher start that download and wait
+        on it -- measured 2026-09-29: logins of over six minutes on a slow
+        link, with a half-written checkpoint in the HF cache. With this off,
+        a model that is not fully cached is simply unavailable and the three
+        string matchers answer alone. Fetch it once with
+        `python -m kavach.prefetch`."""
         self._model: Any = None
         self._failed = False
 
@@ -255,7 +263,10 @@ class SemanticMatcher:
     def _load(self) -> None:
         from sentence_transformers import SentenceTransformer
 
-        self._model = SentenceTransformer(self.model_name)
+        if self.allow_download:
+            self._model = SentenceTransformer(self.model_name)
+        else:
+            self._model = SentenceTransformer(self.model_name, local_files_only=True)
 
     def similarity(self, answer: str, expected: str) -> float:
         """Cosine similarity, rescaled to [0, 1].

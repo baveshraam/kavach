@@ -782,7 +782,7 @@ def _empty_run(
     previous run's numbers under a new title.
     """
     return schemas.AttackRun(
-        id=f"atk_{attack.value}_empty",
+        id=new_id(f"atk_{attack.value}_empty"),
         attack_type=conv.ATTACK_TO_WIRE[attack],
         target_speaker_id=speaker_id,
         trials=0,

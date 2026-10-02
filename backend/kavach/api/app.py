@@ -33,6 +33,7 @@ from typing import Annotated, Any
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from starlette.concurrency import run_in_threadpool
 
 from ..audio import AudioError, decode_bytes
 from ..challenge import ChallengeError
@@ -103,6 +104,39 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    if settings.warm_models_on_start:
+
+        @app.on_event("startup")
+        def _warm_models() -> None:
+            """Load the heavy models in the background at start-up.
+
+            Lazy loading is right for tests and for a degraded install, but in
+            a live demo it makes the *first* login pay for loading Whisper,
+            ECAPA and LaBSE while an audience watches. A thread, so start-up
+            itself is not delayed and `/api/health` answers immediately.
+            """
+            import threading
+
+            def warm() -> None:
+                pipeline = get_pipeline()
+                for name in ("asr", "embedder", "lid", "matcher"):
+                    try:
+                        getattr(pipeline, name)
+                    except Exception:  # noqa: BLE001 -- reported by /api/health
+                        pass
+                # The properties above construct lazily-loading wrappers; these
+                # force the actual checkpoints into memory.
+                for warm_up in (
+                    lambda: pipeline.asr and pipeline.asr.model,
+                    lambda: pipeline.matcher.semantic_matcher and pipeline.matcher.semantic_matcher.available,
+                ):
+                    try:
+                        warm_up()
+                    except Exception:  # noqa: BLE001
+                        pass
+
+            threading.Thread(target=warm, name="kavach-warmup", daemon=True).start()
 
     # ---------------------------------------------------------------- health
 
@@ -291,8 +325,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(400, str(exc)) from exc
 
         utt_id_placeholder = f"pending_{int(time.time() * 1000)}"
-        annotation = pipeline.annotate(
-            decoded, utterance_id=utt_id_placeholder, speaker_id=speakerId
+        # Off the event loop: ASR + an LLM call take seconds, and running them
+        # inline in an `async` route froze every other request -- health, page
+        # loads, the audio player -- for the whole annotation.
+        annotation = await run_in_threadpool(
+            pipeline.annotate, decoded, utterance_id=utt_id_placeholder, speaker_id=speakerId
         )
 
         row = store.add_utterance(
@@ -370,7 +407,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         suffix = Path(audio.filename or "response.webm").suffix or ".webm"
 
         try:
-            outcome = pipeline.verify(challengeId, raw, extension=suffix)
+            # See upload_utterance: verification must not block the event loop.
+            outcome = await run_in_threadpool(pipeline.verify, challengeId, raw, extension=suffix)
         except AudioError as exc:
             raise HTTPException(400, str(exc)) from exc
 
@@ -459,6 +497,43 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         from .evaluation import evaluate_history
 
         return evaluate_history(store, pipeline)
+
+    # ---------------------------------------------------- offline experiments
+
+    def _results_root(cfg: Settings) -> Path:
+        return cfg.data_dir.parent / "paper"
+
+    @app.get("/api/offline-results")
+    def offline_results(cfg: SettingsDep) -> list[dict[str, Any]]:
+        """Every `kavach.experiments` run under `paper/`, verbatim.
+
+        Passed through untouched rather than re-shaped: `results.json` carries
+        its own `reportable` flag and `blockers`, and a UI that re-derived them
+        could drop the one field that says a number may not be quoted.
+        """
+        import json
+
+        runs = []
+        root = _results_root(cfg)
+        for path in sorted(root.glob("*/results.json")):
+            run = path.parent.name
+            figures = sorted(p.stem for p in (path.parent / "figures").glob("*.png"))
+            runs.append(
+                {
+                    "id": run,
+                    "results": json.loads(path.read_text(encoding="utf-8")),
+                    "figures": figures,
+                }
+            )
+        return runs
+
+    @app.get("/api/offline-results/{run}/figures/{name}.png")
+    def offline_figure(run: str, name: str, cfg: SettingsDep) -> FileResponse:
+        root = _results_root(cfg).resolve()
+        path = (root / run / "figures" / f"{name}.png").resolve()
+        if root not in path.parents or not path.exists():
+            raise HTTPException(404, "No such figure.")
+        return FileResponse(path, media_type="image/png")
 
     return app
 

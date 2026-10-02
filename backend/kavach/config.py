@@ -178,6 +178,58 @@ class Settings(BaseSettings):
     """0 = never reuse a challenge for a speaker. Reuse would let an attacker
     who observed one login replay the answer."""
 
+    csbg_veto_enabled: bool = True
+    """Let a very low CSBG score reject a login outright (`fusion.CSBG_VETO_FLOOR`).
+
+    Default on, as designed. But the measurement says otherwise on this corpus:
+    both offline runs report "no veto floor bought any FAR reduction inside the
+    2% FRR budget on dev -- fitted and discarded", and the CSBG alone sits at
+    50% EER on free speech. A veto on a chance-level score rejects genuine
+    users at random, so `run_demo.ps1` applies the fitted result and turns it
+    off. The CSBG still contributes its weight to the fused score."""
+
+    live_lexicon_fallback: bool = True
+    """When the LLM tagger fails at login, tag from a lookup built from the
+    corpus the LLM already tagged (`lid.lexicon`) instead of rules alone, so
+    the CSBG branch can still be scored offline. Live path only; the result
+    is labelled as lexicon-tagged in the login's explanation."""
+
+    live_fast_asr: bool = True
+    """Greedy single-pass Whisper decoding for the live API (logins and UI
+    uploads). See `WhisperASR.transcribe(fast=...)`: ~7x faster than beam 5 on
+    CPU and ~30x faster than a loop-triggered re-decode. Corpus annotation
+    (`kavach.annotate`) does not go through this path and keeps beam 5."""
+
+    warm_models_on_start: bool = False
+    """Load ASR, ECAPA, the tagger and the matcher in a background thread at
+    server start, so the first live login does not pay for it. Off by default
+    (tests, degraded installs); `run_demo.ps1` turns it on."""
+
+    live_llm_attempts: int = 2
+    """LLM attempts per request on the live login path (corpus annotation keeps
+    its full retry budget). With a 45 s request timeout this bounds how long a
+    provider outage can hold a login before it degrades to rules-only tagging
+    and reports the CSBG branch unmeasured."""
+
+    # -------------------------------------------------------- integrity
+    integrity_check_splice: bool = True
+    """Run the edit-artefact (splice) tests in the integrity gate.
+
+    **Measured on real recordings, 2026-09-29: the splice tests reject 167 of
+    168 genuine corpus clips** (every speaker, both corpora). `INTEGRITY_FLOOR`
+    was calibrated on synthetic audio, and real phone audio is full of what
+    those tests call edits: AAC / Opus decoders emit runs of exact zeros (the
+    "digital silence no microphone produces") and sample-level jumps (the
+    "hard cut mid-utterance"). A gate with a 99% false-reject rate locks out
+    every genuine user and no branch can overrule it.
+
+    Default stays on so the tests and the calibration record are unchanged;
+    `run_demo.ps1` turns it off. The duplicate / re-encoding (replay) test is
+    unaffected and always runs. The fix is to re-calibrate `attacks.splice`
+    on the genuine corpus plus splices built from it -- `calibrate_floor`
+    exists for this -- not to lower the floor by reasoning, which is how the
+    floor went wrong the first time."""
+
     # ------------------------------------------------------------- API
     api_host: str = "127.0.0.1"
     api_port: int = 8000
@@ -230,6 +282,7 @@ class Settings(BaseSettings):
             "min_enrolment_seconds": self.min_enrolment_seconds,
             "challenge_ttl_seconds": self.challenge_ttl_seconds,
             "demo_reveal_answers": self.demo_reveal_answers,
+            "integrity_check_splice": self.integrity_check_splice,
         }
 
 
