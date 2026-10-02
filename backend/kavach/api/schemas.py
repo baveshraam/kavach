@@ -164,6 +164,8 @@ class ChallengeRequest(Model):
     speaker_id: str
     kind: Literal["question", "phrase"] = "question"
     """'phrase' is the read-these-random-words login: no facts, no network."""
+    step_up: bool = False
+    """Ask for the stricter second sample after a borderline attempt (server-checked)."""
 
 
 class Challenge(Model):
@@ -173,6 +175,8 @@ class Challenge(Model):
     kind: Literal["question", "phrase"] = "question"
     phrase: list[str] = Field(default_factory=list)
     """The words to read, for a phrase challenge; empty for a question."""
+    step_up: bool = False
+    """True for the stricter second sample that follows a borderline attempt."""
     target_class: SemanticClassStr
     expected_answer_entity: str = ""
     """Empty unless `demo_reveal_answers` is on. See the module docstring:

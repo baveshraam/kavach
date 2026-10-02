@@ -454,6 +454,7 @@ def challenge_to_wire(
         question_text=challenge.question_text,
         kind=challenge.kind,  # type: ignore[arg-type]
         phrase=list(challenge.phrase),
+        step_up=challenge.strict_voice,
         target_class=challenge.target_class.value,  # type: ignore[arg-type]
         expected_answer_entity=challenge.expected_answer if reveal_answer else "",
         issued_at=iso(challenge.issued_at),

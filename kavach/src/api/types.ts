@@ -56,6 +56,7 @@ export interface Challenge {
   questionText: string;        // code-mixed Tamil-English, or the instruction for a phrase challenge
   kind: 'question' | 'phrase'; // 'phrase' = read these random words (no facts, no network)
   phrase: string[];            // the words to read, for a phrase challenge; empty otherwise
+  stepUp: boolean;             // the stricter second sample that follows a borderline attempt
   targetClass: SemanticClass;
   expectedAnswerEntity: string;
   issuedAt: string;
