@@ -43,7 +43,7 @@ class FakeEmbedder:
     def __init__(self, vector) -> None:
         self.vector = np.asarray(vector, float)
 
-    def embed(self, audio):
+    def embed(self, audio, **kw):
         return SpeakerEmbedding(self.vector)
 
 
@@ -65,9 +65,9 @@ class SpyEmbedder(FakeEmbedder):
         super().__init__(vector)
         self.seen_seconds: list[float] = []
 
-    def embed(self, audio):
+    def embed(self, audio, **kw):
         self.seen_seconds.append(audio.duration_sec)
-        return super().embed(audio)
+        return super().embed(audio, **kw)
 
 
 class ExplodingLID:
@@ -413,3 +413,47 @@ class TestVoiceIsJudgedOnThePhraseSpan:
         r, _ = self.run(client, pipeline, tmp_path, speaker, seconds=6.0, layout=layout)
         voice = next(b for b in r["branches"] if b["name"] == "speaker_embedding")
         assert voice["passed"]
+
+
+class TestWarmInference:
+    """The first real login must not pay for kernel initialisation (8.8 s measured, 2-3 s after)."""
+
+    def test_it_runs_one_embedding_and_one_transcription_and_swallows_nothing_it_should_not(self, pipeline):
+        spy = SpyEmbedder(probe_with_cosine(0.9))
+        asr = FakeASR("")
+        pipeline._embedder, pipeline._asr = spy, asr
+        pipeline.warm_inference()
+        assert len(spy.seen_seconds) == 1 and len(asr.calls) == 1
+        assert asr.calls[0].get("vad_filter") is False  # VAD would drop synthetic noise before the decoder runs
+
+    def test_a_missing_model_does_not_stop_the_other(self, pipeline):
+        spy = SpyEmbedder(probe_with_cosine(0.9))
+        pipeline._embedder = spy
+        pipeline._asr = None
+        pipeline._failed["asr"] = "not installed"
+        pipeline.warm_inference()
+        assert len(spy.seen_seconds) == 1
+
+    def test_a_model_that_blows_up_is_reported_not_raised(self, pipeline):
+        class Boom:
+            def embed(self, *a, **k):
+                raise RuntimeError("cuda out of memory")
+
+        pipeline._embedder = Boom()
+        pipeline._asr = FakeASR("")
+        assert "cuda out of memory" in " ".join(pipeline.warm_inference())
+
+
+class TestResponseNamesTheWords:
+    def test_it_says_which_shown_words_were_heard_and_which_were_not(self, client, pipeline, speaker, tmp_path):
+        c = issue(client, speaker)
+        dropped = c["phrase"][2]
+        heard = " ".join(w for w in c["phrase"] if w != dropped)
+        result, _ = login(client, pipeline, tmp_path, c, heard=heard, cosine=0.85)
+        assert result["phraseMissing"] == [dropped]
+        assert result["phraseMatched"] == [w for w in c["phrase"] if w != dropped]
+
+    def test_a_question_login_carries_no_phrase_fields(self, client, speaker):
+        # the default (question) challenge needs facts; the wire still has the fields, empty
+        from kavach.api import schemas
+        assert schemas.AuthResult.model_fields["phrase_matched"].default_factory() == []

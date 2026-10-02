@@ -135,6 +135,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     warm_resample,
                     lambda: pipeline.asr and pipeline.asr.model,
                     lambda: pipeline.matcher.semantic_matcher and pipeline.matcher.semantic_matcher.available,
+                    pipeline.warm_inference,
                 ):
                     try:
                         warm_up()
@@ -629,6 +630,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             contributions=outcome.csbg_score.contributions if outcome.csbg_score else [],
             latency_ms=outcome.latency_ms,
         )
+        if outcome.phrase is not None:
+            result.phrase_matched = list(outcome.phrase.matched_words)
+            result.phrase_missing = list(outcome.phrase.missing_words)
         if outcome.notes:
             result.explanation = list(result.explanation) + outcome.notes
         if outcome.speaker_id:

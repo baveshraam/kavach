@@ -205,6 +205,9 @@ class ClassDivergence(Model):
 
 
 class AuthResult(Model):
+    phrase_matched: list[str] = Field(default_factory=list)
+    """Phrase challenge: which of the shown words were heard."""
+    phrase_missing: list[str] = Field(default_factory=list)
     id: str
     speaker_id: str
     challenge_id: str

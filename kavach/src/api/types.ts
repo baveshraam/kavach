@@ -96,6 +96,8 @@ export interface AuthResult {
   decision: 'ACCEPT' | 'REJECT' | 'BORDERLINE';
   divergences: ClassDivergence[];
   explanation: string[];       // human-readable sentences
+  phraseMatched?: string[];    // phrase challenge: which shown words were heard
+  phraseMissing?: string[];    // ... and which were not
   latencyMs: number;
   timestamp: string;
 }
