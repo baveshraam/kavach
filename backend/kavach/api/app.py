@@ -163,6 +163,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             demo_reveal_answers=cfg.demo_reveal_answers,
             demo_attack_bank=cfg.demo_attack_bank,
             studio_enabled=cfg.studio_enabled,
+            demo_tools=cfg.demo_tools,
             voice_gate=cfg.voice_gate,
             voice_threshold=pipeline.voice_threshold,
             voice_grey_margin=pipeline.voice_grey_margin,
@@ -228,6 +229,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def speaker_utterances(speaker_id: str, store: StoreDep) -> list[schemas.Utterance]:
         _require_speaker(store, speaker_id)
         return [conv.utterance_to_wire(r) for r in store.list_utterances(speaker_id)]
+
+    @app.get("/api/speakers/{speaker_id}/voiceprint", response_model=schemas.Voiceprint)
+    def voiceprint(speaker_id: str, store: StoreDep, pipeline: PipelineDep) -> schemas.Voiceprint:
+        """How the enrolled voiceprint was built: clip count, consistency, sessions and devices."""
+        _require_speaker(store, speaker_id)
+        payload = store.load_template(speaker_id)
+        template = pipeline.load_template(speaker_id)
+        if payload is None or template is None:
+            raise HTTPException(404, f"Speaker {speaker_id!r} has no enrolled voiceprint.")
+        return schemas.Voiceprint(
+            n_clips=len(template.embeddings),
+            self_consistency=round(template.self_consistency, 4),
+            provenance=payload.get("provenance"),
+        )
 
     @app.get("/api/speakers/{speaker_id}/csbg", response_model=schemas.CSBGGraph)
     def speaker_csbg(
@@ -600,6 +615,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except ChallengeError as exc:
             raise HTTPException(409, str(exc)) from exc
         return conv.challenge_to_wire(challenge, reveal_answer=cfg.demo_reveal_answers)
+
+    @app.post("/api/demo/reset-throttle")
+    def reset_throttle(pipeline: PipelineDep, cfg: SettingsDep) -> dict[str, bool]:
+        """Clear every identity's failed-attempt count. Demo builds only (404 otherwise)."""
+        if not cfg.demo_tools:
+            raise HTTPException(404, "Not found")
+        pipeline.throttle.reset()
+        return {"reset": True}
 
     @app.post("/api/authenticate", response_model=schemas.AuthResult)
     async def authenticate(

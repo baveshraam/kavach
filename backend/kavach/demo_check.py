@@ -213,6 +213,51 @@ def _static_checks(
             )
         )
 
+    gate = health.get("voiceGate")
+    out.append(
+        Check(
+            "voice is a hard gate",
+            PASS if gate is True else FAIL if gate is False else WARN,
+            {True: "on", False: "OFF"}.get(gate, "this server does not say"),
+            ""
+            if gate is True
+            else "with the gate off a wrong voice that knows the answer can be accepted; "
+            "set KAVACH_VOICE_GATE=true (the default) and restart"
+            if gate is False
+            else "restart the backend from this branch",
+        )
+    )
+    if health.get("voicePolicyError"):
+        out.append(
+            Check(
+                "voice threshold is calibrated",
+                FAIL,
+                f"data/voice_policy.json was ignored: {health['voicePolicyError']}",
+                "fix or delete the file, or re-run python -m kavach.calibrate_voice; "
+                "until then the uncalibrated default threshold is in force",
+            )
+        )
+    elif health.get("voicePolicySource") == "calibrated":
+        prov = bool(health.get("voicePolicyProvisional"))
+        out.append(
+            Check(
+                "voice threshold is calibrated",
+                WARN if prov else PASS,
+                f"threshold {health.get('voiceThreshold')}, band {health.get('voiceGreyMargin')}"
+                + (" (provisional)" if prov else ""),
+                "record more Studio sessions and re-run python -m kavach.calibrate_voice" if prov else "",
+            )
+        )
+    else:
+        out.append(
+            Check(
+                "voice threshold is calibrated",
+                WARN,
+                f"default threshold {health.get('voiceThreshold', '0.62')} is a starting point, not a measurement",
+                "record the Studio sessions, then python -m kavach.calibrate_voice --sessions S1,S2,S3,S4,S5",
+            )
+        )
+
     speakers = t.get("/api/speakers")
     me = _find(speakers, presenter)
     if me is None:
@@ -237,16 +282,35 @@ def _static_checks(
         )
     )
 
+    vp_name = "presenter's voiceprint matches the demo's microphone path"
+    try:
+        vp = t.get(f"/api/speakers/{me['id']}/voiceprint")
+    except TransportError:
+        out.append(Check(vp_name, WARN, "this server cannot say how the voiceprint was built", "restart the backend from this branch"))
+    else:
+        prov = vp.get("provenance")
+        if prov and prov.get("source") == "studio":
+            out.append(Check(vp_name, PASS, f"built from Studio sessions {', '.join(prov.get('sessions', []))} on {', '.join(prov.get('devices', []))} ({vp.get('nClips')} clips)"))
+        else:
+            out.append(
+                Check(
+                    vp_name,
+                    WARN,
+                    f"built from the original recordings ({vp.get('nClips')} clips), not from the browser microphone path",
+                    "record the Studio sessions, then python -m kavach.studio.enrol --speaker S04 --sessions S1,S2,S3,S4,S5",
+                )
+            )
+
     facts = t.get(f"/api/speakers/{me['id']}/skg")
     out.append(
         Check(
             "presenter has knowledge-graph facts",
-            PASS if facts else FAIL,
-            f"{len(facts)} fact(s)",
+            PASS if facts else WARN,
+            f"{len(facts)} fact(s)" if facts else "none: the read-these-words (phrase) login does not need them",
             ""
             if facts
-            else "open Speakers, choose the presenter, add facts (hometown, college, ...): "
-            "without one a login cannot be challenged",
+            else "add facts in Speakers to enable the personal-question login (the stronger step-up); "
+            "the phrase login works without them",
         )
     )
     try:
@@ -497,13 +561,74 @@ def _flow_checks(
     return out
 
 
-def run_checks(t: Transport, *, presenter: str, flows: bool = False) -> list[Check]:
-    checks, health, _ = _static_checks(t, presenter)
+REPLAY_WORDS = ["bridge", "lantern", "pepper", "eagle", "forest", "ribbon"]
+
+
+def _phrase_flow_checks(t: Transport, me: dict[str, Any], speak: Any) -> list[Check]:
+    """A synthetic stranger reads the shown words; a recording of other words is submitted.
+
+    Neither can be the presenter, so neither can prove an ACCEPT. What they prove is that the gates
+    close: the wrong voice is rejected on the voice, and words made for another attempt are rejected
+    on the words.
+    """
+    name_a = "phrase login: a stranger's voice reading the shown words is rejected"
+    name_b = "phrase login: a recording of other words is rejected (replay)"
+
+    class _NoVoice(Exception):
+        pass
+
+    def go(words: list[str] | None, filename: str) -> dict[str, Any]:
+        """Issue a phrase challenge and answer it with the stranger reading `words` (default: the shown ones)."""
+        ch = t.post_json("/api/challenge", {"speakerId": me["id"], "kind": "phrase"})
+        audio = speak(", ".join(words if words is not None else ch.get("phrase", [])), "stranger")
+        if audio is None:
+            raise _NoVoice()
+        return t.post_audio(ch["id"], audio, filename)
+
+    out: list[Check] = []
+    try:
+        r = go(None, "pstranger.wav")
+    except _NoVoice:
+        return [Check("phrase login can be rehearsed", WARN, "no text-to-speech voice on this machine", "rehearse with a person who is not the presenter instead")]
+    br = {b["name"]: b for b in r.get("branches", [])} if r else {}
+    voice, phrase = br.get("speaker_embedding"), br.get("phrase")
+    if r is None or r.get("decision") == "ACCEPT":
+        out.append(Check(name_a, FAIL, "a synthetic stranger was ACCEPTED" if r else "no result", "the voice gate is not holding: check voiceGate and the threshold in /api/health"))
+    elif phrase and not phrase["passed"]:
+        out.append(Check(name_a, WARN, "rejected, but on the words: the voice gate was not exercised", "speech recognition may be mis-hearing synthetic speech; try again or rehearse with a person"))
+    elif voice and not voice["passed"]:
+        out.append(Check(name_a, PASS, f"rejected on the voice ({voice['score']:.2f} against {voice['threshold']:.2f})"))
+    else:
+        out.append(Check(name_a, WARN, f"rejected, reason unclear: {r.get('decision')}", ""))
+
+    r2 = go(REPLAY_WORDS, "pold.wav")  # (a voice was available a moment ago)
+    br2 = {b["name"]: b for b in r2.get("branches", [])} if r2 else {}
+    phrase2 = br2.get("phrase")
+    if r2 is None or r2.get("decision") == "ACCEPT":
+        out.append(Check(name_b, FAIL, "a recording of other words was ACCEPTED" if r2 else "no result", "the words gate is not holding"))
+    elif phrase2 and not phrase2["passed"]:
+        out.append(Check(name_b, PASS, "rejected on the words"))
+    else:
+        out.append(Check(name_b, WARN, f"rejected, but not on the words: {r2.get('decision')}", ""))
+    return out
+
+
+def run_checks(t: Transport, *, presenter: str, flows: bool = False, speak: Any = None) -> list[Check]:
+    checks, health, predicates = _static_checks(t, presenter)
     if flows and health is not None and not any(c.level == FAIL for c in checks):
         speakers = t.get("/api/speakers")
         me = _find(speakers, presenter)
         if me is not None:
-            checks.extend(_flow_checks(t, speakers, me, health))
+            if predicates:  # the question flows need facts; the phrase flows do not
+                checks.extend(_flow_checks(t, speakers, me, health))
+            if speak is not None:
+                checks.extend(_phrase_flow_checks(t, me, speak))
+                # The stranger's failed attempts are strikes against the presenter: clear them.
+                if health.get("demoTools"):
+                    try:
+                        t.post_json("/api/demo/reset-throttle", {})
+                    except TransportError:
+                        pass
     return checks
 
 
@@ -532,7 +657,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     p.add_argument("--base", default="http://127.0.0.1:8000")
     p.add_argument("--flows", action="store_true", help="Also drive the demo logins end to end.")
     args = p.parse_args(argv)
-    checks = run_checks(HttpTransport(args.base), presenter=args.presenter, flows=args.flows)
+    from .synthetic import speak as _speak
+
+    def speak(text: str, who: str):  # "stranger" is the only role the preflight needs
+        return _speak(text)
+
+    checks = run_checks(HttpTransport(args.base), presenter=args.presenter, flows=args.flows, speak=speak)
     print(render(checks))
     return 1 if any(c.level == FAIL for c in checks) else 0
 

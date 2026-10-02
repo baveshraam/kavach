@@ -114,10 +114,12 @@ def test_a_missing_voice_model_fails_and_a_missing_labse_only_warns() -> None:
     assert FAIL not in levels(got) and WARN in levels(got)
 
 
-def test_a_presenter_with_no_facts_cannot_be_challenged() -> None:
+def test_a_presenter_with_no_facts_loses_only_the_question_login() -> None:
+    """Facts used to be a hard requirement. The read-these-words login needs none, so the demo is
+    not blocked on them: it is a warning that the personal-question step-up is unavailable."""
     got = by_name(run_checks(good({"/api/speakers/spk_p/skg": []}), presenter="S04"))
     fact = got["presenter has knowledge-graph facts"]
-    assert fact.level == FAIL and "Speakers" in fact.fix
+    assert fact.level == WARN and "Speakers" in fact.fix
 
 
 def test_an_unknown_presenter_fails() -> None:
