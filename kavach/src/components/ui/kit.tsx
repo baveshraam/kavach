@@ -9,7 +9,7 @@
  *     monospace walls; mono is for numbers and identifiers only.
  *   - Status colour only on status. Tamil / English colour only on language.
  */
-import { ReactNode, ButtonHTMLAttributes, InputHTMLAttributes, SelectHTMLAttributes, forwardRef } from 'react';
+import { Fragment, ReactNode, ButtonHTMLAttributes, InputHTMLAttributes, SelectHTMLAttributes, forwardRef } from 'react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { AlertTriangle, Info, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
@@ -295,18 +295,23 @@ export function TokenText({ tokens, className }: { tokens: { text: string; langu
   return (
     <p className={cn('leading-[1.9] text-[15px]', className)}>
       {tokens.map((t, i) => (
-        <span
-          key={i}
-          title={`${t.language} · ${t.semanticClass.replace(/_/g, ' ').toLowerCase()} · ${(t.lidConfidence * 100).toFixed(0)}%`}
-          className={cn('mr-[0.3em] rounded-[3px] px-[2px] -mx-[2px] cursor-help transition-colors hover:bg-app-surface-muted',
-            t.language === 'TA' && 'text-app-ta',
-            t.language === 'EN' && 'text-app-en',
-            t.language === 'NAMED_ENTITY' && 'underline decoration-dotted underline-offset-4 text-app-text',
-            t.language === 'NEUTRAL' && 'text-app-text-subtle',
-          )}
-        >
-          {t.text}
-        </span>
+        // A real space between spans, not a CSS margin: the margin looked right
+        // but left the DOM text with no whitespace, so a copied transcript, a
+        // screen reader and find-in-page all saw one run-together word.
+        <Fragment key={i}>
+          {i > 0 && ' '}
+          <span
+            title={`${t.language} · ${t.semanticClass.replace(/_/g, ' ').toLowerCase()} · ${(t.lidConfidence * 100).toFixed(0)}%`}
+            className={cn('rounded-[3px] px-[2px] -mx-[2px] cursor-help transition-colors hover:bg-app-surface-muted',
+              t.language === 'TA' && 'text-app-ta',
+              t.language === 'EN' && 'text-app-en',
+              t.language === 'NAMED_ENTITY' && 'underline decoration-dotted underline-offset-4 text-app-text',
+              t.language === 'NEUTRAL' && 'text-app-text-subtle',
+            )}
+          >
+            {t.text}
+          </span>
+        </Fragment>
       ))}
     </p>
   );
