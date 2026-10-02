@@ -191,6 +191,30 @@ class FusionPolicy:
     Set to `{}` to disable vetoes entirely, which is the correct setting for
     the ablation that measures what the veto is worth."""
 
+    voice_gate: bool = False
+    """Make the voiceprint a necessary condition rather than one weighted vote.
+
+    A weighted average lets the other two branches carry a wrong voice: with
+    (0.40, 0.30, 0.30) and a threshold of 0.55, a voice scoring 0.45 against a
+    0.62 threshold is still accepted when the speaker also knows the answer and
+    the CSBG is a coin flip (0.40*0.45 + 0.30*0.8 + 0.30*1.0 = 0.72). The answer
+    to "where were you born" is not a secret in a room full of people, so for the
+    live system the voice must pass on its own.
+
+    Three zones on the voice branch's own scale (`passed` means score >=
+    threshold): at or above the threshold, fusion decides as usual; between
+    `threshold - voice_grey_margin` and the threshold the voice is inconclusive
+    and the result is at best BORDERLINE (ask for a second sample); below that,
+    REJECT. A voice that could not be measured fails closed. Off by default here
+    because ablations and the paper's fusion tables measure the weighted rule;
+    `Pipeline._policy()` turns it on for the live system."""
+
+    voice_grey_margin: float = 0.08
+    """Width of the inconclusive band under the voice threshold, in the voice
+    branch's own units. Fit it on held-out recordings: it should be wide enough
+    that the enrolled speaker's worst genuine scores land inside it rather than
+    below it, and narrow enough that the best impostor stays under its floor."""
+
     def __post_init__(self) -> None:
         total = sum(self.weights.values())
         if not math.isclose(total, 1.0, abs_tol=1e-6):
@@ -297,6 +321,45 @@ def fuse(
                 contributing_branches=[],
             )
 
+    # --- Voice gate: the identity factor must pass on its own. ------------
+    voice_grey = False
+    if policy.voice_gate:
+        voice = by_branch.get(Branch.SPEAKER)
+        if voice is None or not voice.available or not math.isfinite(voice.score):
+            return FusionResult(
+                decision=Decision.REJECT,
+                fused_score=0.0,
+                threshold=policy.threshold,
+                branches=branches,
+                liveness_ok=liveness_ok,
+                explanation=[
+                    "Rejected: the voiceprint could not be measured"
+                    + (f" ({voice.detail})" if voice is not None and voice.detail else "")
+                    + ". Without a voice match nobody is accepted, whatever else was said; "
+                    "this is a system failure, not evidence about the speaker.",
+                ],
+                contributing_branches=[],
+            )
+        floor = voice.threshold - policy.voice_grey_margin
+        if voice.score < floor:
+            return FusionResult(
+                decision=Decision.REJECT,
+                fused_score=0.0,
+                threshold=policy.threshold,
+                branches=branches,
+                liveness_ok=liveness_ok,
+                explanation=[
+                    f"Rejected: the voice does not match the enrolled speaker "
+                    f"({voice.score:.3f} against the {voice.threshold:.3f} needed; "
+                    f"nothing under {floor:.3f} is even borderline).",
+                    "The voiceprint is a gate: a correct answer, a plausible way of switching "
+                    "between languages, or a fresh challenge cannot make up for a different "
+                    "voice, and no other branch overrides it.",
+                ],
+                contributing_branches=[],
+            )
+        voice_grey = not voice.passed
+
     # --- Weighted fusion over available branches. -----------------------
     scored = [
         b for b in branches
@@ -341,6 +404,15 @@ def fuse(
     if policy.require_knowledge and knowledge is not None and not knowledge.passed:
         decision = Decision.REJECT
 
+    grey_note: list[str] = []
+    if voice_grey and decision is not Decision.REJECT:
+        decision = Decision.BORDERLINE  # never ACCEPT on an inconclusive voice
+        grey_note = [
+            "The voice is close to the enrolled speaker's but under the threshold, which is "
+            "inconclusive rather than a match: ask for a second sample (a step-up challenge) "
+            "instead of accepting."
+        ]
+
     # --- Vetoes: strong contrary evidence from one branch. ---------------
     # Applied after fusion so `fused_score` still reports what the weighted
     # sum actually produced -- a veto overrides the decision, it does not
@@ -375,7 +447,7 @@ def fuse(
         threshold=policy.threshold,
         branches=branches,
         liveness_ok=liveness_ok,
-        explanation=_explain(decision, fused, policy, branches, scored),
+        explanation=_explain(decision, fused, policy, branches, scored) + grey_note,
         contributing_branches=[b.branch.value for b in scored],
     )
 
