@@ -177,6 +177,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # one error here that survives past the demo.
             reportable={
                 **cfg.reportable(),
+                # The threshold actually judging logins (a calibrated policy overrides the setting).
+                "speaker_threshold": pipeline.voice_threshold,
+                "voice_grey_margin": pipeline.voice_grey_margin,
                 "llm_model": pipeline.resolved_llm_model(),
                 "unavailable": failures,
             },
