@@ -1,0 +1,19 @@
+# Clone environment for stage 1 of the clone-attack bank (kNN-VC voice conversion).
+#
+# A SEPARATE venv with CUDA torch. The project venv is CPU torch, and the miniconda
+# environments are the user's training environment: never install this there.
+#
+#   py -3.11 -m venv .venv-clone
+#   .venv-clone/Scripts/python.exe -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
+#   .venv-clone/Scripts/python.exe -m pip install -r requirements-core.txt
+#
+# Verified 2026-10-02 on an RTX 4060 laptop: torch 2.6.0+cu124, CUDA True, and a
+# 6 s kNN-VC conversion in 6.7 s cold / 1.2 s warm. The first call downloads the
+# WavLM-Large and HiFi-GAN checkpoints through torch hub (bshall/knn-vc).
+#
+# Then generate the bank (consent-first: KAVACH_CLONE_VICTIMS must list the pseudonym):
+#   KAVACH_CLONE_VICTIMS='["S04"]' PYTHONPATH=backend .venv-clone/Scripts/python.exe \
+#       -m kavach.attacks.make_clone_bank --victim S04 --sources data/clone_sources
+#
+# This file has no installable requirements of its own on purpose: the two pip
+# commands above are the whole recipe.
