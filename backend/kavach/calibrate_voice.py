@@ -80,6 +80,8 @@ class LosoScores:
     impostor: np.ndarray
     by_session: dict[str, np.ndarray]
     """Genuine scores per held-out session: the unit of independence for the owner."""
+    impostor_by_fold: np.ndarray | None = None
+    """(folds, cohort) matrix behind `impostor`, so a report can slice it per cohort."""
 
 
 def _unit(rows) -> np.ndarray:
@@ -89,30 +91,35 @@ def _unit(rows) -> np.ndarray:
     return m / np.linalg.norm(m, axis=-1, keepdims=True)
 
 
-def loso_scores(sessions: dict[str, Any], cohort) -> LosoScores:
+def loso_scores(sessions: dict[str, Any], cohort, *, probes: dict[str, Any] | None = None) -> LosoScores:
     """Leave-one-session-out scores: each session against a template built from the others.
 
     The template is the centroid of the other sessions' embeddings (what the demo would be enrolled
     with), so a session never contributes to the template it is scored against. The cohort (other
     people's embeddings) is scored against every fold's template, so impostor and genuine scores
     come from the same templates. Needs at least two sessions.
+
+    `probes` (session -> embeddings) are what gets scored as genuine when it differs from what the
+    template is built from: the template uses whole recordings, the live probe is a few seconds of
+    one phrase, and the threshold has to be chosen for the second.
     """
     if len(sessions) < 2:
         raise ValueError("leave-one-session-out needs at least two sessions")
     units = {s: _unit(v) for s, v in sessions.items()}
+    probe_units = {s: _unit(v) for s, v in (probes or sessions).items()}
     imp_pool = _unit(cohort)
     genuine: list[np.ndarray] = []
     impostor: list[np.ndarray] = []
     by_session: dict[str, np.ndarray] = {}
-    for held, probes in units.items():
+    for held in units:
         rest = np.concatenate([v for s, v in units.items() if s != held])
         centroid = rest.mean(axis=0)
         centroid /= np.linalg.norm(centroid)
-        scores = probes @ centroid
+        scores = probe_units[held] @ centroid
         by_session[held] = scores
         genuine.append(scores)
         impostor.append(imp_pool @ centroid)
-    return LosoScores(np.concatenate(genuine), np.concatenate(impostor), by_session)
+    return LosoScores(np.concatenate(genuine), np.concatenate(impostor), by_session, np.stack(impostor))
 
 
 def choose_operating_point(
@@ -269,3 +276,204 @@ def load_voice_policy(path: Path | str) -> VoicePolicy | None:
         sessions=[str(x) for x in raw.get("sessions", [])],
         notes=[str(x) for x in raw.get("notes", [])],
     )
+
+
+# --------------------------------------------------------------------------
+# From the presenter's Studio sessions and the cached cohorts to a policy
+# --------------------------------------------------------------------------
+
+#: Probes shorter than this share of `probe_seconds` are dropped: a short tail is a different,
+#: noisier probe length than the one the threshold is chosen for.
+MIN_TAIL = 0.6
+
+LIMITS = (
+    "LIMITS OF THIS CALIBRATION. One enrolled speaker. The false-reject rate is that speaker's, "
+    "from leave-one-session-out probes of phrase length. The false-accept rate is over recorded "
+    "voices who are not the enrollee: public studio recordings and the corpus speakers, "
+    "cut to the same probe length. Those voices were not recorded through this laptop's microphone, "
+    "so the false-accept rate is optimistic for a judge who speaks into it. Nothing here says the "
+    "system works for people in general."
+)
+
+
+@dataclass(slots=True)
+class Calibration:
+    op: OperatingPoint
+    loso: LosoScores
+    report: str
+    policy_path: Path | None = None
+
+
+def _probe_chunks(audio, seconds: float):
+    from .audio import Audio, prepare_for_embedding
+
+    prep = prepare_for_embedding(audio, max_seconds=30.0)
+    n = int(seconds * prep.sample_rate)
+    out = []
+    for off in range(0, len(prep.samples), n):
+        seg = prep.samples[off:off + n]
+        if len(seg) >= MIN_TAIL * n:
+            out.append(Audio(seg, prep.sample_rate, "probe"))
+    if not out and prep.duration_sec >= 2.0:  # a short clip is one probe
+        out.append(prep)
+    return out
+
+
+def _load_cohort(files, exclude: set[str]):
+    vecs, names, sources = [], [], []
+    for f in files:
+        z = np.load(f, allow_pickle=False)
+        keep = np.array([str(s) not in exclude for s in z["speaker"]])
+        vecs.append(z["vec"][keep])
+        names += [str(s) for s in z["speaker"][keep]]
+        sources += [Path(f).name.split("__")[0]] * int(keep.sum())
+    if not vecs or sum(len(v) for v in vecs) == 0:
+        raise ValueError("no impostor embeddings: the cohort files are empty (or hold only the enrollee)")
+    return np.concatenate(vecs), names, sources
+
+
+def calibrate_from_studio(
+    studio,
+    sessions: list[str],
+    *,
+    embedder,
+    cohort_files,
+    probe_seconds: float = 5.0,
+    exclude_speakers=frozenset(),
+    far_target: float = 0.001,
+    out: Path | str | None = None,
+) -> Calibration:
+    from .audio import load_audio
+    from .eval.enrollee_stats import reported_interval
+    from .studio.store import StudioError
+
+    clips = studio.clips()
+    for s in sessions:
+        if not any(c.session_id == s for c in clips):
+            raise ValueError(f"session {s} has no clips")
+
+    whole: dict[str, list] = {s: [] for s in sessions}
+    probes: dict[str, list] = {s: [] for s in sessions}
+    meta: dict[str, list[tuple[str, str]]] = {s: [] for s in sessions}
+    for c in clips:
+        if c.session_id not in whole:
+            continue
+        try:
+            path = studio.verified_wav_path(c)
+        except StudioError as exc:
+            raise ValueError(f"{exc} (hash check failed; nothing was calibrated)") from exc
+        audio = load_audio(path)
+        whole[c.session_id].append(embedder.embed(audio).vector)
+        for chunk in _probe_chunks(audio, probe_seconds):
+            probes[c.session_id].append(embedder.embed(chunk).vector)
+            meta[c.session_id].append((c.device, c.kind))
+
+    cohort, names, sources = _load_cohort(cohort_files, set(exclude_speakers))
+    loso = loso_scores(whole, cohort, probes=probes)
+    op = choose_operating_point(loso.genuine, loso.impostor, far_target=far_target)
+
+    # ---- the report --------------------------------------------------------------
+    T = op.threshold
+    L = [LIMITS, "", "## Operating point",
+         f"- Accept threshold {T:.3f}; inconclusive band down to {op.floor:.3f} (margin {op.grey_margin:.3f}).",
+         f"- Owner: {op.n_genuine} phrase-length probes from {len(sessions)} sessions. Rejected at the threshold: "
+         f"{op.frr_at_threshold:.1%} (95% interval {op.frr_interval[0]:.1%}-{op.frr_interval[1]:.1%}); "
+         f"asked for a second sample or rejected below it: {op.frr_at_floor:.1%} under the floor.",
+         f"- Others: {op.n_impostor} trials. Accepted at the threshold: {op.far_at_threshold:.3%} "
+         f"({op.far_interval[0]:.3%}-{op.far_interval[1]:.3%}); at or above the floor (would be asked once more): {op.far_at_floor:.3%}.",
+         f"- Provisional: {'yes' if op.provisional else 'no'}. Ready: {'yes' if op.ready else 'no'}."]
+    for n in op.notes:
+        L.append(f"- Note: {n}")
+
+    L += ["", "## Owner, by held-out session (template = the other sessions)",
+          "| session | device | probes | mean | min | rejected at threshold |", "|---|---|---|---|---|---|"]
+    flags: dict[str, list[bool]] = {}
+    for s in sessions:
+        sc = loso.by_session[s]
+        devs = sorted({d for d, _ in meta[s]})
+        flags[s] = [bool(x < T) for x in sc]
+        L.append(f"| {s} | {', '.join(devs)} | {len(sc)} | {sc.mean():.3f} | {sc.min():.3f} | {float((sc < T).mean()):.1%} |")
+    k = sum(sum(v) for v in flags.values())
+    lo, hi, informative = reported_interval(k, int(op.n_genuine), flags)
+    L.append(f"\nBy-session interval for the rejection rate (wider of Wilson and cluster bootstrap): {lo:.1%}-{hi:.1%}"
+             + ("" if informative else " (not informative: few sessions or no rejections, so this is Wilson's)"))
+
+    L += ["", "## Others, by cohort (against every fold's template)",
+          "| cohort | speakers | trials | mean | p99 | p99.9 | max | accepted at threshold |", "|---|---|---|---|---|---|---|---|"]
+    mat = loso.impostor_by_fold
+    for src in sorted(set(sources)):
+        idx = np.array([i for i, x in enumerate(sources) if x == src])
+        v = mat[:, idx].ravel()
+        L.append(f"| {src} | {len(set(names[i] for i in idx))} | {v.size} | {v.mean():.3f} | {np.percentile(v, 99):.3f} | "
+                 f"{np.percentile(v, 99.9):.3f} | {v.max():.3f} | {float((v >= T).mean()):.3%} |")
+
+    report = "\n".join(L)
+    policy_path = None
+    if out is not None:
+        policy_path = write_voice_policy(out, op, sessions=list(sessions), probe_seconds=probe_seconds,
+                                         cohorts=sorted(set(sources)), limits=LIMITS)
+    return Calibration(op, loso, report, policy_path)
+
+
+def main(argv: list[str] | None = None, *, embedder=None) -> int:
+    """python -m kavach.calibrate_voice --sessions S1,S2,S3,S4,S5
+
+    Leave-one-session-out calibration of the live voice policy from the presenter's Studio
+    sessions and the cached cohort embeddings (`data/cohort/emb/*@5s.npz`, built once).
+    Writes `data/voice_policy.json` (the live pipeline loads it at start) and a report.
+    """
+    import argparse
+    import glob
+    import sys
+
+    from .config import Settings
+    from .studio.store import StudioStore
+
+    cfg = Settings()
+    p = argparse.ArgumentParser(prog="python -m kavach.calibrate_voice", description=main.__doc__.splitlines()[0])
+    p.add_argument("--studio", type=Path, default=cfg.data_dir / "studio" / "S04")
+    p.add_argument("--sessions", required=True, help="Studio sessions to cross-validate, e.g. S1,S2,S3,S4,S5")
+    p.add_argument("--cohort", action="append", type=Path, help="cohort embedding file(s); default data/cohort/emb/*@5s.npz")
+    p.add_argument("--exclude-speaker", action="append", default=None, help="cohort speaker ids to leave out; default: the enrollee")
+    p.add_argument("--probe-seconds", type=float, default=5.0)
+    p.add_argument("--far-target", type=float, default=0.001)
+    p.add_argument("--out", type=Path, default=cfg.data_dir / POLICY_FILE)
+    p.add_argument("--report", type=Path, default=None)
+    p.add_argument("--dry-run", action="store_true", help="measure and report; do not write the policy")
+    args = p.parse_args(argv)
+
+    pseudonym = args.studio.name
+    sessions = [s.strip() for s in args.sessions.split(",") if s.strip()]
+    cohort_files = args.cohort or [Path(f) for f in sorted(glob.glob(str(cfg.data_dir / "cohort" / "emb" / "*@5s.npz")))]
+    if not cohort_files:
+        print("refused: no cohort embedding files found (build them with the cohort embedding step first)", file=sys.stderr)
+        return 2
+    if embedder is None:
+        from .embedding import ECAPAEmbedder
+
+        embedder = ECAPAEmbedder(model_name=cfg.ecapa_model, device=cfg.embedding_device)
+    try:
+        result = calibrate_from_studio(
+            StudioStore(args.studio, pseudonym), sessions, embedder=embedder, cohort_files=cohort_files,
+            probe_seconds=args.probe_seconds, exclude_speakers=set(args.exclude_speaker or [pseudonym]),
+            far_target=args.far_target, out=None if args.dry_run else args.out,
+        )
+    except ValueError as exc:
+        print(f"refused: {exc}", file=sys.stderr)
+        return 2
+    print(result.report)
+    if args.report:
+        args.report.parent.mkdir(parents=True, exist_ok=True)
+        args.report.write_text(result.report + "\n", encoding="utf-8")
+    if result.policy_path:
+        print(f"\nwrote {result.policy_path}: threshold {result.op.threshold:.3f}, band {result.op.grey_margin:.3f}"
+              f" ({'provisional' if result.op.provisional else 'final'}). Restart the backend to apply it.")
+    else:
+        print("\n(dry run: no policy written)")
+    return 0
+
+
+if __name__ == "__main__":
+    import sys as _sys
+
+    _sys.exit(main())
