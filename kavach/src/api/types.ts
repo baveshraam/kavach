@@ -125,6 +125,19 @@ export interface AttackRun {
   notes?: string[];
 }
 
+export interface StudioPlanItem { kind: 'read' | 'free' | 'fact'; promptId: string; textEn: string; textTa: string; repeat: number }
+export interface StudioPlan {
+  speaker: string; sessionId: string; hasFacts: boolean; estimatedMinutes: number;
+  devices: string[]; environments: string[]; items: StudioPlanItem[];
+}
+export interface StudioSummary {
+  speaker: string; clips: number; minutes: number;
+  by_session: Record<string, { clips: number; minutes: number; devices: string[]; environments: string[] }>;
+  by_kind: Record<string, { clips: number; minutes: number }>;
+  by_device: Record<string, { clips: number; minutes: number }>;
+  by_environment: Record<string, { clips: number; minutes: number }>;
+}
+
 export interface CloneBankInfo {
   enabled: boolean;
   coveredFacts: string[];
