@@ -121,6 +121,7 @@ export interface AttackRun {
   // Backend extras: every run says whether it was simulated and why.
   simulated?: boolean;
   yieldRate?: number | null;
+  acousticSource?: 'measured' | 'modelled';
   notes?: string[];
 }
 

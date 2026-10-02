@@ -579,6 +579,7 @@ def attack_run_to_wire(
     table: AttackTable,
     generated_at: float | None = None,
     simulated: bool = True,
+    acoustic_source: str = "modelled",
     notes: Iterable[str] = (),
 ) -> schemas.AttackRun:
     """One row of the attack table as an `AttackRun`.
@@ -610,6 +611,7 @@ def attack_run_to_wire(
         success_rate_by_config=rates,
         generated_at=iso(generated_at),
         simulated=simulated,
+        acoustic_source=acoustic_source,
         yield_rate=(
             _finite(getattr(stats, "yield_rate", 0.0)) if stats is not None else None
         ),
