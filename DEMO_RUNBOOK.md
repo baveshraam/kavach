@@ -5,7 +5,65 @@ backend (Whisper `small`, ECAPA, Gemini tagging, LaBSE, RTX 4060), using S08 as 
 stand-in presenter because S04 has no knowledge-graph facts yet. Nothing here is
 a claim about what *should* happen. Where a drill could not be run, it says so.
 
-## 1. Thirty minutes before
+## 0. The Unlock demo (2026-10-03): the main act
+
+**What it is.** The screen shows six random words. The presenter reads them; the system checks that the words
+are the ones on screen (so a recording made for another attempt is useless), that the recording is untouched, and
+that the voice is the enrolled one. A judge who reads the same six words is refused. This is the demo; the
+personal-question login below is the stronger step-up and the Attack Lab is the deeper dive.
+
+**Open** `http://localhost:3000/unlock` (`run_demo.ps1` does). Chrome, the same browser the Studio used.
+
+| Beat | What you do | What the panel sees | Why it holds |
+|---|---|---|---|
+| 1. Owner | Press the mic (or the space bar), read the six words, press again | "Unlocked", the voice meter well into the green, the words highlighted, decided in about 2-3 s | the voice is above the threshold and the six words were said |
+| 2. Judge | Hand a judge the laptop; they read the same six words | "Access denied": the voice meter in the red, "the voice does not match", the words ticked | the words gate passes, the **voice** gate does not; a correct recital cannot make up for it |
+| 3. Replay | Play back your own recording of an earlier unlock | refused on the words: "the words spoken are not the words shown for this attempt" | the words are drawn at random for each attempt |
+| 4. Interruption | While you read, a judge talks over you | borderline, then one stricter second phrase; after the phrase, a judge speaking is ignored | the voice is judged only on the stretch where the shown words were said |
+| 5. Brute force | A judge tries four times | the fourth waits 5 s, then 10, 20, 30; the owner's success clears it | failed attempts slow down |
+| 6. Step up (optional) | Switch to Authenticate, answer a personal question | the question login, with the code-switch graph | the strongest factor; needs facts |
+
+**Say plainly** (the numbers come from `kavach.calibrate_voice`, once the sessions are recorded): one enrolled
+speaker, measured on sessions that were never used for enrolment; the false-accept rate is over recorded strangers,
+not over every possible person; a live voice clone that also says the words is the attack this does not stop.
+
+### Observed (2026-10-03, real Whisper small on the GPU, ECAPA on the CPU, **synthetic voices**)
+
+Windows' David was the enrolled owner and Zira the judge, played into the real backend and, separately, through
+Chrome's fake microphone into the real Unlock page. Synthetic voices are nearly deterministic, so the voice scores
+prove the gates and the plumbing, not human variation. The presenter's real numbers do not exist until the Studio
+sessions are recorded.
+
+| Drill | Observed |
+|---|---|
+| Owner reads the shown words (opus 24 kbps, as the browser sends) | `ACCEPT`, voice 0.74-0.87, **2.1-2.6 s** |
+| First login after start-up | 8 s before the warm-up inference was added; the warm-up now runs it at start |
+| Judge's voice reads the right words | `REJECT`, voice 0.16-0.21 against the threshold; words ticked |
+| Owner's voice, other words (a replay) | `REJECT` on the words (0 of 6), even at voice 0.81 |
+| Owner, 5 of 6 words | `ACCEPT`; 3 of 6, or the right words in reverse order: `REJECT` |
+| Owner, noise at SNR 20 dB / 10 dB / 5 dB | `ACCEPT` 0.74 / `ACCEPT` 0.67 / borderline-to-reject 0.54-0.60 |
+| Owner, very quiet (-40 dB) / hot and clipped (+18 dB) | `ACCEPT` 0.80 / `REJECT` or borderline 0.51-0.56 |
+| Owner, then the judge speaks after the phrase | borderline 0.54 before the span change; `ACCEPT` 0.83 after |
+| Owner and judge speaking together | `BORDERLINE` 0.59: never accepted |
+| Silence | `REJECT` in 0.2 s, no model runs, not counted against anyone |
+| Four wrong attempts, then the owner | the fourth challenge waits; the owner's success clears it |
+| Browser end to end | owner unlocked (0.82), judge denied (0.21), owner unlocked (0.78); no page errors |
+
+**If something goes wrong on stage.** A noisy room: move the laptop closer, or use the headset you enrolled with
+(S2). "Not sure yet": say one more phrase, it is meant to happen occasionally and is the system being careful.
+"Please wait N s": a judge's failures slowed the next attempt; wait it out, or the preflight's reset
+(`POST /api/demo/reset-throttle`) clears it. Words not heard: speak at the pace you rehearsed, not faster.
+No wifi: the phrase login needs none.
+
+### Thirty minutes before (the Unlock demo)
+
+1. `run_demo.ps1`; wait for the sidebar to turn green.
+2. `python -m kavach.demo_check --presenter S04 --flows`: it must end in `READY`. It now also checks the voice gate,
+   the calibrated threshold, how the voiceprint was built, and drives a synthetic stranger and a recording of other
+   words against the presenter (both must be refused).
+3. One live read-through on the real microphone, in the room you will present in. Nothing replaces it.
+
+## 1. Thirty minutes before (the question login)
 
 1. `powershell -ExecutionPolicy Bypass -File .\run_demo.ps1` (add `-Prefetch` once, on good
    internet, if LaBSE is missing; `-Seed` only to rebuild the demo database).
