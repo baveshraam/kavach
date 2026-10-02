@@ -1,17 +1,27 @@
-import { AuthResult, Challenge, CSBG, EvalMetrics, Speaker, Utterance, Triple, AttackRun, AttackType, PerSpeakerIapmr } from './types';
+import { AuthResult, Challenge, CSBG, EvalMetrics, Speaker, Utterance, Triple, AttackRun, AttackType, PerSpeakerIapmr, OfflineRun } from './types';
 import { mockSpeakers, mockUtterances, mockTriples, mockCSBG, mockAuthResults, mockAttacks, mockEvalMetrics } from './mock';
 
 // @ts-ignore
 const USE_MOCK = import.meta.env.VITE_USE_MOCK !== 'false';
 // @ts-ignore
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+export const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+
+/** Backend paths (`/api/audio/...`) made absolute; blob and data URLs pass through. */
+export const assetUrl = (url: string) => (url.startsWith('/') ? `${API_BASE}${url}` : url);
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${endpoint}`, options);
   if (!response.ok) {
-    throw new Error(`API Error: ${response.statusText}`);
+    // FastAPI puts the reason in `detail`. That reason is usually the useful
+    // part ("this speaker has no knowledge-graph facts"), so surface it.
+    let detail = response.statusText;
+    try {
+      const body = await response.json();
+      if (body?.detail) detail = typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail);
+    } catch { /* not JSON */ }
+    throw new Error(detail);
   }
   return response.json();
 }
@@ -27,7 +37,8 @@ export const apiClient = {
 
   getSpeakers: async (): Promise<Speaker[]> => {
     if (USE_MOCK) return delay(400).then(() => [...mockSpeakers]);
-    return fetchApi('/api/speakers');
+    const rows = await fetchApi<Speaker[]>('/api/speakers');
+    return rows.sort((a, b) => a.displayName.localeCompare(b.displayName, undefined, { numeric: true }));
   },
 
   getSpeaker: async (id: string): Promise<Speaker> => {
@@ -95,7 +106,7 @@ export const apiClient = {
     return fetchApi(`/api/speakers/${id}/enrol/complete`, { method: 'POST' });
   },
 
-  uploadUtterance: async (speakerId: string, type: string, blob: Blob): Promise<Utterance> => {
+  uploadUtterance: async (speakerId: string, type: string, blob: Blob, filename = 'recording.webm'): Promise<Utterance> => {
     if (USE_MOCK) {
       return delay(800).then(() => ({
         ...mockUtterances[0],
@@ -108,7 +119,7 @@ export const apiClient = {
       }));
     }
     const formData = new FormData();
-    formData.append('audio', blob);
+    formData.append('audio', blob, filename);
     formData.append('speakerId', speakerId);
     formData.append('type', type);
     return fetchApi('/api/utterances', { method: 'POST', body: formData });
@@ -143,10 +154,10 @@ export const apiClient = {
     });
   },
 
-  authenticate: async (challengeId: string, blob: Blob): Promise<AuthResult> => {
+  authenticate: async (challengeId: string, blob: Blob, filename = 'response.webm'): Promise<AuthResult> => {
     if (USE_MOCK) return delay(1200).then(() => mockAuthResults[0]);
     const formData = new FormData();
-    formData.append('audio', blob);
+    formData.append('audio', blob, filename);
     formData.append('challengeId', challengeId);
     return fetchApi('/api/authenticate', { method: 'POST', body: formData });
   },
@@ -196,5 +207,12 @@ export const apiClient = {
   getEvaluation: async (): Promise<EvalMetrics> => {
     if (USE_MOCK) return delay(400).then(() => mockEvalMetrics);
     return fetchApi('/api/evaluation');
-  }
+  },
+
+  getOfflineResults: async (): Promise<OfflineRun[]> => {
+    if (USE_MOCK) return delay(200).then(() => []);
+    return fetchApi('/api/offline-results');
+  },
+
+  offlineFigureUrl: (run: string, name: string) => `${API_BASE}/api/offline-results/${run}/figures/${name}.png`,
 };

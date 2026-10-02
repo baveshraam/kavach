@@ -1,190 +1,232 @@
+import { useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { apiClient } from '../api/client';
-import { PageHeader } from '../components/layout/PageHeader';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, ReferenceLine } from 'recharts';
-import { cn } from '../components/layout/AppLayout';
+import { PageHeader, PageBody } from '../components/layout/PageHeader';
+import {
+  Card, CardHeader, CardBody, Stat, LangBar, LangLegend, DecisionBadge, EmptyState, Badge, Button, minutes, pct, cn,
+} from '../components/ui/kit';
+import {
+  AudioLines, Languages, Fingerprint, Network, KeyRound, ShieldCheck, ArrowRight, Clock, CircleDashed, CheckCircle2, XCircle,
+} from 'lucide-react';
 
-function StatTile({ label, value, delta, deltaClass = 'opacity-40' }: { label: string, value: string | number, delta: string, deltaClass?: string }) {
-  return (
-    <div className="p-3 border-r border-app-border last:border-r-0">
-      <p className="text-[10px] uppercase tracking-wider opacity-60 mb-1 truncate">{label}</p>
-      <p className="text-xl font-mono tabular-nums">{value}</p>
-      <p className={cn("text-[10px] font-mono truncate", deltaClass)}>{delta}</p>
-    </div>
-  );
-}
+const PIPELINE = [
+  { icon: AudioLines, title: 'Speech', detail: 'Spoken answer to a fresh challenge' },
+  { icon: Languages, title: 'ASR + word-level LID', detail: 'Whisper, then every word tagged TA / EN and one of 21 meaning classes' },
+  { icon: Fingerprint, title: 'Voiceprint', detail: 'ECAPA-TDNN cosine against the enrolled template', branch: true },
+  { icon: Network, title: 'Code-switch graph', detail: 'Which language this speaker uses for which kind of word', branch: true },
+  { icon: KeyRound, title: 'Knowledge', detail: 'Answer matched against the speaker’s own facts', branch: true },
+  { icon: ShieldCheck, title: 'Fusion + gates', detail: 'Liveness and splice checks can veto; branches are weighted' },
+];
 
 export function Overview() {
   const { data: speakers } = useQuery({ queryKey: ['speakers'], queryFn: apiClient.getSpeakers });
   const { data: utterances } = useQuery({ queryKey: ['utterances'], queryFn: apiClient.getUtterances });
   const { data: authHistory } = useQuery({ queryKey: ['authHistory'], queryFn: apiClient.getAuthHistory });
-  const { data: evalMetrics } = useQuery({ queryKey: ['evalMetrics'], queryFn: apiClient.getEvaluation });
-  const { data: perSpeaker } = useQuery({ queryKey: ['attacks', 'per-speaker'], queryFn: apiClient.getPerSpeakerIapmr });
-
-  const enrolledCount = speakers?.length || 0;
-  const utteranceCount = utterances?.length || 0;
-  const corpusDurationSec = utterances?.reduce((acc, u) => acc + u.durationSec, 0) || 0;
-  const formatDuration = (sec: number) => {
-    const h = Math.floor(sec / 3600);
-    const m = Math.floor((sec % 3600) / 60);
-    return `${h}h ${m}m`;
-  };
+  const { data: offline } = useQuery({ queryKey: ['offline-results'], queryFn: apiClient.getOfflineResults });
 
   /*
-    Every tile below is derived from the API, and anything the backend has not
-    measured reads "not measured" rather than a number.
-
-    This panel used to hard-code `System EER 3.12%` and `Attack Rejection
-    98.4%`, plus deltas like "+12 this week" and "380 success" -- the latter
-    sitting beside a real trial count of 0. Those are the numbers a progress
-    slide gets screenshotted from, and this repository is arranged end to end
-    so that a figure which was not measured cannot be mistaken for one that
-    was. `AttackTable.paper_ready()` refuses unearned rows and
-    `eval.metrics.format_rate` renders an unattainable operating point as
-    "n/a"; a dashboard that invents both is the one place that convention was
-    not being kept.
-
-    These remain *demo* numbers even when real: the EER comes from whatever
-    logins happened to be clicked through, with no trial design and no
-    dev/test split, and the attack rates are simulated. `eval/ablation.py`
-    produces the reportable ones offline.
+    Every figure on this page is derived from the API. Anything the backend
+    has not measured reads "n/a" rather than a number: a dashboard is where a
+    progress slide gets screenshotted from, and a figure that was never
+    measured must not be mistakable for one that was.
   */
-  const annotatedCount = utterances?.filter(u => u.annotated).length ?? 0;
-  const acceptCount = authHistory?.filter(a => a.decision === 'ACCEPT').length ?? 0;
-  const meanSecPerUtt = utteranceCount ? corpusDurationSec / utteranceCount : 0;
-
-  const fullFusion = evalMetrics?.configurations.find(c => /full/i.test(c.name))
-    ?? evalMetrics?.configurations[evalMetrics.configurations.length - 1];
-  const eerLabel = fullFusion && Number.isFinite(fullFusion.eer)
-    ? `${(fullFusion.eer * 100).toFixed(2)}%`
-    : 'n/a';
-
-  const rejection = perSpeaker?.meanIapmr;
-  const rejectionLabel = rejection === null || rejection === undefined
-    ? 'n/a'
-    : `${((1 - rejection) * 100).toFixed(1)}%`;
-
-  const fusedHist = evalMetrics?.scoreDistributions.find(d => d.branch === 'Fused');
-  
-  // Transform histogram data for Recharts
-  const histData = [];
-  if (fusedHist) {
-    // Basic binning for demo purposes, 0 to 1 with 0.1 step
-    for (let i = 0; i <= 10; i++) {
-      const binMin = i / 10;
-      const binMax = (i + 1) / 10;
-      histData.push({
-        bin: binMin.toFixed(1),
-        genuine: fusedHist.genuine.filter(v => v >= binMin && v < binMax).length,
-        impostor: fusedHist.impostor.filter(v => v >= binMin && v < binMax).length
-      });
+  const totals = useMemo(() => {
+    const u = utterances ?? [];
+    let ta = 0, en = 0, tokens = 0;
+    const bySpeaker = new Map<string, { ta: number; en: number }>();
+    for (const utt of u) {
+      const acc = bySpeaker.get(utt.speakerId) ?? { ta: 0, en: 0 };
+      for (const t of utt.tokens) {
+        tokens++;
+        if (t.language === 'TA') { ta++; acc.ta++; }
+        else if (t.language === 'EN') { en++; acc.en++; }
+      }
+      bySpeaker.set(utt.speakerId, acc);
     }
-  }
+    return {
+      duration: u.reduce((a, x) => a + x.durationSec, 0),
+      annotated: u.filter(x => x.annotated).length,
+      tokens, ta, en, bySpeaker,
+    };
+  }, [utterances]);
+
+  const profiles = useMemo(() => (speakers ?? [])
+    .map(s => {
+      const c = totals.bySpeaker.get(s.id) ?? { ta: 0, en: 0 };
+      return { ...s, ta: c.ta, en: c.en, share: c.ta + c.en ? c.ta / (c.ta + c.en) : 0 };
+    })
+    .sort((a, b) => b.share - a.share), [speakers, totals]);
+
+  const accepted = authHistory?.filter(a => a.decision === 'ACCEPT').length ?? 0;
+  const free = offline?.find(r => r.id.includes('free'));
+  const scripted = offline?.find(r => r.id === 'results');
+  const eerOf = (run: typeof free, name: string) => run?.results.configurations.find(c => c.name === name)?.eer;
 
   return (
-    <div className="flex flex-col h-full">
-      <PageHeader 
-        title="System Overview" 
-        actions={
-          <>
-            <button className="text-[11px] font-mono uppercase border border-app-border px-3 py-1 hover:bg-app-bg transition-colors">Export CSV</button>
-            <button className="text-[11px] font-mono uppercase bg-app-accent text-white px-3 py-1 hover:bg-app-accent-hover transition-colors">Refresh Stats</button>
-          </>
-        }
+    <>
+      <PageHeader
+        eyebrow="Tamil–English code-switched speech"
+        title="Who is speaking — and how they switch"
+        description="KAVACH verifies a speaker with three independent signals: how they sound, what they know, and which language they reach for when they talk about family, food, numbers or time."
+        actions={<Link to="/authenticate"><Button variant="primary" icon={<ShieldCheck className="w-4 h-4" />}>Start a login</Button></Link>}
       />
-      <div className="p-6 max-w-[1400px] w-full mx-auto flex-1 overflow-auto flex flex-col gap-6">
-        
-        {/* Stat Tiles */}
-        <div className="grid grid-cols-6 border border-app-border bg-app-surface">
-          <StatTile label="Enrolled Speakers" value={enrolledCount} delta={`${perSpeaker?.unmeasuredSpeakerIds.length ?? 0} unattacked`} />
-          <StatTile label="Total Utterances" value={utteranceCount} delta={`${annotatedCount} annotated`} />
-          <StatTile label="Corpus Duration" value={formatDuration(corpusDurationSec)} delta={utteranceCount ? `Avg ${meanSecPerUtt.toFixed(1)}s/utt` : 'no audio yet'} />
-          <StatTile label="Auth Trials" value={authHistory?.length || 0} delta={`${acceptCount} accepted`} />
-          <StatTile label="Demo EER" value={eerLabel} delta="login history, not a result" deltaClass="text-app-warning" />
-          <StatTile label="Attack Rejection" value={rejectionLabel} delta={perSpeaker?.simulated === false ? 'measured' : 'simulated attacks'} deltaClass="text-app-warning" />
-        </div>
+      <PageBody>
+        {/* Headline numbers */}
+        <Card className="grid grid-cols-2 md:grid-cols-5 divide-x divide-app-border">
+          {[
+            { label: 'Enrolled speakers', value: speakers?.length ?? '—', hint: `${profiles.filter(p => p.environment === 'free speech').length} free speech · ${profiles.filter(p => p.environment !== 'free speech').length} scripted` },
+            { label: 'Recordings', value: utterances?.length ?? '—', hint: `${totals.annotated} annotated` },
+            { label: 'Speech', value: utterances ? minutes(totals.duration) : '—', hint: 'real, consented audio' },
+            { label: 'Words tagged', value: totals.tokens.toLocaleString(), hint: `${pct(totals.ta / Math.max(1, totals.ta + totals.en), 0)} Tamil among TA/EN` },
+            { label: 'Logins this session', value: authHistory?.length ?? 0, hint: `${accepted} accepted` },
+          ].map(s => (
+            <div key={s.label} className="px-5 py-4"><Stat {...s} /></div>
+          ))}
+        </Card>
 
-        <div className="flex gap-6 h-[500px]">
-          {/* Recent Auth Attempts */}
-          <div className="w-[60%] flex flex-col border border-app-border bg-app-surface">
-            <div className="px-4 py-2 border-b border-app-border bg-app-bg">
-              <h3 className="text-[13px] font-semibold">Recent Authentication Attempts</h3>
-            </div>
-            <div className="overflow-auto">
-              <table className="w-full text-left border-collapse">
-                <thead className="bg-app-surface-muted border-b border-app-border">
-                  <tr>
-                    <th className="p-2 text-[10px] uppercase font-mono tracking-widest opacity-60">Time</th>
-                    <th className="p-2 text-[10px] uppercase font-mono tracking-widest opacity-60">Speaker</th>
-                    <th className="p-2 text-[10px] uppercase font-mono tracking-widest opacity-60 text-right">S_spk</th>
-                    <th className="p-2 text-[10px] uppercase font-mono tracking-widest opacity-60 text-right">S_csbg</th>
-                    <th className="p-2 text-[10px] uppercase font-mono tracking-widest opacity-60 text-right">Fused</th>
-                    <th className="p-2 text-[10px] uppercase font-mono tracking-widest opacity-60 text-center">Decision</th>
-                  </tr>
-                </thead>
-                <tbody className="text-[12px]">
-                  {authHistory?.map(auth => (
-                    <tr key={auth.id} className="border-b border-app-border hover:bg-app-bg cursor-pointer transition-colors">
-                      <td className="p-2 font-mono truncate">{new Date(auth.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</td>
-                      <td className="p-2 truncate">{auth.speakerId}</td>
-                      <td className="p-2 font-mono text-right">{auth.branches.find(b => b.name === 'speaker_embedding')?.score.toFixed(3)}</td>
-                      <td className="p-2 font-mono text-right">{auth.branches.find(b => b.name === 'csbg')?.score.toFixed(3)}</td>
-                      <td className="p-2 font-mono text-right">{auth.fusedScore.toFixed(3)}</td>
-                      <td className="p-2 text-center">
-                        <span className={cn("inline-flex items-center gap-1.5",
-                          auth.decision === 'ACCEPT' ? 'text-app-accept' : 
-                          auth.decision === 'REJECT' ? 'text-app-reject' : 'text-app-warning'
-                        )}>
-                          <span className={cn("w-1.5 h-1.5", 
-                            auth.decision === 'ACCEPT' ? 'bg-app-accept' : 
-                            auth.decision === 'REJECT' ? 'bg-app-reject' : 'bg-app-warning'
-                          )}></span>
-                          {auth.decision}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Score Distributions */}
-          <div className="w-[40%] flex flex-col border border-app-border bg-app-surface">
-            <div className="px-4 py-2 border-b border-app-border bg-app-bg">
-              <h3 className="text-[13px] font-semibold">Score Distributions</h3>
-            </div>
-            <div className="flex-1 p-6 flex flex-col min-h-0">
-              <ResponsiveContainer width="100%" height="100%" className="border-b border-l border-app-border">
-                <BarChart data={histData} margin={{ top: 0, right: 0, left: -30, bottom: -15 }}>
-                  <XAxis dataKey="bin" tick={false} axisLine={false} />
-                  <YAxis tick={false} axisLine={false} />
-                  <ReferenceLine x="0.6" stroke="var(--app-accent)" strokeDasharray="3 3" opacity={0.4} />
-                  <Bar dataKey="impostor" fill="var(--app-reject)" fillOpacity={0.2} barSize={16} />
-                  <Bar dataKey="genuine" fill="var(--app-accept)" fillOpacity={0.2} barSize={16} />
-                </BarChart>
-              </ResponsiveContainer>
-              <div className="flex justify-between text-[10px] font-mono uppercase opacity-50 mt-2">
-                <span>0.00 (Impostor)</span>
-                <span>0.50</span>
-                <span>1.00 (Genuine)</span>
+        {/* Pipeline */}
+        <Card>
+          <CardHeader title="How a login is decided" subtitle="Each branch is measured on its own; a branch that could not be measured is dropped, never scored as zero." />
+          <CardBody>
+            <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto_1.2fr_auto_1.6fr_auto_1fr] items-stretch gap-3">
+              <PipeStep {...PIPELINE[0]} />
+              <Arrow />
+              <PipeStep {...PIPELINE[1]} />
+              <Arrow />
+              <div className="flex flex-col gap-2">
+                {PIPELINE.slice(2, 5).map(p => <PipeStep key={p.title} {...p} compact />)}
               </div>
-              <div className="mt-4 flex gap-4">
-                 <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 bg-app-reject opacity-40"></span>
-                    <span className="text-[10px] uppercase tracking-wider">Non-target</span>
-                 </div>
-                 <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 bg-app-accept opacity-40"></span>
-                    <span className="text-[10px] uppercase tracking-wider">Target</span>
-                 </div>
-              </div>
+              <Arrow />
+              <PipeStep {...PIPELINE[5]} emphasis />
             </div>
+          </CardBody>
+        </Card>
+
+        <div className="grid grid-cols-1 xl:grid-cols-[1.35fr_1fr] gap-6">
+          {/* Language profiles */}
+          <Card>
+            <CardHeader
+              title="Language profile per speaker"
+              subtitle="Share of Tamil vs English among words that had a choice. Scripted speakers read assigned text, so their split reflects the script."
+              actions={<Link to="/graph-explorer"><Button size="sm" variant="ghost">Open graphs <ArrowRight className="w-3.5 h-3.5" /></Button></Link>}
+            />
+            <CardBody>
+              <LangLegend className="mb-4" />
+              <div className="flex flex-col gap-3">
+                {profiles.map(p => (
+                  <div key={p.id} className="grid grid-cols-[150px_1fr_52px] items-center gap-4">
+                    <div className="min-w-0">
+                      <div className="text-[13px] font-medium truncate">{p.displayName}</div>
+                      <div className="text-[11.5px] text-app-text-subtle">{p.environment === 'free speech' ? 'Free speech' : 'Scripted'} · {p.utteranceCount} clips</div>
+                    </div>
+                    <LangBar ta={p.ta} en={p.en} />
+                    <div className="text-right text-[12.5px] tnum text-app-ta font-medium">{pct(p.share, 0)}</div>
+                  </div>
+                ))}
+                {!profiles.length && <EmptyState title="No speakers enrolled">Run <code className="mono">python -m kavach.seed_demo</code> or enrol one.</EmptyState>}
+              </div>
+            </CardBody>
+          </Card>
+
+          <div className="flex flex-col gap-6">
+            {/* Recent logins */}
+            <Card>
+              <CardHeader title="Recent logins" actions={<Link to="/authenticate"><Button size="sm" variant="ghost">New <ArrowRight className="w-3.5 h-3.5" /></Button></Link>} />
+              <div className="px-2 pb-2">
+                {authHistory?.length ? authHistory.slice(0, 6).map(a => {
+                  const name = speakers?.find(s => s.id === a.speakerId)?.displayName ?? a.speakerId;
+                  const voice = a.branches.find(b => b.name === 'speaker_embedding');
+                  return (
+                    <div key={a.id} className="flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-app-surface-muted">
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[13px] font-medium truncate">{name}</div>
+                        <div className="text-[11.5px] text-app-text-subtle tnum">
+                          {new Date(a.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · voice {voice ? voice.score.toFixed(2) : 'n/a'} · fused {a.fusedScore.toFixed(2)}
+                        </div>
+                      </div>
+                      <DecisionBadge decision={a.decision} />
+                    </div>
+                  );
+                }) : <EmptyState icon={<Clock className="w-5 h-5" />} title="No logins yet">Issue a challenge on the Authenticate page and answer it out loud.</EmptyState>}
+              </div>
+            </Card>
+
+            {/* Research status */}
+            <Card>
+              <CardHeader title="Where the research stands" subtitle="From the offline experiment runs. None of these is reportable yet, and the reasons are listed on the Evaluation page." />
+              <CardBody className="flex flex-col gap-3">
+                <Finding
+                  state="done"
+                  title="Pipeline works on real code-mixed speech"
+                  body={`12 speakers annotated end to end, 0 guessed tags. Voiceprint separates same-session speakers perfectly (EER ${pct(eerOf(scripted, 'ECAPA alone'), 0)}).`}
+                />
+                <Finding
+                  state="open"
+                  title="Code-switch graph alone does not yet identify speakers"
+                  body={`Free speech: ${pct(eerOf(free, 'CSBG alone'), 0)} EER (chance is 50%) on 5 speakers. Scripted: ${pct(eerOf(scripted, 'CSBG alone'), 0)}, but that separates scripts, not people.`}
+                />
+                <Finding
+                  state="pending"
+                  title="Needs more data"
+                  body="A second recording session per speaker: cross-session stability, the knowledge branch, and a reportable EER all wait on it."
+                />
+                <Link to="/evaluation" className="text-[13px] text-app-accent font-medium inline-flex items-center gap-1 mt-1 hover:underline">
+                  See the full evaluation <ArrowRight className="w-3.5 h-3.5" />
+                </Link>
+              </CardBody>
+            </Card>
           </div>
         </div>
+      </PageBody>
+    </>
+  );
+}
 
+function PipeStep({ icon: Icon, title, detail, compact, emphasis }: { icon: any; title: string; detail: string; compact?: boolean; emphasis?: boolean; branch?: boolean }) {
+  return (
+    <div className={cn(
+      'rounded-lg border flex gap-3',
+      compact ? 'px-3 py-2.5 items-center' : 'p-4 flex-col',
+      emphasis ? 'border-app-accent/30 bg-app-accent-soft/50' : 'border-app-border bg-app-surface-muted/50',
+    )}>
+      <div className={cn('rounded-md flex items-center justify-center shrink-0',
+        compact ? 'w-8 h-8' : 'w-9 h-9',
+        emphasis ? 'bg-app-accent text-app-on-accent' : 'bg-app-surface border border-app-border text-app-text-muted')}>
+        <Icon className="w-4 h-4" strokeWidth={1.75} />
+      </div>
+      <div className="min-w-0">
+        <div className="text-[13px] font-semibold leading-snug">{title}</div>
+        <div className="text-[12px] text-app-text-muted leading-snug mt-0.5">{detail}</div>
       </div>
     </div>
   );
 }
 
+function Arrow() {
+  return (
+    <div className="hidden lg:flex items-center justify-center text-app-text-subtle">
+      <ArrowRight className="w-4 h-4" />
+    </div>
+  );
+}
+
+function Finding({ state, title, body }: { state: 'done' | 'open' | 'pending'; title: string; body: string }) {
+  const Icon = state === 'done' ? CheckCircle2 : state === 'open' ? XCircle : CircleDashed;
+  return (
+    <div className="flex gap-3">
+      <Icon className={cn('w-4 h-4 mt-[3px] shrink-0', {
+        'text-app-accept': state === 'done',
+        'text-app-reject': state === 'open',
+        'text-app-text-subtle': state === 'pending',
+      })} />
+      <div>
+        <div className="text-[13px] font-medium flex items-center gap-2">
+          {title}
+          {state === 'pending' && <Badge>pending</Badge>}
+        </div>
+        <div className="text-[12.5px] text-app-text-muted leading-relaxed">{body}</div>
+      </div>
+    </div>
+  );
+}

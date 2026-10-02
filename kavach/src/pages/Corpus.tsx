@@ -1,166 +1,151 @@
-import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { apiClient } from '../api/client';
-import { PageHeader } from '../components/layout/PageHeader';
-import { Download, Trash2, CheckCircle, Circle } from 'lucide-react';
-import { cn } from '../components/layout/AppLayout';
+import { useMemo, useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { apiClient, assetUrl } from '../api/client';
+import { Utterance } from '../api/types';
+import { PageHeader, PageBody } from '../components/layout/PageHeader';
+import { Card, Button, Input, Select, Field, Badge, LangBar, LangLegend, TokenText, Table, Th, Td, EmptyState, Spinner, Stat, minutes, pct, cn } from '../components/ui/kit';
+import { Download, Search, Trash2, ChevronDown } from 'lucide-react';
 
 export function Corpus() {
-  const { data: utterances } = useQuery({ queryKey: ['utterances'], queryFn: apiClient.getUtterances });
-  
-  const [filterSpeaker, setFilterSpeaker] = useState('');
-  const [filterType, setFilterType] = useState('');
-  const [filterStatus, setFilterStatus] = useState('');
+  const { data: utterances, isLoading } = useQuery({ queryKey: ['utterances'], queryFn: apiClient.getUtterances });
+  const { data: speakers } = useQuery({ queryKey: ['speakers'], queryFn: apiClient.getSpeakers });
+  const [speaker, setSpeaker] = useState('');
+  const [type, setType] = useState('');
+  const [q, setQ] = useState('');
 
-  const filtered = utterances?.filter(u => {
-    if (filterSpeaker && u.speakerId !== filterSpeaker) return false;
-    if (filterType && u.type !== filterType) return false;
-    if (filterStatus === 'annotated' && !u.annotated) return false;
-    if (filterStatus === 'pending' && u.annotated) return false;
-    return true;
-  });
+  const name = (id: string) => speakers?.find(s => s.id === id)?.displayName ?? id;
 
-  const totalDuration = utterances?.reduce((acc, u) => acc + u.durationSec, 0) || 0;
-  const uniqueSpeakers = new Set(utterances?.map(u => u.speakerId)).size;
-  
-  // Calculate token split
-  let taTokens = 0;
-  let enTokens = 0;
-  let neutralTokens = 0;
-  utterances?.forEach(u => {
-    u.tokens.forEach(t => {
-      if (t.language === 'TA') taTokens++;
-      else if (t.language === 'EN') enTokens++;
-      else neutralTokens++;
-    });
-  });
-  const totalTokens = taTokens + enTokens + neutralTokens || 1;
+  const filtered = useMemo(() => (utterances ?? []).filter(u =>
+    (!speaker || u.speakerId === speaker) &&
+    (!type || u.type === type) &&
+    (!q || u.transcript.toLowerCase().includes(q.toLowerCase()))), [utterances, speaker, type, q]);
+
+  const stats = useMemo(() => {
+    let ta = 0, en = 0, other = 0;
+    for (const u of utterances ?? []) for (const t of u.tokens) {
+      if (t.language === 'TA') ta++; else if (t.language === 'EN') en++; else other++;
+    }
+    return { ta, en, other, duration: (utterances ?? []).reduce((a, u) => a + u.durationSec, 0) };
+  }, [utterances]);
+
+  const exportJson = () => {
+    const blob = new Blob([JSON.stringify(filtered.map(({ audioUrl, ...u }) => u), null, 2)], { type: 'application/json' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `kavach_corpus_${filtered.length}_utterances.json`;
+    link.click();
+  };
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
-      <PageHeader 
-        title="Corpus" 
-        actions={
-          <>
-            <button className="h-8 px-3 border border-app-border text-[11px] uppercase tracking-wider text-app-text flex items-center gap-2 hover:bg-app-bg transition-colors">
-              <Download className="w-3.5 h-3.5" /> Export JSON
-            </button>
-            <button className="h-8 px-3 border border-app-border text-[11px] uppercase tracking-wider text-app-text flex items-center gap-2 hover:bg-app-bg transition-colors">
-              <Download className="w-3.5 h-3.5" /> Export CSV
-            </button>
-          </>
-        }
+    <>
+      <PageHeader
+        eyebrow="Data"
+        title="Corpus"
+        description="Every enrolled recording with its transcript and word-level tags. Tags came from the annotation pass (Whisper large-v3 + Gemini), not from the live demo models."
+        actions={<Button icon={<Download className="w-4 h-4" />} onClick={exportJson} disabled={!filtered.length}>Export JSON</Button>}
       />
-      
-      {/* Summary Strip */}
-      <div className="h-[48px] px-6 border-b border-app-border bg-app-surface flex items-center gap-8 shrink-0 text-[12px]">
-        <div className="flex items-center gap-2">
-          <span className="text-app-text-muted">Total Duration:</span>
-          <span className="mono">{(totalDuration/3600).toFixed(2)}h</span>
-        </div>
-        <div className="w-[1px] h-4 bg-app-border" />
-        <div className="flex items-center gap-2">
-          <span className="text-app-text-muted">Speakers:</span>
-          <span className="mono">{uniqueSpeakers}</span>
-        </div>
-        <div className="w-[1px] h-4 bg-app-border" />
-        <div className="flex items-center gap-2">
-          <span className="text-app-text-muted">Total Tokens:</span>
-          <span className="mono">{totalTokens}</span>
-        </div>
-        <div className="w-[1px] h-4 bg-app-border" />
-        <div className="flex items-center gap-3 flex-1 max-w-[300px]">
-          <span className="text-app-text-muted">Lang Split:</span>
-          <div className="flex-1 h-[6px] flex bg-app-bg overflow-hidden border border-app-border">
-            <div className="bg-app-text" style={{width: `${(taTokens/totalTokens)*100}%`}} title={`TA: ${((taTokens/totalTokens)*100).toFixed(1)}%`} />
-            <div className="bg-app-accent" style={{width: `${(enTokens/totalTokens)*100}%`}} title={`EN: ${((enTokens/totalTokens)*100).toFixed(1)}%`} />
-            <div className="bg-app-text-muted" style={{width: `${(neutralTokens/totalTokens)*100}%`}} title={`Neutral: ${((neutralTokens/totalTokens)*100).toFixed(1)}%`} />
+      <PageBody>
+        <Card className="grid grid-cols-2 md:grid-cols-[1fr_1fr_1fr_2fr] divide-x divide-app-border">
+          <div className="px-5 py-4"><Stat label="Recordings" value={utterances?.length ?? '—'} hint={`${new Set(utterances?.map(u => u.speakerId)).size} speakers`} /></div>
+          <div className="px-5 py-4"><Stat label="Speech" value={minutes(stats.duration)} /></div>
+          <div className="px-5 py-4"><Stat label="Words tagged" value={(stats.ta + stats.en + stats.other).toLocaleString()} hint={`${stats.other.toLocaleString()} neutral / names`} /></div>
+          <div className="px-5 py-4 flex flex-col justify-center gap-2">
+            <span className="text-[12px] font-medium text-app-text-muted">Tamil vs English</span>
+            <LangBar ta={stats.ta} en={stats.en} showLabels />
           </div>
-        </div>
-      </div>
+        </Card>
 
-      {/* Toolbar */}
-      <div className="h-[48px] px-6 border-b border-app-border bg-app-surface flex items-center gap-6 shrink-0 text-[12px]">
-        <label className="flex items-center gap-2">
-          <span className="text-app-text-muted">Speaker:</span>
-          <input 
-            type="text" 
-            placeholder="All" 
-            value={filterSpeaker} 
-            onChange={e => setFilterSpeaker(e.target.value)} 
-            className="h-7 border border-app-border px-2 focus:border-app-accent focus:outline-none bg-app-bg w-32 mono" 
-          />
-        </label>
-        
-        <label className="flex items-center gap-2">
-          <span className="text-app-text-muted">Type:</span>
-          <select value={filterType} onChange={e => setFilterType(e.target.value)} className="h-7 border border-app-border px-2 focus:border-app-accent focus:outline-none bg-app-bg w-32">
-             <option value="">All Types</option>
-             <option value="monolingual-ta">Monolingual TA</option>
-             <option value="monolingual-en">Monolingual EN</option>
-             <option value="code-mixed">Code-Mixed</option>
-             <option value="free-speech">Free Speech</option>
-             <option value="auth-response">Auth Response</option>
-          </select>
-        </label>
+        <Card className="px-5 py-4 flex flex-wrap items-end gap-4">
+          <Field label="Search transcripts" className="flex-1 min-w-[240px]">
+            <div className="relative">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-app-text-subtle" />
+              <Input value={q} onChange={e => setQ(e.target.value)} placeholder="e.g. amma, bus, biryani" className="pl-9" />
+            </div>
+          </Field>
+          <Field label="Speaker" className="w-56">
+            <Select value={speaker} onChange={e => setSpeaker(e.target.value)}>
+              <option value="">All speakers</option>
+              {speakers?.map(s => <option key={s.id} value={s.id}>{s.displayName}</option>)}
+            </Select>
+          </Field>
+          <Field label="Speech type" className="w-44">
+            <Select value={type} onChange={e => setType(e.target.value)}>
+              <option value="">All types</option>
+              <option value="free-speech">Free speech</option>
+              <option value="code-mixed">Scripted code-mixed</option>
+              <option value="auth-response">Login answers</option>
+            </Select>
+          </Field>
+          <div className="text-[12.5px] text-app-text-muted h-9 flex items-center tnum">{filtered.length} of {utterances?.length ?? 0}</div>
+          <LangLegend className="h-9" />
+        </Card>
 
-        <label className="flex items-center gap-2">
-          <span className="text-app-text-muted">Status:</span>
-          <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="h-7 border border-app-border px-2 focus:border-app-accent focus:outline-none bg-app-bg w-32">
-             <option value="">All</option>
-             <option value="annotated">Annotated</option>
-             <option value="pending">Pending</option>
-          </select>
-        </label>
-        
-        <div className="flex-1" />
-        
-        <div className="text-app-text-muted mono text-[11px]">
-          Showing {filtered?.length || 0} / {utterances?.length || 0}
-        </div>
-      </div>
-
-      <div className="flex-1 overflow-auto p-6 max-w-[1600px] w-full mx-auto">
-        <table className="w-full text-left border-collapse border border-app-border bg-app-surface">
-          <thead className="bg-app-bg sticky top-0 border-b border-app-border z-10">
-            <tr>
-              <th className="px-3 py-2 text-[11px] uppercase tracking-wider text-app-text-muted">File ID</th>
-              <th className="px-3 py-2 text-[11px] uppercase tracking-wider text-app-text-muted">Speaker</th>
-              <th className="px-3 py-2 text-[11px] uppercase tracking-wider text-app-text-muted">Type</th>
-              <th className="px-3 py-2 text-[11px] uppercase tracking-wider text-app-text-muted text-right">Dur</th>
-              <th className="px-3 py-2 text-[11px] uppercase tracking-wider text-app-text-muted text-right">Hz</th>
-              <th className="px-3 py-2 text-[11px] uppercase tracking-wider text-app-text-muted">Transcript</th>
-              <th className="px-3 py-2 text-[11px] uppercase tracking-wider text-app-text-muted">Tokens (LID)</th>
-              <th className="px-3 py-2 text-[11px] uppercase tracking-wider text-app-text-muted text-center w-24">Annotated</th>
-              <th className="px-3 py-2 text-[11px] uppercase tracking-wider text-app-text-muted w-16"></th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-app-border">
-            {filtered?.map(u => (
-              <tr key={u.id} className="hover:bg-app-bg/50 transition-colors">
-                <td className="px-3 py-2 mono text-app-text-muted">{u.id}</td>
-                <td className="px-3 py-2 mono text-app-accent hover:underline cursor-pointer">{u.speakerId}</td>
-                <td className="px-3 py-2 mono text-app-text-muted">{u.type}</td>
-                <td className="px-3 py-2 mono text-right">{u.durationSec.toFixed(1)}s</td>
-                <td className="px-3 py-2 mono text-right">{u.sampleRate/1000}k</td>
-                <td className="px-3 py-2 max-w-md truncate" title={u.transcript}>{u.transcript}</td>
-                <td className="px-3 py-2 mono text-app-text-muted">{u.tokens.length}</td>
-                <td className="px-3 py-2 text-center">
-                  <div className="flex justify-center">
-                    {u.annotated ? <CheckCircle className="w-4 h-4 text-app-accept" /> : <Circle className="w-4 h-4 text-app-border-strong" />}
-                  </div>
-                </td>
-                <td className="px-3 py-2">
-                  <button className="p-1 hover:bg-app-border rounded-sm transition-colors text-app-text-muted hover:text-app-reject">
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
+        <Card className="overflow-hidden">
+          {isLoading ? <div className="p-6"><Spinner label="Loading corpus" /></div> : filtered.length ? (
+            <Table>
+              <thead>
+                <tr>
+                  <Th>Speaker</Th>
+                  <Th>Transcript</Th>
+                  <Th align="right">Length</Th>
+                  <Th className="w-[140px]">TA / EN</Th>
+                  <Th align="center">Status</Th>
+                  <Th className="w-10" />
+                </tr>
+              </thead>
+              <tbody>{filtered.map(u => <Row key={u.id} u={u} speaker={name(u.speakerId)} />)}</tbody>
+            </Table>
+          ) : <EmptyState title="No recordings match">Clear a filter to see more.</EmptyState>}
+        </Card>
+      </PageBody>
+    </>
   );
 }
 
+function Row({ u, speaker }: { u: Utterance; speaker: string }) {
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const ta = u.tokens.filter(t => t.language === 'TA').length;
+  const en = u.tokens.filter(t => t.language === 'EN').length;
+  const del = useMutation({
+    mutationFn: () => apiClient.deleteUtterance(u.id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['utterances'] }),
+  });
+  return (
+    <>
+      <tr className={cn('cursor-pointer hover:bg-app-surface-muted/50', open && 'bg-app-surface-muted/50')} onClick={() => setOpen(o => !o)}>
+        <Td className="whitespace-nowrap">
+          <div className="font-medium">{speaker}</div>
+          <div className="text-[11.5px] text-app-text-subtle">{u.type === 'free-speech' ? 'Free speech' : u.type === 'code-mixed' ? 'Scripted' : u.type}</div>
+        </Td>
+        <Td className="max-w-[560px]"><div className="truncate text-app-text-muted">{u.transcript || '—'}</div></Td>
+        <Td align="right" className="tnum whitespace-nowrap">{u.durationSec.toFixed(1)} s</Td>
+        <Td>
+          <div className="flex items-center gap-2">
+            <LangBar ta={ta} en={en} className="flex-1" />
+            <span className="text-[11.5px] tnum text-app-text-subtle w-8 text-right">{ta + en ? pct(ta / (ta + en), 0) : '—'}</span>
+          </div>
+        </Td>
+        <Td align="center"><Badge tone={u.annotated ? 'accept' : 'warning'}>{u.annotated ? 'tagged' : 'pending'}</Badge></Td>
+        <Td><ChevronDown className={cn('w-4 h-4 text-app-text-subtle transition-transform', open && 'rotate-180')} /></Td>
+      </tr>
+      {open && (
+        <tr>
+          <td colSpan={6} className="px-5 py-4 border-b border-app-border bg-app-surface-muted/30">
+            <div className="flex flex-col gap-3 max-w-4xl">
+              <audio src={assetUrl(u.audioUrl)} controls preload="none" className="w-full max-w-lg" />
+              {u.tokens.length ? <TokenText tokens={u.tokens} className="text-[14px]" /> : <p className="text-[13px] text-app-text-muted">{u.transcript}</p>}
+              <div className="flex items-center justify-between">
+                <span className="mono text-[11.5px] text-app-text-subtle">{u.id} · {u.sampleRate / 1000} kHz · {u.tokens.length} tokens</span>
+                <Button size="sm" variant="danger" icon={<Trash2 className="w-3.5 h-3.5" />} loading={del.isPending}
+                  onClick={e => { e.stopPropagation(); if (confirm('Delete this recording? The speaker’s graph will need rebuilding.')) del.mutate(); }}>
+                  Delete
+                </Button>
+              </div>
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}

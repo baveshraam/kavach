@@ -1,28 +1,52 @@
 import { useState, useRef, useEffect } from 'react';
-import { cn } from '../layout/AppLayout';
-import { Square, Play, RotateCcw, Check } from 'lucide-react';
+import { cn, Button } from './kit';
+import { Mic, Square, RotateCcw, Check, Upload, FileAudio } from 'lucide-react';
 
 interface AudioRecorderProps {
   onRecordingComplete?: (blob: Blob, durationMs: number) => void;
-  onAccept?: (blob: Blob, durationMs: number) => void;
+  onAccept?: (blob: Blob, durationMs: number, filename?: string) => void;
+  /** Allow submitting an audio file instead of the microphone -- how replayed
+   *  and cloned clips get into the system during a demo. */
+  allowUpload?: boolean;
+  acceptLabel?: string;
+  busy?: boolean;
 }
 
-export function AudioRecorder({ onRecordingComplete, onAccept }: AudioRecorderProps) {
+/**
+ * Canvas cannot resolve CSS custom properties, so `fillStyle = 'var(--x)'` is
+ * silently ignored and the waveform used to draw in black on every theme.
+ * Resolve the token to a concrete colour first.
+ */
+function cssColor(name: string, fallback: string) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+}
+
+export function AudioRecorder({ onRecordingComplete, onAccept, allowUpload, acceptLabel = 'Submit', busy }: AudioRecorderProps) {
   const [isRecording, setIsRecording] = useState(false);
   const [durationMs, setDurationMs] = useState(0);
   const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null);
+  const [filename, setFilename] = useState<string | undefined>();
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  
+
   const mediaRecorder = useRef<MediaRecorder | null>(null);
   const audioContext = useRef<AudioContext | null>(null);
   const analyser = useRef<AnalyserNode | null>(null);
   const dataArray = useRef<Uint8Array | null>(null);
   const requestRef = useRef<number>(0);
   const startTime = useRef<number>(0);
+  const durationRef = useRef(0);
   const chunks = useRef<BlobPart[]>([]);
-
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const levelRef = useRef<HTMLDivElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
+
+  const setResult = (blob: Blob, name?: string) => {
+    setRecordedBlob(blob);
+    setFilename(name);
+    setPreviewUrl(URL.createObjectURL(blob));
+  };
 
   const startRecording = async () => {
     try {
@@ -30,23 +54,17 @@ export function AudioRecorder({ onRecordingComplete, onAccept }: AudioRecorderPr
       audioContext.current = new AudioContext();
       const source = audioContext.current.createMediaStreamSource(stream);
       analyser.current = audioContext.current.createAnalyser();
-      analyser.current.fftSize = 256;
+      analyser.current.fftSize = 512;
       source.connect(analyser.current);
-      
-      const bufferLength = analyser.current.frequencyBinCount;
-      dataArray.current = new Uint8Array(bufferLength);
+      dataArray.current = new Uint8Array(analyser.current.fftSize);
 
       mediaRecorder.current = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
       chunks.current = [];
-      
-      mediaRecorder.current.ondataavailable = (e) => {
-        if (e.data.size > 0) chunks.current.push(e.data);
-      };
-      
+      mediaRecorder.current.ondataavailable = e => { if (e.data.size > 0) chunks.current.push(e.data); };
       mediaRecorder.current.onstop = () => {
         const blob = new Blob(chunks.current, { type: 'audio/webm' });
-        setRecordedBlob(blob);
-        if (onRecordingComplete) onRecordingComplete(blob, durationMs);
+        setResult(blob);
+        onRecordingComplete?.(blob, durationRef.current);
         stream.getTracks().forEach(t => t.stop());
       };
 
@@ -54,10 +72,9 @@ export function AudioRecorder({ onRecordingComplete, onAccept }: AudioRecorderPr
       setIsRecording(true);
       setError(null);
       startTime.current = performance.now();
-      drawWaveform();
-
-    } catch (err) {
-      setError('Microphone access denied or unavailable.');
+      draw();
+    } catch {
+      setError('Microphone access was denied or no microphone is available. You can still upload a file.');
     }
   };
 
@@ -66,144 +83,129 @@ export function AudioRecorder({ onRecordingComplete, onAccept }: AudioRecorderPr
       mediaRecorder.current.stop();
       setIsRecording(false);
       cancelAnimationFrame(requestRef.current);
-      if (audioContext.current) audioContext.current.close();
+      audioContext.current?.close();
     }
   };
 
-  const drawWaveform = () => {
-    if (!analyser.current || !dataArray.current || !canvasRef.current || !levelRef.current) return;
-    
-    analyser.current.getByteFrequencyData(dataArray.current);
-    
+  const draw = () => {
     const canvas = canvasRef.current;
+    if (!analyser.current || !dataArray.current || !canvas) return;
+    analyser.current.getByteTimeDomainData(dataArray.current);
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
-    // Calculate RMS for level meter
-    let sum = 0;
-    for (let i = 0; i < dataArray.current.length; i++) {
-      sum += dataArray.current[i] * dataArray.current[i];
-    }
-    const rms = Math.sqrt(sum / dataArray.current.length);
-    const volume = Math.min(1, rms / 128); // 0 to 1
-    
-    levelRef.current.style.width = `${volume * 100}%`;
-    if (volume > 0.95) levelRef.current.classList.add('bg-app-reject');
-    else levelRef.current.classList.remove('bg-app-reject');
+    const dpr = window.devicePixelRatio || 1;
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    if (canvas.width !== w * dpr) { canvas.width = w * dpr; canvas.height = h * dpr; }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
 
-    // Draw bars
-    const barWidth = 2;
-    const gap = 1;
-    const barCount = Math.floor(canvas.width / (barWidth + gap));
-    const step = Math.floor(dataArray.current.length / barCount);
-
-    ctx.fillStyle = 'var(--app-text-muted)';
-    
-    for (let i = 0; i < barCount; i++) {
-      let val = dataArray.current[i * step] || 0;
-      const percent = val / 255;
-      const height = Math.max(1, percent * canvas.height);
-      const y = (canvas.height - height) / 2;
-      ctx.fillRect(i * (barWidth + gap), y, barWidth, height);
+    const bars = Math.floor(w / 4);
+    const step = Math.max(1, Math.floor(dataArray.current.length / bars));
+    ctx.fillStyle = cssColor('--app-accent', '#2B4C7E');
+    for (let i = 0; i < bars; i++) {
+      let peak = 0;
+      for (let j = 0; j < step; j++) peak = Math.max(peak, Math.abs((dataArray.current[i * step + j] ?? 128) - 128));
+      const bh = Math.max(2, (peak / 128) * h * 1.6);
+      ctx.fillRect(i * 4, (h - Math.min(h, bh)) / 2, 2, Math.min(h, bh));
     }
 
-    setDurationMs(performance.now() - startTime.current);
-    requestRef.current = requestAnimationFrame(drawWaveform);
+    durationRef.current = performance.now() - startTime.current;
+    setDurationMs(durationRef.current);
+    requestRef.current = requestAnimationFrame(draw);
   };
 
   const handleReset = () => {
     setRecordedBlob(null);
+    setFilename(undefined);
+    setPreviewUrl(null);
     setDurationMs(0);
-    if (canvasRef.current) {
-      const ctx = canvasRef.current.getContext('2d');
-      ctx?.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-    }
-    if (levelRef.current) levelRef.current.style.width = '0%';
+    durationRef.current = 0;
+    const c = canvasRef.current;
+    c?.getContext('2d')?.clearRect(0, 0, c.width, c.height);
   };
 
-  const handleAccept = () => {
-    if (recordedBlob && onAccept) {
-      onAccept(recordedBlob, durationMs);
-    }
+  const onFile = (file: File | undefined) => {
+    if (!file) return;
+    setError(null);
+    setResult(file, file.name);
+    const probe = new Audio(URL.createObjectURL(file));
+    probe.onloadedmetadata = () => {
+      if (Number.isFinite(probe.duration)) { durationRef.current = probe.duration * 1000; setDurationMs(durationRef.current); }
+    };
   };
-  
+
   const formatTime = (ms: number) => {
-    const totalSec = Math.floor(ms / 1000);
-    const mins = Math.floor(totalSec / 60);
-    const secs = totalSec % 60;
-    const ms1 = Math.floor((ms % 1000) / 100);
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${ms1}`;
+    const s = Math.floor(ms / 1000);
+    return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
   };
-
-  if (error) {
-    return (
-      <div className="h-12 border border-app-reject bg-app-reject-subtle text-app-reject flex items-center px-4 text-[13px]">
-        {error}
-      </div>
-    );
-  }
 
   return (
-    <div className="h-14 border border-app-border bg-app-surface flex items-center px-4 gap-4">
-      {/* Controls */}
-      <div className="flex-shrink-0">
+    <div className="rounded-lg border border-app-border bg-app-surface">
+      <div className="flex items-center gap-4 p-4">
         {!recordedBlob ? (
           <button
             type="button"
             onClick={isRecording ? stopRecording : startRecording}
             className={cn(
-              "w-8 h-8 flex items-center justify-center border border-app-border rounded-sm transition-colors duration-120",
-              isRecording ? "bg-app-bg hover:bg-app-bg" : "hover:bg-app-bg"
+              'w-12 h-12 rounded-full flex items-center justify-center shrink-0 transition-all',
+              isRecording ? 'bg-app-reject text-white ring-4 ring-app-reject/20' : 'bg-app-accent text-app-on-accent hover:bg-app-accent-hover',
             )}
-            title={isRecording ? "Stop Recording" : "Start Recording"}
+            title={isRecording ? 'Stop recording' : 'Start recording'}
           >
-            {isRecording ? (
-              <Square className="w-3.5 h-3.5 fill-app-reject text-app-reject" />
-            ) : (
-              <div className="w-3 h-3 rounded-full bg-app-accent" />
-            )}
+            {isRecording ? <Square className="w-4 h-4 fill-current" /> : <Mic className="w-5 h-5" />}
           </button>
         ) : (
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleReset}
-              className="px-2 h-8 flex items-center gap-1.5 border border-app-border rounded-sm hover:bg-app-bg transition-colors duration-120 text-[11px] uppercase tracking-wider text-app-text-muted"
-            >
-              <RotateCcw className="w-3.5 h-3.5" /> Re-record
-            </button>
-            <button
-              type="button"
-              onClick={handleAccept}
-              className="px-2 h-8 flex items-center gap-1.5 border border-app-accent bg-app-accent text-white rounded-sm hover:bg-app-accent-hover transition-colors duration-120 text-[11px] uppercase tracking-wider"
-            >
-              <Check className="w-3.5 h-3.5" /> Accept
-            </button>
+          <div className="w-12 h-12 rounded-full bg-app-accept-soft text-app-accept flex items-center justify-center shrink-0">
+            {filename ? <FileAudio className="w-5 h-5" /> : <Check className="w-5 h-5" />}
           </div>
         )}
+
+        <div className="flex-1 min-w-0">
+          {recordedBlob && previewUrl ? (
+            <div className="flex flex-col gap-1.5">
+              <div className="text-[12.5px] text-app-text-muted truncate">
+                {filename ? <>File: <span className="text-app-text font-medium">{filename}</span></> : 'Recording ready'} · <span className="tnum">{formatTime(durationMs)}</span>
+              </div>
+              <audio src={previewUrl} controls className="w-full" />
+            </div>
+          ) : (
+            <div className="relative flex items-center gap-4">
+              <canvas ref={canvasRef} className={cn('flex-1 h-10 min-w-0', !isRecording && 'opacity-0')} />
+              {!isRecording && (
+                <div className="absolute text-[13px] text-app-text-muted pointer-events-none">
+                  Press the microphone and answer in your own words.
+                </div>
+              )}
+              <span className={cn('tnum text-[14px] font-medium w-12 text-right', isRecording ? 'text-app-reject' : 'text-app-text-subtle')}>{formatTime(durationMs)}</span>
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* Timer */}
-      <div className="mono text-[13px] w-16 text-right">
-        {formatTime(durationMs)}
-      </div>
-
-      {/* Waveform & Meter */}
-      <div className="flex-1 flex flex-col justify-center h-full gap-1 relative">
-         <canvas 
-           ref={canvasRef} 
-           width={300} 
-           height={24} 
-           className={cn("w-full h-6 block", recordedBlob && "opacity-50 grayscale")} 
-         />
-         {!recordedBlob && (
-           <div className="w-full h-[2px] bg-app-bg">
-             <div ref={levelRef} className="h-full bg-app-accept w-0 transition-all duration-75" />
-           </div>
-         )}
-      </div>
+      {(recordedBlob || allowUpload || error) && (
+        <div className="flex items-center justify-between gap-3 px-4 py-3 border-t border-app-border bg-app-surface-muted/50 rounded-b-lg">
+          <div className="text-[12px] text-app-reject min-w-0">{error}</div>
+          <div className="flex items-center gap-2 shrink-0">
+            {allowUpload && !recordedBlob && !isRecording && (
+              <>
+                <input ref={fileRef} type="file" accept="audio/*,video/mp4,.m4a,.ogg,.wav,.webm" className="hidden" onChange={e => onFile(e.target.files?.[0])} />
+                <Button size="sm" variant="ghost" icon={<Upload className="w-3.5 h-3.5" />} onClick={() => fileRef.current?.click()}>
+                  Upload audio file
+                </Button>
+              </>
+            )}
+            {recordedBlob && (
+              <>
+                <Button size="sm" variant="ghost" icon={<RotateCcw className="w-3.5 h-3.5" />} onClick={handleReset} disabled={busy}>Redo</Button>
+                <Button size="sm" variant="primary" icon={<Check className="w-3.5 h-3.5" />} loading={busy} onClick={() => onAccept?.(recordedBlob, durationMs, filename)}>
+                  {acceptLabel}
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

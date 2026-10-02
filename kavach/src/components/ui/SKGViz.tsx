@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import cytoscape from 'cytoscape';
 import { Triple } from '../../api/types';
+import { useThemeKey } from './GraphViz';
 
 interface SKGVizProps {
   triples: Triple[] | null;
@@ -25,6 +26,7 @@ interface SKGVizProps {
 export function SKGViz({ triples, speakerName, layout, onReady }: SKGVizProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
+  const themeKey = useThemeKey();
 
   useEffect(() => {
     if (!containerRef.current || !triples || triples.length === 0) return;
@@ -71,34 +73,34 @@ export function SKGViz({ triples, speakerName, layout, onReady }: SKGVizProps) {
         {
           selector: 'node[kind="speaker"]',
           style: {
-            shape: 'rectangle',
+            shape: 'round-rectangle',
             width: 'label',
-            height: 22,
-            padding: '8px',
+            height: 30,
+            padding: '12px',
             'background-color': accent,
             'border-width': 0,
             label: 'data(label)',
             'font-family': 'Inter, sans-serif',
             'font-weight': 'bold',
-            'font-size': '11px',
+            'font-size': '13px',
             'text-valign': 'center',
             'text-halign': 'center',
-            color: surface,
+            color: token('--app-on-accent', '#FFFFFF'),
           },
         },
         {
           selector: 'node[kind="fact"]',
           style: {
-            shape: 'rectangle',
+            shape: 'round-rectangle',
             width: 'label',
-            height: 20,
-            padding: '6px',
+            height: 26,
+            padding: '10px',
             'background-color': surface,
             'border-width': 1,
             'border-color': border,
             label: 'data(label)',
-            'font-family': 'IBM Plex Mono, monospace',
-            'font-size': '10px',
+            'font-family': 'Inter, sans-serif',
+            'font-size': '12px',
             'text-valign': 'center',
             'text-halign': 'center',
             'text-max-width': '140px',
@@ -116,8 +118,8 @@ export function SKGViz({ triples, speakerName, layout, onReady }: SKGVizProps) {
             'arrow-scale': 0.7,
             'curve-style': 'bezier',
             label: 'data(label)',
-            'font-family': 'IBM Plex Mono, monospace',
-            'font-size': '9px',
+            'font-family': 'Inter, sans-serif',
+            'font-size': '10.5px',
             color: muted,
             'text-rotation': 'autorotate',
             'text-background-color': surface,
@@ -136,7 +138,7 @@ export function SKGViz({ triples, speakerName, layout, onReady }: SKGVizProps) {
       cy.destroy();
       cyRef.current = null;
     };
-  }, [triples, speakerName, layout]);
+  }, [triples, speakerName, layout, themeKey]);
 
   if (!triples) {
     return (
@@ -162,7 +164,7 @@ export function SKGViz({ triples, speakerName, layout, onReady }: SKGVizProps) {
     );
   }
 
-  return <div ref={containerRef} className="w-full h-full bg-app-bg" />;
+  return <div ref={containerRef} className="w-full h-full" />;
 }
 
 /** `favouriteFood` -> `favourite food`. The predicates are the wire format, so
@@ -176,7 +178,7 @@ function layoutOptions(layout: string): cytoscape.LayoutOptions {
   // N leaves it ranks every leaf identically and stacks them in one ring at
   // the same radius as each other, overlapping the labels. A star is what this
   // graph is, so lay it out as one.
-  if (layout === 'concentric') {
+  if (layout === 'concentric' || layout === 'axis') {
     return { name: 'concentric', padding: 40, minNodeSpacing: 40,
              concentric: (node: any) => (node.data('kind') === 'speaker' ? 10 : 1),
              levelWidth: () => 1 } as cytoscape.LayoutOptions;
