@@ -9,6 +9,7 @@ import { GraphExplorer } from './pages/GraphExplorer';
 import { AttackLab } from './pages/AttackLab';
 import { Evaluation } from './pages/Evaluation';
 import { Corpus } from './pages/Corpus';
+import { Studio } from './pages/Studio';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -33,6 +34,7 @@ export default function App() {
             <Route path="attack-lab" element={<AttackLab />} />
             <Route path="evaluation" element={<Evaluation />} />
             <Route path="corpus" element={<Corpus />} />
+            <Route path="studio" element={<Studio />} />
           </Route>
         </Routes>
       </BrowserRouter>

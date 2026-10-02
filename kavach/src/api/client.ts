@@ -1,4 +1,4 @@
-import { AuthResult, Challenge, CloneBankInfo, CloneMatch, CSBG, EvalMetrics, Speaker, Utterance, Triple, AttackRun, AttackType, PerSpeakerIapmr, OfflineRun } from './types';
+import { AuthResult, Challenge, CloneBankInfo, CloneMatch, CSBG, StudioPlan, StudioSummary, EvalMetrics, Speaker, Utterance, Triple, AttackRun, AttackType, PerSpeakerIapmr, OfflineRun } from './types';
 import { mockSpeakers, mockUtterances, mockTriples, mockCSBG, mockAuthResults, mockAttacks, mockEvalMetrics } from './mock';
 
 // @ts-ignore
@@ -33,6 +33,28 @@ export const apiClient = {
       return { status: 'connected', models: ['ecapa-tdnn-v2', 'wav2vec2-large-xlsr-ta', 'llama-3-8b-instruct'], device: 'cuda:0' };
     }
     return fetchApi('/api/health');
+  },
+
+  studioPlan: async (speaker: string, session?: string): Promise<StudioPlan> => {
+    if (USE_MOCK) throw new Error('The Studio needs the real backend.');
+    const q = new URLSearchParams({ speaker });
+    if (session) q.set('session', session);
+    return fetchApi(`/api/studio/plan?${q}`);
+  },
+
+  studioSummary: async (speaker: string): Promise<StudioSummary> => {
+    if (USE_MOCK) throw new Error('The Studio needs the real backend.');
+    return fetchApi(`/api/studio/summary?speaker=${encodeURIComponent(speaker)}`);
+  },
+
+  studioUpload: async (v: { speaker: string; sessionId: string; kind: string; promptId: string; device: string; environment: string; textHint: string; stateNote: string; blob: Blob; filename?: string }): Promise<{ summary: StudioSummary }> => {
+    if (USE_MOCK) throw new Error('The Studio needs the real backend.');
+    const f = new FormData();
+    f.append('audio', v.blob, v.filename ?? 'clip.webm');
+    f.append('speaker', v.speaker); f.append('session_id', v.sessionId); f.append('kind', v.kind);
+    f.append('prompt_id', v.promptId); f.append('device', v.device); f.append('environment', v.environment);
+    f.append('text_hint', v.textHint); f.append('state_note', v.stateNote);
+    return fetchApi('/api/studio/clips', { method: 'POST', body: f });
   },
 
   /** What the clone bank can answer (demo builds only; 404 otherwise). */
