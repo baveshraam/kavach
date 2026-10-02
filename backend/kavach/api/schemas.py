@@ -113,6 +113,14 @@ class SpeakerCreate(Model):
     consent_given: bool = False
 
 
+class Voiceprint(Model):
+    n_clips: int
+    self_consistency: float
+    provenance: dict[str, Any] | None = None
+    """What the template was built from (sessions, devices), when it was built by the Studio enrolment
+    tool; None for a template built from the original recordings. Never the embeddings themselves."""
+
+
 class Deleted(Model):
     deleted: bool = True
 
@@ -448,6 +456,9 @@ class Health(Model):
 
     studio_enabled: bool = False
     """True when the recording Studio accepts uploads."""
+
+    demo_tools: bool = False
+    """True when the preflight's throttle-reset route is live."""
 
     voice_gate: bool = True
     voice_threshold: float = 0.62

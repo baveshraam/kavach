@@ -30,6 +30,9 @@ $env:KAVACH_CSBG_VETO_ENABLED = "false"
 # /api/health (demoAttackBank). Only the presenter has agreed to be cloned.
 $env:KAVACH_DEMO_ATTACK_BANK = "true"
 $env:KAVACH_CLONE_VICTIMS = '["S04"]'
+# The preflight (python -m kavach.demo_check --flows) drives failed logins against the presenter;
+# this lets it clear the strikes afterwards so the owner starts the demo with a clean slate.
+$env:KAVACH_DEMO_TOOLS = "true"
 
 if ($Prefetch) {
     Write-Host "Downloading every model the demo needs (run once, on a good connection) ..." -ForegroundColor Cyan
@@ -55,7 +58,7 @@ $ui = Start-Process -FilePath "npm.cmd" -ArgumentList "run", "dev" `
     -WorkingDirectory (Join-Path $root "kavach") -PassThru -WindowStyle Minimized
 
 Start-Sleep -Seconds 6
-Start-Process "http://localhost:3000"
+Start-Process "http://localhost:3000/unlock"
 
 Write-Host ""
 Write-Host "Demo running. Models warm up in the background (about 20 s);" -ForegroundColor Green

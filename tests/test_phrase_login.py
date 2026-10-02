@@ -457,3 +457,56 @@ class TestResponseNamesTheWords:
         # the default (question) challenge needs facts; the wire still has the fields, empty
         from kavach.api import schemas
         assert schemas.AuthResult.model_fields["phrase_matched"].default_factory() == []
+
+
+class TestDemoTools:
+    """The preflight's failed logins must not leave the presenter with strikes against them."""
+
+    def test_the_reset_route_is_hidden_unless_demo_tools_are_on(self, client, settings):
+        assert settings.demo_tools is False
+        assert client.post("/api/demo/reset-throttle").status_code == 404
+
+    def test_with_demo_tools_on_it_clears_the_wait(self, store, pipeline, settings, speaker, tmp_path):
+        from kavach.api.app import create_app, get_pipeline, get_settings, get_store
+        on = settings.model_copy(update={"demo_tools": True})
+        app = create_app(on)
+        app.dependency_overrides[get_store] = lambda: store
+        app.dependency_overrides[get_pipeline] = lambda: pipeline
+        app.dependency_overrides[get_settings] = lambda: on
+        c = TestClient(app)
+        for _ in range(4):
+            ch = issue(c, speaker)
+            login(c, pipeline, tmp_path, ch, heard=" ".join(ch["phrase"]), cosine=0.2)
+        assert c.post("/api/challenge", json={"speakerId": speaker, "kind": "phrase"}).status_code == 429
+        assert c.post("/api/demo/reset-throttle").status_code == 200
+        assert c.post("/api/challenge", json={"speakerId": speaker, "kind": "phrase"}).status_code == 200
+
+    def test_health_announces_demo_tools(self, client):
+        assert client.get("/api/health").json()["demoTools"] is False
+
+
+class TestVoiceprintInfo:
+    def test_it_reports_the_template_size_and_what_it_was_built_from(self, client, store, speaker):
+        payload = store.load_template(speaker)
+        payload["provenance"] = {"source": "studio", "sessions": ["S1", "S2"], "devices": ["DEMO_LAPTOP_MIC"], "n_clips": 1}
+        store.save_template(speaker, payload)
+        r = client.get(f"/api/speakers/{speaker}/voiceprint")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["nClips"] == 1
+        assert body["provenance"]["sessions"] == ["S1", "S2"]
+
+    def test_a_template_without_provenance_says_none(self, client, speaker):
+        assert client.get(f"/api/speakers/{speaker}/voiceprint").json()["provenance"] is None
+
+    def test_a_speaker_with_no_voiceprint_is_a_404_that_says_so(self, client):
+        sid = client.post("/api/speakers", json={"displayName": "NoVoice", "consentGiven": True}).json()["id"]
+        r = client.get(f"/api/speakers/{sid}/voiceprint")
+        assert r.status_code == 404 and "voiceprint" in r.json()["detail"].lower()
+
+    def test_an_unknown_speaker_is_a_404(self, client):
+        assert client.get("/api/speakers/spk_nope/voiceprint").status_code == 404
+
+    def test_it_never_returns_the_embeddings(self, client, speaker):
+        body = client.get(f"/api/speakers/{speaker}/voiceprint").text
+        assert "centroid" not in body and "embeddings" not in body

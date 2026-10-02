@@ -282,6 +282,11 @@ class Settings(BaseSettings):
         ]
     )
 
+    demo_tools: bool = False
+    """Expose `POST /api/demo/reset-throttle` (404 otherwise). The preflight drives failed logins
+    against the presenter; this lets it clear the strikes so the owner starts the demo clean.
+    A demo build turns it on and `/api/health` says so, like the other demo switches."""
+
     demo_reveal_answers: bool = False
     """Send the expected challenge answer to the client.
 
