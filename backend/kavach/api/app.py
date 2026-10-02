@@ -35,7 +35,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 
-from ..audio import AudioError, decode_bytes
+from ..audio import AudioError, decode_bytes, warm_resample
 from ..challenge import ChallengeError
 from ..config import Settings, get_settings
 from ..csbg.metrics import compute_all_metrics
@@ -128,6 +128,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # The properties above construct lazily-loading wrappers; these
                 # force the actual checkpoints into memory.
                 for warm_up in (
+                    warm_resample,
                     lambda: pipeline.asr and pipeline.asr.model,
                     lambda: pipeline.matcher.semantic_matcher and pipeline.matcher.semantic_matcher.available,
                 ):

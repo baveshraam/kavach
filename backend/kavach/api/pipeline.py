@@ -704,6 +704,33 @@ class Pipeline:
         )
         notes.extend(quality.warnings)
 
+        # A recording with nothing usable in it is rejected before any model
+        # sees it. Whisper invents text for silence ("Thank you for watching"),
+        # and that invention would be tagged, scored against the speaker's
+        # graph and explained to the audience as if it had been said.
+        if quality.is_silent or quality.is_too_short:
+            if quality.is_silent:
+                reason = "no speech was detected in the recording"
+            else:
+                reason = (
+                    f"the recording is only {quality.duration_sec:.1f}s long and at "
+                    f"least {self.settings.min_audio_seconds:.0f}s is needed"
+                )
+            result = fuse(branches, self._policy())
+            result.explanation = [
+                f"Rejected: {reason}. That is a problem with the recording, not "
+                "evidence about the speaker -- record the answer again."
+            ]
+            return VerificationOutcome(
+                fusion=result,
+                annotation=None,
+                csbg_score=None,
+                speaker_id=speaker_id,
+                challenge_id=challenge.id,
+                latency_ms=int((time.perf_counter() - started) * 1000),
+                notes=notes,
+            )
+
         # Integrity runs before the models, for the same reason liveness runs
         # before integrity: a file we can show was assembled does not need a
         # voiceprint computed for it, and a gate placed after the expensive

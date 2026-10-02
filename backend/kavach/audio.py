@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import logging
 import subprocess
 import wave
 from dataclasses import dataclass
@@ -24,6 +25,8 @@ import numpy as np
 #: Everything downstream assumes this rate. ECAPA-TDNN and Whisper are both
 #: trained at 16 kHz; resampling once here avoids each doing it differently.
 TARGET_SAMPLE_RATE = 16_000
+
+logger = logging.getLogger(__name__)
 
 
 class AudioError(RuntimeError):
@@ -248,6 +251,16 @@ def resample(audio: Audio, target_sr: int) -> Audio:
     )
 
 
+def warm_resample() -> None:
+    """Pay the resampler's first-use cost now instead of on the first upload.
+
+    librosa imports lazily and its first resample takes several seconds; the
+    next one is instant. An audience watching the first non-16 kHz upload
+    stall for that long reads it as a hang.
+    """
+    resample(Audio(np.zeros(4410, dtype=np.float32), 44_100, "warm"), TARGET_SAMPLE_RATE)
+
+
 def decode_bytes(
     raw: bytes, *, suffix: str = ".webm", target_sr: int = TARGET_SAMPLE_RATE
 ) -> Audio:
@@ -307,8 +320,12 @@ def decode_bytes(
             "Install it and ensure it is on PATH."
         ) from exc
     except subprocess.CalledProcessError as exc:
-        detail = exc.stderr.decode("utf-8", errors="replace")[:400]
-        raise AudioError(f"ffmpeg failed to decode the upload: {detail}") from exc
+        # The decoder's stderr is for the operator, not the person who uploaded
+        # the wrong file: it names a memory address and says "Invalid data".
+        logger.debug("ffmpeg could not decode the upload: %s", exc.stderr.decode("utf-8", errors="replace")[:400])
+        raise AudioError(
+            "That file could not be read as audio. Use a WAV, MP3, M4A, OGG or WebM recording."
+        ) from exc
 
     data = np.frombuffer(proc.stdout, dtype=np.float32)
     if not len(data):
