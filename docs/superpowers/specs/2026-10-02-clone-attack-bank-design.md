@@ -123,7 +123,7 @@ git-ignored in its entirety, which is where this belongs.
   "synthetic": true,
   "clips": [{
     "clip_id": "clone_ab12cd34",
-    "attack": "A4_CLONE_KNOWLEDGE",      // A3_CLONE | A4_CLONE_KNOWLEDGE | A5_STYLE_ADAPTIVE
+    "attack": "A4_clone_knowledge",      // AttackType.value: A3_clone | A4_clone_knowledge | A5_style_adaptive
     "backend": "knn_vc", "backend_version": "...",
     "fact_key": "hometown",              // the predicate this clip answers; null for A3
     "source": {"kind": "teammate_speech", "file": "hometown.wav"},   // or {"kind":"tts_text","text":...}
