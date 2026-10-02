@@ -54,7 +54,7 @@ def test_the_plan_lists_devices_environments_and_items(tmp_path) -> None:
     assert body["sessionId"] == "S1" and body["hasFacts"] is True
     assert "DEMO_LAPTOP_MIC" in body["devices"] and "QUIET_ROOM" in body["environments"]
     kinds = {i["kind"] for i in body["items"]}
-    assert kinds == {"read", "free", "fact"} and body["estimatedMinutes"] > 0
+    assert kinds == {"read", "free", "fact", "words"} and body["estimatedMinutes"] > 0
 
 
 def test_a_clip_is_stored_and_summarised(tmp_path) -> None:

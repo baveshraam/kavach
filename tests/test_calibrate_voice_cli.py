@@ -126,3 +126,51 @@ def test_the_command_does_not_write_a_policy_with_dry_run(studio, cohort, tmp_pa
     rc = main(["--studio", str(studio.root), "--sessions", "S1,S2,S3", "--cohort", str(cohort),
                "--out", str(out), "--dry-run"], embedder=OwnerEmbedder())
     assert rc == 0 and not out.exists()
+
+
+# ---- probes of the login's own task -------------------------------------------------------
+
+
+@pytest.fixture()
+def studio_with_words(tmp_path):
+    s = StudioStore(tmp_path / "studio2" / "S04", "S04")
+    for session in ("S1", "S2", "S3"):
+        for k in range(3):
+            s.add_clip(session_id=session, device="DEMO_LAPTOP_MIC", audio=tone(seconds=12.0, seed=hash((session, k)) % 997), **KW)
+        for k in range(4):
+            kw = dict(KW, kind="words", prompt_id=f"words_{session}_{k:02d}")
+            s.add_clip(session_id=session, device="DEMO_LAPTOP_MIC", audio=tone(seconds=6.0, seed=hash((session, "w", k)) % 997), **kw)
+    return s
+
+
+def test_probes_of_kind_words_are_used_whole_and_the_template_still_uses_everything(studio_with_words, cohort):
+    emb = OwnerEmbedder()
+    result = calibrate_from_studio(studio_with_words, ["S1", "S2", "S3"], embedder=emb, cohort_files=[cohort], probe_kind="words")
+    assert len(result.loso.genuine) == 12                      # 3 sessions x 4 words clips, not chunked
+    assert result.report.count("words") >= 1
+
+
+def test_without_a_probe_kind_every_clip_is_cut_into_phrase_length_probes(studio_with_words, cohort):
+    result = calibrate_from_studio(studio_with_words, ["S1", "S2", "S3"], embedder=OwnerEmbedder(), cohort_files=[cohort], probe_seconds=5.0)
+    assert len(result.loso.genuine) > 12
+
+
+def test_a_session_with_no_words_clips_cannot_be_asked_for_words_probes(studio, cohort):
+    with pytest.raises(ValueError, match="words"):
+        calibrate_from_studio(studio, ["S1", "S2", "S3"], embedder=OwnerEmbedder(), cohort_files=[cohort], probe_kind="words")
+
+
+def test_the_command_prefers_words_probes_when_every_session_has_them(studio_with_words, cohort, tmp_path, capsys):
+    from kavach.calibrate_voice import main
+
+    rc = main(["--studio", str(studio_with_words.root), "--sessions", "S1,S2,S3", "--cohort", str(cohort), "--dry-run"], embedder=OwnerEmbedder())
+    assert rc == 0
+    assert "words" in capsys.readouterr().out.lower()
+
+
+def test_the_command_falls_back_to_chunking_when_there_are_no_words_clips(studio, cohort, tmp_path, capsys):
+    from kavach.calibrate_voice import main
+
+    rc = main(["--studio", str(studio.root), "--sessions", "S1,S2,S3", "--cohort", str(cohort), "--dry-run"], embedder=OwnerEmbedder())
+    assert rc == 0
+    assert "chunk" in capsys.readouterr().out.lower()

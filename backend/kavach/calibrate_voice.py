@@ -350,6 +350,7 @@ def calibrate_from_studio(
     embedder,
     cohort_files,
     probe_seconds: float = 5.0,
+    probe_kind: str | None = None,
     exclude_speakers=frozenset(),
     far_target: float = 0.001,
     out: Path | str | None = None,
@@ -362,6 +363,8 @@ def calibrate_from_studio(
     for s in sessions:
         if not any(c.session_id == s for c in clips):
             raise ValueError(f"session {s} has no clips")
+        if probe_kind and not any(c.session_id == s and c.kind == probe_kind for c in clips):
+            raise ValueError(f"session {s} has no clips of kind {probe_kind!r} to use as probes")
 
     whole: dict[str, list] = {s: [] for s in sessions}
     probes: dict[str, list] = {s: [] for s in sessions}
@@ -374,7 +377,14 @@ def calibrate_from_studio(
         except StudioError as exc:
             raise ValueError(f"{exc} (hash check failed; nothing was calibrated)") from exc
         audio = load_audio(path)
-        whole[c.session_id].append(embedder.embed(audio).vector)
+        vec = embedder.embed(audio).vector
+        whole[c.session_id].append(vec)
+        if probe_kind:
+            # The login's own task: a clip of this kind IS one probe, scored whole.
+            if c.kind == probe_kind:
+                probes[c.session_id].append(vec)
+                meta[c.session_id].append((c.device, c.kind))
+            continue
         for chunk in _probe_chunks(audio, probe_seconds):
             probes[c.session_id].append(embedder.embed(chunk).vector)
             meta[c.session_id].append((c.device, c.kind))
@@ -385,7 +395,9 @@ def calibrate_from_studio(
 
     # ---- the report --------------------------------------------------------------
     T = op.threshold
-    L = [LIMITS, "", "## Operating point",
+    how = (f"each {probe_kind!r} clip scored whole (the login's own task)" if probe_kind
+           else f"every clip cut into {probe_seconds:g} s chunks")
+    L = [LIMITS, "", "## Operating point", f"- Owner probes: {how}.",
          f"- Accept threshold {T:.3f}; inconclusive band down to {op.floor:.3f} (margin {op.grey_margin:.3f}).",
          f"- Owner: {op.n_genuine} phrase-length probes from {len(sessions)} sessions. Rejected at the threshold: "
          f"{op.frr_at_threshold:.1%} (95% interval {op.frr_interval[0]:.1%}-{op.frr_interval[1]:.1%}); "
@@ -447,6 +459,9 @@ def main(argv: list[str] | None = None, *, embedder=None) -> int:
     p.add_argument("--cohort", action="append", type=Path, help="cohort embedding file(s); default data/cohort/emb/*@5s.npz")
     p.add_argument("--exclude-speaker", action="append", default=None, help="cohort speaker ids to leave out; default: the enrollee")
     p.add_argument("--probe-seconds", type=float, default=5.0)
+    p.add_argument("--probe-kind", default="auto",
+                   help="'words' scores the six-words clips whole; 'none' cuts every clip into chunks; "
+                        "'auto' (default) uses words clips when every session has them")
     p.add_argument("--far-target", type=float, default=0.001)
     p.add_argument("--out", type=Path, default=cfg.data_dir / POLICY_FILE)
     p.add_argument("--report", type=Path, default=None)
@@ -455,6 +470,14 @@ def main(argv: list[str] | None = None, *, embedder=None) -> int:
 
     pseudonym = args.studio.name
     sessions = [s.strip() for s in args.sessions.split(",") if s.strip()]
+    probe_kind: str | None = None if args.probe_kind == "none" else args.probe_kind
+    if probe_kind == "auto":
+        try:
+            have = {c.session_id for c in StudioStore(args.studio, pseudonym).clips() if c.kind == "words"}
+        except Exception:  # noqa: BLE001 -- surfaced properly by calibrate_from_studio below
+            have = set()
+        probe_kind = "words" if sessions and all(s in have for s in sessions) else None
+        print(f"probes: {'six-words clips scored whole' if probe_kind else 'every clip cut into chunks (not every session has six-words clips)'}")
     cohort_files = args.cohort or [Path(f) for f in sorted(glob.glob(str(cfg.data_dir / "cohort" / "emb" / "*@5s.npz")))]
     if not cohort_files:
         print("refused: no cohort embedding files found (build them with the cohort embedding step first)", file=sys.stderr)
@@ -466,7 +489,7 @@ def main(argv: list[str] | None = None, *, embedder=None) -> int:
     try:
         result = calibrate_from_studio(
             StudioStore(args.studio, pseudonym), sessions, embedder=embedder, cohort_files=cohort_files,
-            probe_seconds=args.probe_seconds, exclude_speakers=set(args.exclude_speaker or [pseudonym]),
+            probe_seconds=args.probe_seconds, probe_kind=probe_kind, exclude_speakers=set(args.exclude_speaker or [pseudonym]),
             far_target=args.far_target, out=None if args.dry_run else args.out,
         )
     except ValueError as exc:

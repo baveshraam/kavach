@@ -57,3 +57,50 @@ def test_the_estimate_is_positive_and_grows_with_repeats() -> None:
 def test_there_are_two_held_out_sessions_so_the_session_interval_can_mean_something() -> None:
     """One held-out sitting is one cluster; the false-reject interval needs at least two."""
     assert "S4" in RECIPES and "S5" in RECIPES
+
+
+# ---- the 'words' kind: the login's own task, so the calibration measures what the login will see ----
+
+
+def words_items(session):
+    return [i for i in build_plan(session, facts("hometown")) if i.kind == "words"]
+
+
+def test_every_session_asks_for_the_phrase_task_once_per_take_with_different_words() -> None:
+    items = words_items("S1")
+    assert len(items) == RECIPES["S1"].words
+    assert all(i.repeat == 1 for i in items)
+    assert len({i.text_ta for i in items}) == len(items)
+
+
+def test_each_prompt_is_six_random_pool_words() -> None:
+    from kavach.phrase import WORDS
+
+    for i in words_items("S2"):
+        shown = i.text_ta.split(": ", 1)[1].split(", ")
+        assert len(shown) == 6 and set(shown) <= set(WORDS)
+
+
+def test_the_words_are_the_same_every_time_the_plan_is_built() -> None:
+    """The page rebuilds the plan on every refresh and keeps its place by index: a plan that
+    changed between requests would silently re-order a sitting."""
+    assert [i.text_ta for i in words_items("S3")] == [i.text_ta for i in words_items("S3")]
+
+
+def test_different_sessions_get_different_words() -> None:
+    assert {i.text_ta for i in words_items("S1")}.isdisjoint({i.text_ta for i in words_items("S2")})
+
+
+def test_the_held_out_sessions_have_phrase_probes_too() -> None:
+    assert RECIPES["S4"].words >= 10 and RECIPES["S5"].words >= 10
+
+
+def test_the_estimate_counts_them() -> None:
+    items = build_plan("S1", [])
+    assert estimate_minutes(items) > estimate_minutes([i for i in items if i.kind != "words"])
+
+
+def test_the_store_accepts_the_kind() -> None:
+    from kavach.studio.store import KINDS
+
+    assert "words" in KINDS
