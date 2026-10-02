@@ -173,7 +173,7 @@ export const apiClient = {
     return fetchApi(`/api/utterances/${id}`, { method: 'DELETE' });
   },
 
-  issueChallenge: async (speakerId: string, kind: 'question' | 'phrase' = 'question'): Promise<Challenge> => {
+  issueChallenge: async (speakerId: string, kind: 'question' | 'phrase' = 'question', stepUp = false): Promise<Challenge> => {
     if (USE_MOCK) {
       return delay(300).then(() => ({
         id: `chg_${Math.random().toString(36).substr(2, 6)}`,
@@ -181,6 +181,7 @@ export const apiClient = {
         questionText: kind === 'phrase' ? 'Please read aloud, clearly: tiger, river, mango, window, candle, silver' : 'உங்க college-la first year-la எந்த hostel-la இருந்தீங்க?',
         kind,
         phrase: kind === 'phrase' ? ['tiger', 'river', 'mango', 'window', 'candle', 'silver'] : [],
+        stepUp,
         targetClass: 'PLACE_LOCAL',
         expectedAnswerEntity: 'Hostel A',
         issuedAt: new Date().toISOString(),
@@ -190,7 +191,7 @@ export const apiClient = {
     return fetchApi('/api/challenge', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ speakerId, kind })
+      body: JSON.stringify({ speakerId, kind, stepUp })
     });
   },
 

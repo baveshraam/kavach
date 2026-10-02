@@ -288,3 +288,48 @@ class TestThrottle:
         for _ in range(6):
             self.fail_once(client, pipeline, tmp_path, speaker)
         assert client.post("/api/challenge", json={"speakerId": speaker, "kind": "phrase"}).status_code == 200
+
+
+class TestStepUp:
+    """A borderline voice earns one more, stricter, sample. Only the server can grant it."""
+
+    def borderline(self, client, pipeline, tmp_path, sid):
+        c = issue(client, sid)
+        result, _ = login(client, pipeline, tmp_path, c, heard=" ".join(c["phrase"]), cosine=0.58)
+        assert result["decision"] == "BORDERLINE"
+
+    def step_up(self, client, sid):
+        return client.post("/api/challenge", json={"speakerId": sid, "kind": "phrase", "stepUp": True})
+
+    def test_a_borderline_voice_earns_a_step_up_challenge(self, client, pipeline, speaker, tmp_path):
+        self.borderline(client, pipeline, tmp_path, speaker)
+        r = self.step_up(client, speaker)
+        assert r.status_code == 200
+        assert r.json()["stepUp"] is True and r.json()["kind"] == "phrase"
+
+    def test_the_second_sample_must_pass_outright__no_grey_band(self, client, pipeline, speaker, tmp_path):
+        self.borderline(client, pipeline, tmp_path, speaker)
+        c = self.step_up(client, speaker).json()
+        result, _ = login(client, pipeline, tmp_path, c, heard=" ".join(c["phrase"]), cosine=0.58)
+        assert result["decision"] == "REJECT"
+
+    def test_a_clear_second_sample_is_accepted(self, client, pipeline, speaker, tmp_path):
+        self.borderline(client, pipeline, tmp_path, speaker)
+        c = self.step_up(client, speaker).json()
+        result, _ = login(client, pipeline, tmp_path, c, heard=" ".join(c["phrase"]), cosine=0.72)
+        assert result["decision"] == "ACCEPT"
+
+    def test_a_step_up_cannot_be_asked_for_without_a_borderline_attempt(self, client, speaker):
+        r = self.step_up(client, speaker)
+        assert r.status_code == 409
+        assert "borderline" in r.json()["detail"].lower()
+
+    def test_a_step_up_is_granted_once(self, client, pipeline, speaker, tmp_path):
+        self.borderline(client, pipeline, tmp_path, speaker)
+        assert self.step_up(client, speaker).status_code == 200
+        assert self.step_up(client, speaker).status_code == 409
+
+    def test_a_clear_reject_earns_no_step_up(self, client, pipeline, speaker, tmp_path):
+        c = issue(client, speaker)
+        login(client, pipeline, tmp_path, c, heard=" ".join(c["phrase"]), cosine=0.2)
+        assert self.step_up(client, speaker).status_code == 409

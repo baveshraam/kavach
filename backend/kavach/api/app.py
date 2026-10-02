@@ -587,7 +587,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 headers={"Retry-After": str(seconds)},
             )
         try:
-            challenge = pipeline.issue_challenge(payload.speaker_id, kind=payload.kind)
+            challenge = pipeline.issue_challenge(
+                payload.speaker_id, kind=payload.kind, step_up=payload.step_up
+            )
         except ChallengeError as exc:
             raise HTTPException(409, str(exc)) from exc
         return conv.challenge_to_wire(challenge, reveal_answer=cfg.demo_reveal_answers)

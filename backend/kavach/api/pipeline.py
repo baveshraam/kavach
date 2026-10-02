@@ -47,6 +47,7 @@ from ..embedding import ECAPAEmbedder, SpeakerTemplate
 from ..fusion import (
     Branch,
     BranchScore,
+    Decision,
     FusionPolicy,
     FusionResult,
     build_liveness_branch,
@@ -129,6 +130,8 @@ class Pipeline:
         self.settings = settings or get_settings()
         self.store = store
         self.ledger = ChallengeLedger(ttl_seconds=self.settings.challenge_ttl_seconds)
+        self._step_up: dict[str, float] = {}
+        """speaker_id -> when their last attempt was borderline (a step-up is on offer)."""
         self.throttle = AttemptThrottle(
             enabled=self.settings.throttle_enabled,
             free_attempts=self.settings.throttle_free_attempts,
@@ -667,21 +670,37 @@ class Pipeline:
             return bank
         return None
 
+    #: How long after a borderline attempt a step-up challenge may be requested.
+    STEP_UP_WINDOW_SEC = 120.0
+
     def issue_challenge(
-        self, speaker_id: str, *, kind: str = "question", strict_voice: bool = False
+        self, speaker_id: str, *, kind: str = "question", step_up: bool = False
     ) -> Challenge:
         """Generate a challenge for a login attempt.
 
         `kind="phrase"` is the 'read these random words' login: it needs no facts and no
         language tagger. `kind="question"` is the adaptive personal-question login.
 
+        `step_up=True` asks for the stricter second sample a borderline voice earns: the
+        voice must pass outright, with no inconclusive band. Only the server knows whether
+        the previous attempt was borderline, and it grants one step-up per borderline attempt.
+
         Raises:
-            ChallengeError: If a question is asked of a speaker with no
-                knowledge-graph facts.
+            ChallengeError: If a question is asked of a speaker with no knowledge-graph
+                facts, or a step-up is requested without a recent borderline attempt.
         """
+        if step_up:
+            if kind != "phrase":
+                raise ChallengeError("A step-up challenge is a read-these-words challenge.")
+            earned = self._step_up.pop(speaker_id, None)
+            if earned is None or time.monotonic() - earned > self.STEP_UP_WINDOW_SEC:
+                raise ChallengeError(
+                    "A second sample is only offered after a borderline attempt; "
+                    "there is none to follow up."
+                )
         if kind == "phrase":
             return self.challenges.generate_phrase(
-                speaker_id, n_words=self.settings.phrase_words, strict_voice=strict_voice
+                speaker_id, n_words=self.settings.phrase_words, strict_voice=step_up
             )
         skg = self.store.get_skg(speaker_id)
         if len(skg) == 0:
@@ -711,6 +730,10 @@ class Pipeline:
         )
         if outcome.speaker_id and measured:
             self.throttle.record(outcome.speaker_id, accepted=outcome.fusion.accepted)
+            if outcome.fusion.decision is Decision.BORDERLINE:
+                self._step_up[outcome.speaker_id] = time.monotonic()
+            else:
+                self._step_up.pop(outcome.speaker_id, None)
         return outcome
 
     def _verify(self, challenge_id: str, audio_bytes: bytes, *, extension: str) -> VerificationOutcome:
