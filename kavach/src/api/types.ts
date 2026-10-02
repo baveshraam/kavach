@@ -130,7 +130,7 @@ export interface AttackRun {
   notes?: string[];
 }
 
-export interface StudioPlanItem { kind: 'read' | 'free' | 'fact'; promptId: string; textEn: string; textTa: string; repeat: number }
+export interface StudioPlanItem { kind: 'read' | 'free' | 'fact' | 'words'; promptId: string; textEn: string; textTa: string; repeat: number }
 export interface StudioPlan {
   speaker: string; sessionId: string; hasFacts: boolean; estimatedMinutes: number;
   devices: string[]; environments: string[]; items: StudioPlanItem[];

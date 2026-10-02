@@ -33,7 +33,7 @@ from typing import Any
 from ..audio import Audio, check_quality, save_wav
 from ..corpus import Environment
 
-KINDS = ("read", "free", "fact")
+KINDS = ("read", "free", "fact", "words")
 DEVICES = ("DEMO_LAPTOP_MIC", "PHONE", "HEADSET", "OTHER")
 ENVIRONMENTS = tuple(e.value for e in Environment)
 INDEX_FILE = "index.jsonl"
