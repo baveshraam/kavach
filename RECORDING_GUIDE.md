@@ -1,4 +1,4 @@
-# Recording guide — about two and a half to three hours
+# Recording guide — about three hours (you can stop after S3 and come back for S4 and S5)
 
 You are recording your own voice so the system can be measured on **you**, on sessions it has never
 heard. Everything stays on this laptop under `data/studio/S04/` (git-ignored). Nothing is uploaded.
@@ -37,6 +37,9 @@ adjust anything after seeing them.
 - **Naturally**, at the volume and distance you will use in the demo. Do not over-enunciate.
 - **Free prompts:** answer in your own Tamil-English mix, 20-40 seconds. Do not translate; say it the
   way you would to a friend.
+- **Six words:** every session also asks for six random words ("Say: tiger, river, mango ...") a dozen
+  times. This is exactly what the Unlock screen asks for, so these clips are what the demo's voice
+  threshold is measured on. Read them the way you will on stage: one breath, normal pace, then stop.
 - **Read-aloud sentences:** the same sentence many times is the point (it is the same-sentence test).
   Vary it a little between takes the way you naturally would; do not perform it.
 - **Mistakes:** if you stumble, press **Redo** before saving. Saved clips are never overwritten.
@@ -52,24 +55,41 @@ refuses to save a clip whose device or room differs from its session's, so a mix
 Nothing already saved is lost or duplicated, and a recording cut short by a crash is quarantined, not
 lost.
 
-## When you are done
+## When you are done: four commands, in this order
 
-Tell me the session ids. I will run the evaluation:
+Stop the Studio first (close its window), then from the repo folder:
 
 ```
+# 1. The evidence for the claim: S1-S3 enrol, S4 and S5 never enrolled
 PYTHONPATH=backend .venv/Scripts/python.exe -m kavach.eval.enrollee \
     --studio data/studio/S04 --enrol-sessions S1,S2,S3 --test-sessions S4,S5 \
-    --impostors data/corpus_v2/manifest.json --impostors data/corpus_v3/manifest.json \
-    --exclude-speaker S04
+    --impostors data/corpus_v2/manifest.json --impostors data/corpus_v3/manifest.json
+
+# 2. The demo's voice threshold, measured: each session scored against the other four
+PYTHONPATH=backend .venv/Scripts/python.exe -m kavach.calibrate_voice --sessions S1,S2,S3,S4,S5
+
+# 3. Enrol the demo from all five sessions (the database is backed up first)
+PYTHONPATH=backend .venv/Scripts/python.exe -m kavach.studio.enrol --speaker S04 --sessions S1,S2,S3,S4,S5
+
+# 4. Start the demo (run_demo.ps1), then check it
+PYTHONPATH=backend .venv/Scripts/python.exe -m kavach.demo_check --flows
 ```
 
-The report starts with what it can and cannot claim. It is one enrolled speaker, measured on a held-out
-session, against 11 other recorded people. It is evidence about *your* enrolment, not about people in
-general, and it says so in its own first paragraph.
+What each does:
 
-Two things to know before you quote a number from it. The intervals are never narrower than a plain Wilson
-interval, and with fewer than five sessions (or no errors at all) the report says the cluster interval is
-*not informative* rather than printing a tight range. And the template it scores against is built from the
-enrolment sessions you name, not from the demo's live enrolment: re-enrol the demo from those same
-sessions before saying the numbers describe it. Per-trial scores are written to
-`data/studio/S04/eval/trials.csv` (git-ignored) so any figure can be audited.
+1. **The evidence report.** It starts with what it can and cannot claim: one enrolled speaker, measured on
+   held-out sessions, against other recorded people. It is evidence about *your* enrolment, not about people in
+   general, and says so in its first paragraph. The intervals are never narrower than a plain Wilson interval,
+   and with fewer than five sessions (or no errors) it says the cluster interval is *not informative* rather than
+   printing a tight range. Per-trial scores are written to `data/studio/S04/eval/trials.csv`.
+2. **The calibration.** Chooses the voice threshold midway between where strangers stop and where *you* start,
+   from your six-word clips against the public cohorts (LibriSpeech, Google's Tamil speakers) and the 11 corpus
+   speakers. Writes `data/voice_policy.json`; the demo loads it at start. If it says `provisional` or not `ready`,
+   it tells you why (usually: record another session).
+3. **The enrolment.** Replaces the demo's voiceprint (built from phone recordings) with one built from the
+   same browser-microphone path the login uses, and records what it was built from.
+4. **The preflight.** Fails loudly if the voice gate is off, the policy is damaged, or a synthetic stranger
+   gets in. Then do one live read-through on the real microphone: nothing replaces it.
+
+Numbers from step 1 describe a template built from S1-S3; the demo's final template (step 3) adds S4 and S5, so
+it is at least as well informed. Say so when you quote them.
