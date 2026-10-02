@@ -19,19 +19,28 @@ def gauss(mean, sd, n, seed):
     return np.random.default_rng(seed).normal(mean, sd, n)
 
 
-def test_well_separated_scores_put_the_threshold_midway_so_the_margin_is_the_same_on_both_sides():
+def test_well_separated_scores_put_the_threshold_between_the_edges_and_nearer_the_owner():
+    """The owner can retry (a second sample, another attempt); a stranger is owed nothing. So the
+    margin is not split evenly: the threshold sits 60% of the way up from the strangers' tail."""
     g, i = gauss(0.85, 0.05, 200, 1), gauss(0.20, 0.10, 5000, 2)
     op = choose_operating_point(g, i)
     worst_stranger = float(np.quantile(i, 0.999))
     owner_edge = float(np.quantile(g, 0.01))
     assert worst_stranger < op.threshold < owner_edge
-    assert (op.threshold - worst_stranger) == pytest.approx(owner_edge - op.threshold, abs=1e-6)
+    assert op.threshold == pytest.approx(worst_stranger + 0.6 * (owner_edge - worst_stranger), abs=1e-6)
     assert op.floor < op.threshold and op.floor > worst_stranger
     assert op.frr_at_threshold == 0.0 and op.far_at_threshold == 0.0
     assert op.ready
 
 
-def test_a_threshold_at_the_edge_of_the_strangers_would_leave_no_margin__the_midpoint_does():
+def test_an_easy_cohort_cannot_pull_the_threshold_below_what_hard_voices_reach():
+    """Public voices are easier than a same-room judge. Against the corpus speakers the nearest
+    stranger reached 0.60, so no cohort, however easy, may justify a threshold under the minimum."""
+    g, i = gauss(0.90, 0.03, 200, 1), gauss(0.05, 0.05, 5000, 2)
+    assert choose_operating_point(g, i).threshold >= MIN_THRESHOLD >= 0.55
+
+
+def test_a_threshold_at_the_edge_of_the_strangers_would_leave_no_margin__this_one_does():
     g, i = gauss(0.85, 0.05, 200, 1), gauss(0.30, 0.08, 5000, 2)
     op = choose_operating_point(g, i, far_target=0.001)
     assert op.threshold - float(np.quantile(i, 0.999)) > 0.05
