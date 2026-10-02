@@ -594,6 +594,20 @@ class TestFusion:
         assert result.decision is Decision.BORDERLINE
         assert any("inconclusive" in line for line in result.explanation)
 
+    def test_a_replay_is_not_explained_as_a_splice(self):
+        """The demo's replay clip is a byte-identical stored recording. Telling
+        the audience 'a spliced file can carry a perfect voiceprint' beside it
+        names an attack that did not happen."""
+        result = fuse([
+            branch(Branch.SPEAKER, 0.95),
+            BranchScore(
+                branch=Branch.INTEGRITY, score=0.0, threshold=0.25, weight=0.0,
+                detail="Byte-identical to a previously submitted recording (utt_x).",
+            ),
+        ])
+        assert result.decision is Decision.REJECT
+        assert "splice" not in " ".join(result.explanation).lower(), result.explanation
+
     def test_it_reports_the_weight_each_branch_actually_carried(self):
         """Callers pass a placeholder `weight=0.0` and the policy owns the real
         one, so the UI showed 'w 0.00' beside branches carrying 40% of the

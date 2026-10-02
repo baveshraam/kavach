@@ -289,9 +289,10 @@ def fuse(
                 explanation=[
                     "Rejected: this recording shows signs of having been edited or "
                     "resubmitted. " + (integrity.detail or ""),
-                    "A spliced file can carry a perfect voiceprint, because it is made "
-                    "of the real speaker's voice -- so a strong acoustic match is not a "
-                    "reason to accept it, and no branch overrides this.",
+                    "An edited or resubmitted file can carry a perfect voiceprint, "
+                    "because it is made of the real speaker's own voice -- so a strong "
+                    "acoustic match is not a reason to accept it, and no branch "
+                    "overrides this.",
                 ],
                 contributing_branches=[],
             )
