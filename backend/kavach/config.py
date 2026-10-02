@@ -212,23 +212,33 @@ class Settings(BaseSettings):
     and reports the CSBG branch unmeasured."""
 
     # -------------------------------------------------------- integrity
-    integrity_check_splice: bool = True
-    """Run the edit-artefact (splice) tests in the integrity gate.
+    integrity_check_splice: bool = False
+    """Run the edit-artefact (splice) tests in the integrity gate. Off.
 
-    **Measured on real recordings, 2026-09-29: the splice tests reject 167 of
-    168 genuine corpus clips** (every speaker, both corpora). `INTEGRITY_FLOOR`
-    was calibrated on synthetic audio, and real phone audio is full of what
-    those tests call edits: AAC / Opus decoders emit runs of exact zeros (the
-    "digital silence no microphone produces") and sample-level jumps (the
-    "hard cut mid-utterance"). A gate with a 99% false-reject rate locks out
-    every genuine user and no branch can overrule it.
+    **Measured on the 168 genuine corpus clips, 2026-10-02 (reproduce with
+    `python -m kavach.calibrate_integrity`): the tests reject 167 of them**,
+    every speaker, both corpora. Three separate causes, none of them a
+    threshold that a floor can move:
 
-    Default stays on so the tests and the calibration record are unchanged;
-    `run_demo.ps1` turns it off. The duplicate / re-encoding (replay) test is
-    unaffected and always runs. The fix is to re-calibrate `attacks.splice`
-    on the genuine corpus plus splices built from it -- `calibrate_floor`
-    exists for this -- not to lower the floor by reasoning, which is how the
-    floor went wrong the first time."""
+    * exact-zero runs sit at the *edges* of 75 clips -- decoder padding, not
+      an edit; only 6 clips have an interior run at all;
+    * the click test fires 19-256 times per genuine clip (per-speaker
+      median), on ordinary fricatives, so it cannot single out a join;
+    * the background-step test sees a median 6 dB level step across genuine
+      pauses against a 4 dB threshold -- real pauses are reverb tails, not
+      stationary room tone.
+
+    Retuning does not rescue it. At a matched duration, splices built from a
+    speaker's own clips (the only kind this corpus can make) are not separable
+    from genuine windows by any cue: AUC 0.50-0.62, and 0-12% detection at a
+    1-5% false-reject rate. The best click setting finds 59% of known hard-cut
+    joins while flagging 100% of genuine files. `calibrate_floor` reports no
+    feasible floor, which is its own instruction to leave the gate off.
+
+    The duplicate / re-encoding (replay) test is unaffected and always runs.
+    Turn this on only after re-running the calibration on audio where it
+    separates the classes; do not lower the floor by reasoning, which is how
+    the floor went wrong the first time."""
 
     # ------------------------------------------------------------- API
     api_host: str = "127.0.0.1"

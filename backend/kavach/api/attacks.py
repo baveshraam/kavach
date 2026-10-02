@@ -62,7 +62,7 @@ from typing import Any
 
 from ..attacks import AttackType, StyleSource
 from ..attacks.clone import CloneBatchStats
-from ..attacks.splice import SpliceConfig, splice_segments
+from ..attacks.splice import SpliceConfig, detect_splice, splice_segments
 from ..attacks.suite import (
     MIN_TRIALS_PER_CELL,
     AttackSuite,
@@ -133,10 +133,11 @@ DEFEATED_BY: dict[AttackType, str] = {
     AttackType.A2_SPLICE: (
         "A2 defeats all four *fusion* configurations, and that is the honest result: "
         "the attacker uses the victim's real voice, their real words, and answers "
-        "the live challenge, so every identity branch is satisfied. What stops a "
-        "splice is signal evidence, not fusion -- the integrity gate builds the "
-        "spliced file from this speaker's own recordings and looks for the joins. "
-        "Read the integrity column, not the fusion columns, for whether A2 works."
+        "the live challenge, so every identity branch is satisfied. What could stop "
+        "a splice is signal evidence, not fusion -- so read the integrity column, "
+        "not the fusion columns. Whether the edit-artefact tests actually do is "
+        "stated in the integrity note on this run: they are off by default because "
+        "they have not been shown to separate splices from genuine phone recordings."
     ),
     AttackType.A3_CLONE: (
         "A3 is stopped by the knowledge branch: the attacker has the voice but not "
@@ -373,7 +374,19 @@ def run_attack(
     if attack.is_synthetic_speech:
         suite.record_yield(attack, stats)
 
-    notes.extend(_integrity_notes(attack, built, suite, ungated))
+    splice_on = pipeline.settings.integrity_check_splice
+    notes.extend(
+        _integrity_notes(
+            attack,
+            built,
+            suite,
+            ungated,
+            splice_on=splice_on,
+            genuine=_genuine_flagged(victim_clips, pipeline.integrity.floor)
+            if splice_on
+            else None,
+        )
+    )
 
     table = suite.table()
     # The id comes from `new_id`, not from `rng`. `rng` is deliberately seeded
@@ -411,11 +424,32 @@ def run_attack(
 SPLICE_SEGMENTS = 3
 
 
+def _genuine_flagged(clips: list[Audio], floor: float) -> tuple[int, int]:
+    """How many of the victim's own recordings the edit tests reject unaided.
+
+    The denominator a catch rate needs. A detector that flags every recording
+    catches 100% of splices, and on the real corpus the edit tests reject 167
+    of 168 genuine clips -- so "N of M attacks caught" means nothing until this
+    is printed beside it.
+    """
+    flagged = 0
+    for clip in clips:
+        try:
+            if 1.0 - detect_splice(clip).score < floor:
+                flagged += 1
+        except AudioError:
+            continue
+    return flagged, len(clips)
+
+
 def _integrity_notes(
     attack: AttackType,
     trials: list[AttackTrial],
     gated: AttackSuite,
     ungated: AttackSuite,
+    *,
+    splice_on: bool,
+    genuine: tuple[int, int] | None,
 ) -> list[str]:
     """State what the integrity gate caught, and what fusion would have done.
 
@@ -423,18 +457,41 @@ def _integrity_notes(
     the counterfactual alone reads as the system failing. Together they say the
     true thing, which is that one specific component earns this row and the
     fusion the paper is about does not.
+
+    Only the tests that actually ran are credited. With the edit tests off the
+    checker still scores the spliced waveform, but only the duplicate test can
+    fire, so a row of zeros is about replays and says nothing about splices.
     """
+    lines: list[str] = []
+    if attack is AttackType.A2_SPLICE and not splice_on:
+        lines.append(
+            "Edit-artefact (splice) detection is disabled: on phone-recorded audio "
+            "it flagged nearly every genuine recording and no threshold separated "
+            "splices from genuine speech (`python -m kavach.calibrate_integrity`). "
+            "The integrity column for A2 therefore measures nothing about splices; "
+            "treat A2 as not stopped at the signal level."
+        )
+
     measured = [t.integrity_score for t in trials if t.integrity_score is not None]
     if not measured:
-        return []
+        return lines
 
     caught = sum(1 for s in measured if s < INTEGRITY_FLOOR)
-    lines = [
+    ran = "edit- and duplicate-artefact tests" if splice_on else "duplicate (replay) test only"
+    lines.append(
         f"Integrity gate: {caught}/{len(measured)} of these attacks were caught by "
-        f"edit- and duplicate-artefact tests on the audio itself "
+        f"the {ran} on the audio itself "
         f"({caught / len(measured):.0%}). This column is measured, not modelled -- "
         "the waveforms were built from this speaker's own recordings."
-    ]
+    )
+    if genuine is not None and genuine[1]:
+        flagged, total = genuine
+        lines.append(
+            f"Of this speaker's {total} genuine recordings, {flagged} "
+            f"({flagged / total:.0%}) trip the same edit-artefact tests on their own. "
+            "Read the catch rate above against that: a test that flags genuine "
+            "speech catches attacks only by flagging everything."
+        )
 
     gated_worst = _worst_iapmr(gated, attack)
     ungated_worst = _worst_iapmr(ungated, attack)

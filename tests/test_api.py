@@ -1212,6 +1212,78 @@ class TestAttackLab:
             )
             assert any(DEFEATED_BY[attack] == n for n in run.notes), attack
 
+    def _with_audio(self, store: Store, speaker_id: str, n: int = 3) -> None:
+        """Real, readable recordings: `enrol_tokens` stores unreadable stubs."""
+        for seed in range(n):
+            store.add_utterance(
+                speaker_id=speaker_id,
+                type="free-speech",
+                audio_bytes=wav_bytes(seconds=4.0, seed=seed),
+                extension=".wav",
+                duration_sec=4.0,
+                sample_rate=16_000,
+            )
+
+    def _pipeline(self, store: Store, settings: Settings, *, splice: bool) -> Pipeline:
+        return Pipeline(store, settings.model_copy(update={"integrity_check_splice": splice}))
+
+    def test_a2_says_so_when_splice_detection_is_off(
+        self, store: Store, settings: Settings
+    ) -> None:
+        """With the edit tests off, an A2 row measures nothing about splices.
+
+        The lab built a spliced waveform and ran the checker on it; if the
+        checker never looked for edits, "0 of N caught" is a statement about
+        the duplicate test. Saying "edit- and duplicate-artefact tests" there,
+        or that the gate "looks for the joins", credits a defence that did not
+        run.
+        """
+        victim = self._corpus(store)
+        self._with_audio(store, victim)
+        run = run_attack(
+            attack=AttackType.A2_SPLICE, speaker_id=victim, trials=20,
+            store=store, pipeline=self._pipeline(store, settings, splice=False),
+        )
+
+        text = " ".join(run.notes)
+        assert "splice) detection is disabled" in text, run.notes
+        assert "looks for the joins" not in text, run.notes
+        assert "edit- and duplicate-artefact tests" not in text, run.notes
+
+    def test_a1_is_not_told_about_the_splice_tests(
+        self, store: Store, settings: Settings
+    ) -> None:
+        victim = self._corpus(store)
+        self._with_audio(store, victim)
+        run = run_attack(
+            attack=AttackType.A1_REPLAY, speaker_id=victim, trials=20,
+            store=store, pipeline=self._pipeline(store, settings, splice=False),
+        )
+        assert "detection is disabled" not in " ".join(run.notes), run.notes
+
+    def test_a_catch_rate_comes_with_the_genuine_reject_rate(
+        self, store: Store, settings: Settings
+    ) -> None:
+        """A detector that flags everything catches 100% of attacks.
+
+        With the edit tests on, "N of M attacks caught" is only readable next
+        to how many of this speaker's own genuine recordings trip the same
+        tests -- the number that showed 167 of 168 on the real corpus.
+        """
+        import re
+
+        victim = self._corpus(store)
+        self._with_audio(store, victim, n=3)
+        run = run_attack(
+            attack=AttackType.A2_SPLICE, speaker_id=victim, trials=20,
+            store=store, pipeline=self._pipeline(store, settings, splice=True),
+        )
+
+        text = " ".join(run.notes)
+        match = re.search(r"Of this speaker's (\d+) genuine recordings, (\d+)", text)
+        assert match, f"no genuine false-reject statement in {run.notes}"
+        assert int(match.group(1)) == 3
+
     def test_a_budget_larger_than_the_corpus_is_labelled_oracle(
         self, store: Store, pipeline: Pipeline
     ) -> None:

@@ -437,3 +437,43 @@ class TestRobustness:
         tiny = Audio(np.zeros(64, dtype=np.float32) + 0.01, SR, "tiny")
         report = IntegrityChecker(check_replay=False).check(tiny)
         assert report.score >= INTEGRITY_FLOOR
+
+
+class TestSpliceDetectionIsNotValidated:
+    """The splice tests were calibrated on synthetic audio and never validated.
+
+    Measured on the 168 genuine corpus clips (see `kavach.calibrate_integrity`):
+    they reject 167 of them, and at a matched duration no cue -- click rate,
+    background step, spectral step, interior digital silence -- separates a
+    same-sitting splice from a genuine recording (AUC 0.50-0.62). So the
+    detector stays off until something separates them, and nothing it reports
+    may read as though an edit check had run.
+    """
+
+    def test_splice_detection_is_off_by_default(self) -> None:
+        from kavach.config import Settings
+
+        assert Settings.model_fields["integrity_check_splice"].default is False, (
+            "A fresh `uvicorn` would reject every genuine login: this gate has a "
+            "99% false-reject rate on real phone audio and no other branch can "
+            "overrule it."
+        )
+
+    def test_a_report_does_not_claim_edit_checks_that_did_not_run(self) -> None:
+        report = IntegrityChecker(check_splice=False).check(speechlike(seed=1))
+
+        text = " ".join(report.reasons)
+        assert "No edit" not in text, (
+            "With splice detection off nothing looked for edits, so 'no edit "
+            f"artefacts found' is false assurance. Got: {report.reasons}"
+        )
+        assert "edit" in text.lower() and "off" in text.lower(), (
+            f"The report should say edit detection is off. Got: {report.reasons}"
+        )
+
+    def test_with_both_checks_on_the_wording_is_unchanged(self) -> None:
+        report = IntegrityChecker(check_splice=True, check_replay=True).check(
+            speechlike(seed=2)
+        )
+        assert report.score == 1.0, "seed 2 is the clean control; no detector may speak"
+        assert report.reasons == ["No edit or duplicate artefacts found."]

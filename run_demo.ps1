@@ -16,8 +16,9 @@ $env:PYTHONIOENCODING = "utf-8"
 
 # Demo switches, set for this process only -- not in .env, which the test
 # suite also reads (HANDOFF trap 4: a suite must not inherit its environment).
-#  - The splice tests reject 167/168 *genuine* corpus clips (codec artefacts
-#    read as edits); see Settings.integrity_check_splice. Replay detection stays on.
+#  - Splice detection is off by default now (it rejected 167/168 genuine corpus
+#    clips and no cue separates splices; `python -m kavach.calibrate_integrity`);
+#    stated here so the demo does not depend on the default. Replay detection stays on.
 #  - Load Whisper / ECAPA / LaBSE at start-up, not on the first login.
 #  - The CSBG veto was fitted on dev and discarded by the offline runs (no FAR
 #    reduction inside the 2% FRR budget); see Settings.csbg_veto_enabled.
