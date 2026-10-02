@@ -116,6 +116,8 @@ class VerificationOutcome:
     """Edit-artefact evidence, kept separate from the fusion branches so a
     rejection can be explained with the specific artefact that caused it
     rather than with a bare score."""
+    phrase: Any = None
+    """The `PhraseMatch` of a phrase challenge (which shown words were heard), else None."""
 
 
 class Pipeline:
@@ -680,6 +682,32 @@ class Pipeline:
             return bank
         return None
 
+    def warm_inference(self) -> list[str]:
+        """Run one embedding and one transcription on synthetic audio, so the first login is not slow.
+
+        Loading a checkpoint is not the same as running it: the first forward pass initialises
+        kernels (measured on this machine: 8.8 s for the first login, 2-3 s after). Returns the
+        problems met, never raises: a model that fails here fails visibly at login anyway, and
+        must not take the server down at start-up. VAD is off for the transcription, because it
+        would discard synthetic noise before the decoder ran.
+        """
+        import numpy as np
+
+        problems: list[str] = []
+        sr = self.settings.target_sample_rate
+        noise = Audio((0.05 * np.random.default_rng(0).standard_normal(sr * 3)).astype(np.float32), sr, "warmup")
+        try:
+            if self.embedder is not None:
+                self.embedder.embed(noise, preprocess=False)
+        except Exception as exc:  # noqa: BLE001
+            problems.append(f"embedder warm-up failed: {exc}")
+        try:
+            if self.asr is not None:
+                self.asr.transcribe(noise, language="en", initial_prompt="", fast=True, vad_filter=False)
+        except Exception as exc:  # noqa: BLE001
+            problems.append(f"ASR warm-up failed: {exc}")
+        return problems
+
     @property
     def voice_threshold(self) -> float:
         """The accept threshold on the voice score: calibrated if a policy file is in force."""
@@ -972,6 +1000,7 @@ class Pipeline:
         threshold = self.settings.phrase_min_match
         asr = self.asr
         annotation: Annotation | None = None
+        match = None
         voice_audio, span_note = audio, ""
         if asr is None:
             reason = self._failed.get("asr", "speech recognition is not available")
@@ -1013,6 +1042,7 @@ class Pipeline:
             latency_ms=int((time.perf_counter() - started) * 1000),
             notes=notes,
             integrity=integrity,
+            phrase=match,
         )
 
     #: Margin kept around the phrase when the voice is scored on it alone.

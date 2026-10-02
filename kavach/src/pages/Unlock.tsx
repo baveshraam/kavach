@@ -292,9 +292,9 @@ export function Unlock() {
                     {attempts.map((a, i) => (
                       <li key={i} className="flex items-center gap-2 text-[12.5px]">
                         {a.decision === 'ACCEPT' ? <CheckCircle2 className="w-4 h-4 text-app-accept shrink-0" /> : a.decision === 'REJECT' ? <XCircle className="w-4 h-4 text-app-reject shrink-0" /> : <AlertTriangle className="w-4 h-4 text-app-warning shrink-0" />}
-                        <span className="tnum text-app-text-subtle w-[72px] shrink-0">{a.at}</span>
-                        <span className="tnum w-14 shrink-0">{a.voice !== undefined ? `voice ${a.voice.toFixed(2)}` : '—'}</span>
-                        <span className="text-app-text-muted truncate" title={a.note}>{a.decision === 'ACCEPT' ? 'unlocked' : a.note.replace(/^Rejected: /, '')}</span>
+                        <span className="tnum text-app-text-subtle whitespace-nowrap shrink-0">{a.at}</span>
+                        <span className="tnum whitespace-nowrap shrink-0 font-medium">{a.voice !== undefined ? a.voice.toFixed(2) : '—'}</span>
+                        <span className="text-app-text-muted truncate min-w-0" title={a.note}>{a.decision === 'ACCEPT' ? 'unlocked' : a.note.replace(/^Rejected: /, '')}</span>
                       </li>
                     ))}
                   </ul>
@@ -336,8 +336,12 @@ function Verdict({ result, challenge, name, threshold, margin, onAgain, onStepUp
   const ok = result.decision === 'ACCEPT';
   const border = result.decision === 'BORDERLINE';
   const tone = ok ? 'accept' : border ? 'warning' : 'reject';
-  const first = (result.explanation[0] ?? '').replace(/^(Rejected|ACCEPT|BORDERLINE|REJECT): ?/, '');
-  const got = heard(challenge.phrase, result.transcript);
+  const stripped = (result.explanation[0] ?? '').replace(/^(Rejected|ACCEPT|BORDERLINE|REJECT): ?/, '');
+  const first = stripped.charAt(0).toUpperCase() + stripped.slice(1);
+  // The backend says which words it matched; the browser-side guess is only for an old server.
+  const got = result.phraseMatched
+    ? challenge.phrase.map(w => result.phraseMatched!.includes(w))
+    : heard(challenge.phrase, result.transcript);
 
   const Row = ({ label, b, detail }: { label: string; b?: BranchScore; detail?: string }) => (
     <div className="flex items-center gap-3 text-[13px]">
@@ -374,7 +378,7 @@ function Verdict({ result, challenge, name, threshold, margin, onAgain, onStepUp
           <div className="text-app-text-subtle mb-1.5">What was heard</div>
           <div className="flex flex-wrap gap-1.5">
             {challenge.phrase.map((w, i) => (
-              <Badge key={i} tone={got[i] ? 'accept' : 'reject'}>{w}</Badge>
+              <Badge key={i} tone={got[i] ? 'accept' : 'reject'}>{got[i] ? w : `${w} · not heard`}</Badge>
             ))}
           </div>
           <p className="mt-2 text-app-text-muted italic">“{result.transcript}”</p>
