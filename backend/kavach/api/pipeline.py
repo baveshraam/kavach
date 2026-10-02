@@ -695,6 +695,16 @@ class Pipeline:
         pending = self.ledger.get(challenge_id)
         speaker_id = pending.speaker_id if pending else ""
 
+        # Decode BEFORE the challenge is consumed, but only for a challenge that
+        # could still be consumed. A file that cannot be read is a 400 and an
+        # invitation to retry on the same screen; if the challenge were spent
+        # first, the retry would be rejected as "the signature of a replay".
+        # Decoding is not a model, so the ledger-first rule (never spend a model
+        # pass on a dead challenge) still holds: a dead challenge is not decoded.
+        audio: Audio | None = None
+        if pending is not None and not pending.consumed and not pending.is_expired:
+            audio = decode_bytes(audio_bytes, suffix=extension)
+
         try:
             challenge = self.ledger.consume(challenge_id)
         except ChallengeError as exc:
@@ -726,7 +736,8 @@ class Pipeline:
             )
         ]
 
-        audio = decode_bytes(audio_bytes, suffix=extension)
+        if audio is None:  # the challenge expired between the check above and consume
+            audio = decode_bytes(audio_bytes, suffix=extension)
         quality = check_quality(
             audio,
             min_seconds=self.settings.min_audio_seconds,

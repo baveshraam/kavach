@@ -481,7 +481,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         if clip is None:
             raise HTTPException(404, "Not found.")
-        return FileResponse(bank.audio_file(clip), media_type="audio/wav")
+        try:
+            # Re-hashed on every serve: the bank is cached after its first load.
+            return FileResponse(bank.verified_audio_file(clip), media_type="audio/wav")
+        except BankError as exc:
+            raise HTTPException(503, f"The clone bank cannot be used: {exc}") from exc
 
     # ------------------------------------------------- challenge and auth
 

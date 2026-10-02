@@ -10,7 +10,7 @@ things stand and what is left.
 
 Executed from `docs/superpowers/plans/2026-10-02-clone-attack-bank.md` (spec:
 `docs/superpowers/specs/2026-10-02-clone-attack-bank-design.md`) on the branch
-`feature/clone-attack-bank`. **Nothing is pushed.** 1089 tests pass offline.
+`feature/clone-attack-bank`. **Nothing is pushed.** 1097 tests pass offline.
 
 ### What exists now
 
@@ -59,6 +59,40 @@ Executed from `docs/superpowers/plans/2026-10-02-clone-attack-bank.md` (spec:
 - **The live browser microphone path was not exercised** and must be rehearsed once.
 - Stage 2 (IndicF5, behind a go/no-go probe) is unplanned, as the spec says.
 - The 88-slide deck's screenshots predate the UI fixes and show `w 0.00`.
+
+### Independent review pass (fresh reviewer, whole branch) and what it changed
+
+0 Critical, 4 Important, 14 Minor. Fixed, each with a test that failed first (suite 1097/1097):
+
+1. A clip replaced or deleted *after* the bank was first loaded was still served (200) or raised a 500: the
+   hash was checked only at load and the loaded bank is cached. `verified_audio_file` now re-hashes on
+   every serve; a changed or missing file is a 503 with the reason.
+2. A garbage upload spent the challenge, so the retry the polite 400 invites was rejected as a replay.
+   `verify` now decodes before consuming (only for a challenge that could still be consumed).
+3. The Clone button showed whenever the flag was on, even with no bank; it now needs a bank that can answer
+   a question (`coveredFacts` non-empty). Checked in a browser: bank on, bank empty, bank off.
+4. The README's "never distribute" sentence was an invisible HTML comment that also broke the table.
+5. Re-graded up from Minor because they affect the honesty of numbers: the note and the row computed yield
+   two different ways (now one, against the current threshold); a clip with no real answer score fell back
+   to a constant inside a "measured" row (now left out, with a note); the preflight printed READY after a
+   503/500 in the clone flow (only a 404 means "no clone for this question"); the runbook claimed a warning
+   the preflight never gives.
+
+**Deferred minors** (not fixed; the user decides): lab falls back to modelled without a note when the bank
+is another speaker's or has no usable clips for that attack; failed bank loads are never cached (a broken
+bank is re-hashed per request) and the cache dict is created lazily inside `clone_bank()`; `demo_check`
+crashes with a traceback on a `TransportError` outside the clone loop instead of printing a FAIL line;
+`decode_bytes`'s docstring still says piping "avoids writing to disk", and ffmpeg has no timeout, no
+upload-size cap and no `-protocol_whitelist file` (a one-line hardening worth taking before exposing the
+server beyond localhost); `knn_vc.py` loads the hub repo unpinned (`trust_repo=True`) and never fills
+`backend_version`; `make_clone_bank --overwrite` deletes the old WAVs before the new bank is saved, so a
+crash mid-run leaves no bank; `annotate_bank` reports "LLM" whenever the tagger has no `last_llm_error`,
+uses beam ASR (`fast=False`) where live logins use the greedy path, and repeats the foreign-script filter
+instead of calling `Pipeline.annotate`; an expired challenge may get a 404 instead of a 409 on the match
+route if the ledger has pruned it; `GET /api/clone-bank` `problems` does not mention flagged clips; weak
+tests (one half of `test_ordinary_audio_is_not_caught_by_the_early_reject` can never fail, the "no other
+route serves the clone text" sweep checks only health and the speaker routes, the CLI-refusal test does not
+`delenv` `KAVACH_CLONE_VICTIMS`, nothing checks that the TypeScript `stagingCut` mirrors `cut_plan`).
 
 ### Rehearsal numbers (2026-10-02, S08 as stand-in presenter)
 
@@ -251,7 +285,7 @@ with the 12 speakers on disk; anything that needs more data stays pending.
 
 ## Current state
 
-- **1089 tests passing**, offline, in about 2-5 minutes on this laptop (as of 2026-10-02).
+- **1097 tests passing**, offline, in about 2-5 minutes on this laptop (as of 2026-10-02).
 - Working tree clean as of the last commit; **not pushed** -- see the 2026-10-02 updates.
 - Backend runs and serves the UI. All eight pages render, `tsc --noEmit` is
   clean, `vite build` succeeds, and the Graph Explorer now draws the SKG as
@@ -301,7 +335,7 @@ Neither of these depends on the script, so both survive into the paper:
 git clone https://github.com/PremKxmar/speech.git
 cd speech
 pip install -r requirements-core.txt
-pytest                    # expect 1089 passed
+pytest                    # expect 1097 passed
 ```
 
 The suite reaches no network and loads no checkpoint. Two autouse fixtures in

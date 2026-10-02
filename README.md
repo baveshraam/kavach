@@ -48,7 +48,7 @@ backend/kavach/         the system
     audio.py asr.py embedding.py matcher.py skg.py challenge.py fusion.py
 kavach/                 the frontend (Vite + React + TypeScript)
 participant_scripts/    read-speech scripts, one language profile per speaker
-tests/                  1089 tests, none of which need a GPU
+tests/                  1097 tests, none of which need a GPU
 ```
 
 Recording a corpus? Read **[RECORDING_PROTOCOL.md](RECORDING_PROTOCOL.md)**
@@ -109,7 +109,7 @@ answer, which the backend deliberately never sends.
 ### Tests
 
 ```bash
-pytest                                    # 1089 passed, ~2-5 min
+pytest                                    # 1097 passed, ~2-5 min
 pytest -m models                          # only the tests needing real checkpoints
 ```
 
@@ -193,8 +193,7 @@ is exactly one thing: the audio.
 | Absent | Why | How a recipient gets it |
 |---|---|---|
 | `recordings/`, `SpeechData/` — 168 audio files, 49 MB | Participant folder names are people's real first names sitting beside their voiceprints. Direct identifiers; nothing pseudonymises them until `kavach.ingest` runs. | Transferred out of band, by the corpus owner, only to someone the consent register covers. |
-| `data/` — 175 MB: `corpus_v1`–`v3`, manifests, `kavach.db` | Voiceprints next to hometowns, schools and family names. Not encrypted. | Rebuilt from the audio with `kavach.ingest`, or transferred with it. |
-<!-- data/attacks/clones/ holds synthetic clips of a consenting presenter (one voice); never distribute it. -->
+| `data/` — 175 MB: `corpus_v1`–`v3`, manifests, `kavach.db` | Voiceprints next to hometowns, schools and family names. Not encrypted. `data/attacks/clones/` also holds synthetic clips of one consenting presenter's voice: never distribute them. | Rebuilt from the audio with `kavach.ingest`, or transferred with it. |
 | `data/speakers*.csv`, `data/consent_register.csv` | The pseudonym→person mapping and the consent record. These are the *only* files that re-identify a speaker; keeping them beside the corpus would defeat the pseudonymisation. | Held by the corpus owner, outside this repository and outside `data/`. |
 | `.env` | API keys. `.env.example` lists the variable names. | Recipient supplies their own; any one provider key works and a free one will do. |
 | `.venv/`, `kavach/node_modules/`, `pretrained_models/` | Regenerable. | `pip install -r requirements.txt`, `npm install`; the speechbrain checkpoint downloads on first use. |

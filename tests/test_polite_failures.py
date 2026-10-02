@@ -200,3 +200,39 @@ class TestRealWorldFormats:
             pytest.skip(f"this ffmpeg build cannot encode {ext} with {codec}")
         audio = decode_bytes(out.read_bytes(), suffix=f".{ext}")
         assert audio.duration_sec == pytest.approx(10.0, abs=0.6), (ext, audio.duration_sec)
+
+
+class TestAnUnreadableUploadDoesNotUseUpTheChallenge:
+    """The polite 400 invites a retry on the same screen. Decoding used to happen
+    after the challenge was consumed, so the retry was rejected by the liveness
+    gate as "the signature of a replay attack"."""
+
+    @needs_ffmpeg
+    def test_a_retry_after_a_garbage_upload_still_has_its_challenge(self, client: TestClient) -> None:
+        cid = challenge_id(client)
+        first = client.post(
+            "/api/authenticate",
+            files={"audio": ("x.wav", b"not audio at all" * 50, "audio/wav")},
+            data={"challengeId": cid},
+        )
+        assert first.status_code == 400
+        second = client.post(
+            "/api/authenticate",
+            files={"audio": ("t.wav", wav(3.0), "audio/wav")},
+            data={"challengeId": cid},
+        )
+        body = second.json()
+        liveness = next(b for b in body["branches"] if b["name"] == "liveness")
+        assert liveness["passed"], body["explanation"]
+        assert "already been used" not in " ".join(body["explanation"]).lower()
+
+    def test_an_unknown_challenge_is_still_rejected_by_liveness_before_any_decoding(
+        self, client: TestClient
+    ) -> None:
+        response = client.post(
+            "/api/authenticate",
+            files={"audio": ("x.wav", b"not audio at all" * 50, "audio/wav")},
+            data={"challengeId": "chal_nope"},
+        )
+        assert response.status_code == 200
+        assert "liveness" in " ".join(response.json()["explanation"]).lower()

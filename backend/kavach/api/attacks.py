@@ -321,7 +321,7 @@ def run_attack(
     acoustic_source = "measured" if bank_clips else "modelled"
     if bank_clips:
         trials = min(max(1, trials), len(bank_clips))
-        notes.extend(_bank_notes(pipeline, attack, bank_clips))
+        notes.extend(_bank_notes(bank_clips, speaker_threshold))
 
     built: list[AttackTrial] = []
     for i in range(max(1, trials)):
@@ -667,32 +667,46 @@ def _bank_clips(
         return []
     if bank is None or bank.victim_speaker_id != speaker_id:
         return []
-    return bank.measured(attack)
+    clips = bank.measured(attack)
+    if _knows_answer(attack):
+        # The knowledge column of a measured row is the real answer matcher. A
+        # clip with no answer score (its fact was missing when it was annotated)
+        # would fall back to a constant and put a modelled number in a row
+        # labelled measured.
+        scored = [c for c in clips if c.answer_score is not None]
+        if len(scored) < len(clips):
+            notes.append(
+                f"{len(clips) - len(scored)} clone(s) were left out: their fact was missing "
+                "when they were annotated, so they have no real answer score, and a measured "
+                "row must not contain a modelled one."
+            )
+        return scored
+    return clips
 
 
-def _bank_notes(pipeline: Pipeline, attack: AttackType, clips: list[CloneClip]) -> list[str]:
-    bank = pipeline.clone_bank()
-    summary = bank.yield_summary(attack) if bank is not None else None
-    lines = [
+def _bank_notes(clips: list[CloneClip], speaker_threshold: float) -> list[str]:
+    """Notes for a measured run, with the yield computed the way the row computes it.
+
+    Yield here is each used clip's real ECAPA similarity against the *current*
+    speaker threshold -- the same test `run_attack` applies per trial -- so the
+    note and `AttackRun.yield_rate` can never disagree. (The stored `admissible`
+    flag was fixed at annotation time against whatever the threshold was then.)
+    """
+    admitted = sum(1 for c in clips if (c.ecapa_similarity or 0.0) >= speaker_threshold)
+    sources = len({c.source.get("speaker", "unknown") for c in clips})
+    return [
         f"Measured, not modelled: this run used {len(clips)} pre-generated clone(s) of the "
         "victim's voice. The acoustic score is each clip's real ECAPA similarity to the "
         "enrolled template, the CSBG score is the real scorer over the real transcript of "
-        "that clip, and the knowledge score is the real answer matcher."
-    ]
-    if summary is not None and summary.yield_rate is not None:
-        lines.append(
-            f"Attack yield: {summary.admissible}/{summary.annotated} clones fooled the "
-            f"voiceprint ({summary.yield_rate:.0%}), from {summary.sources} source "
-            "speaker(s). Clones the voiceprint stopped are excluded from the rates below, "
-            "not counted as defended."
-        )
-    lines.append(
+        "that clip, and the knowledge score is the real answer matcher.",
+        f"Attack yield: {admitted}/{len(clips)} clones fooled the voiceprint "
+        f"({admitted / len(clips):.0%}), from {sources} source speaker(s). Clones the "
+        "voiceprint stopped are excluded from the rates below, not counted as defended.",
         "Trials are capped at the number of distinct clips: resampling a handful of clips "
         "to a larger count would give an interval narrower than the evidence. The run is "
         "still simulated -- one session per speaker, a same-sitting template and the demo's "
-        "thresholds -- so `paper_ready()` refuses it."
-    )
-    return lines
+        "thresholds -- so `paper_ready()` refuses it.",
+    ]
 
 
 def _bank_probe(clip: CloneClip, speaker_id: str) -> UtteranceTokens:

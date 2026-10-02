@@ -1,4 +1,4 @@
-import { AuthResult, Challenge, CloneMatch, CSBG, EvalMetrics, Speaker, Utterance, Triple, AttackRun, AttackType, PerSpeakerIapmr, OfflineRun } from './types';
+import { AuthResult, Challenge, CloneBankInfo, CloneMatch, CSBG, EvalMetrics, Speaker, Utterance, Triple, AttackRun, AttackType, PerSpeakerIapmr, OfflineRun } from './types';
 import { mockSpeakers, mockUtterances, mockTriples, mockCSBG, mockAuthResults, mockAttacks, mockEvalMetrics } from './mock';
 
 // @ts-ignore
@@ -33,6 +33,12 @@ export const apiClient = {
       return { status: 'connected', models: ['ecapa-tdnn-v2', 'wav2vec2-large-xlsr-ta', 'llama-3-8b-instruct'], device: 'cuda:0' };
     }
     return fetchApi('/api/health');
+  },
+
+  /** What the clone bank can answer (demo builds only; 404 otherwise). */
+  cloneBankInfo: async (): Promise<CloneBankInfo> => {
+    if (USE_MOCK) throw new Error('The clone bank needs the real backend.');
+    return fetchApi('/api/clone-bank');
   },
 
   /** The attacker's cloned answer to an issued challenge (demo builds only; 404 otherwise). */

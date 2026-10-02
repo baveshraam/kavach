@@ -439,14 +439,27 @@ def _flow_checks(
 
     if health.get("demoAttackBank"):
         matched = None
+        broken: TransportError | None = None
         for _ in range(8):  # challenges are random; keep asking until one has a clone
             cid = t.post_json("/api/challenge", {"speakerId": me["id"]})["id"]
             try:
                 matched = (cid, t.post_json("/api/clone-bank/match", {"challengeId": cid}))
                 break
-            except TransportError:
-                continue
-        if matched is None:
+            except TransportError as exc:
+                if exc.status != 404:  # 404 alone means "no clone answers this question"
+                    broken = exc
+                    break
+        if broken is not None:
+            out.append(
+                Check(
+                    "flow: clone attack",
+                    FAIL,
+                    f"the clone route failed: {broken}",
+                    "a broken bank is not a missing clone: fix or regenerate the bank "
+                    "(see DEMO_RUNBOOK.md) before presenting",
+                )
+            )
+        elif matched is None:
             out.append(
                 Check(
                     "flow: clone attack",

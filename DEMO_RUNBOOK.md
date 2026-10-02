@@ -108,6 +108,6 @@ Times include issuing the challenge (a Gemini call, 1–3 s) unless stated.
 
 - Turn on `KAVACH_DEMO_REVEAL_ANSWERS` (anyone can read the answer in the network tab). The bank
   routes also return audio that says the answer, which is why `/api/health` reports
-  `demoAttackBank` and the preflight warns when either is on unintentionally.
+  `demoAttackBank`. The preflight warns when the answer-reveal setting is on; it does not warn when the bank is on, because the bank being on is the intended demo configuration.
 - Skip the preflight.
 - Present a number from this lab as a result: every lab run is labelled simulated.
