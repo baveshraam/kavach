@@ -279,6 +279,12 @@ class AttackRun(Model):
     non-clone attacks. A success rate without this is uninterpretable -- see
     the project's section 5.1.3."""
 
+    acoustic_source: Literal["measured", "modelled"] = "modelled"
+    """Where the acoustic column came from: 'measured' when pre-generated clones
+    were scored by the real ECAPA model, 'modelled' when drawn from a documented
+    distribution. Shown beside every run so a modelled row is never read as a
+    measurement."""
+
     notes: list[str] = Field(default_factory=list)
 
 

@@ -61,6 +61,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..attacks import AttackType, StyleSource
+from ..attacks.bank import BankError, CloneClip
 from ..attacks.clone import CloneBatchStats
 from ..attacks.splice import SpliceConfig, detect_splice, splice_segments
 from ..attacks.suite import (
@@ -316,16 +317,27 @@ def run_attack(
             "A2 the integrity column is the one that matters."
         )
 
+    bank_clips = _bank_clips(pipeline, speaker_id, attack, notes)
+    acoustic_source = "measured" if bank_clips else "modelled"
+    if bank_clips:
+        trials = min(max(1, trials), len(bank_clips))
+        notes.extend(_bank_notes(pipeline, attack, bank_clips))
+
     built: list[AttackTrial] = []
     for i in range(max(1, trials)):
-        probe = _probe_tokens(attack, victim_utterances, attacker_pool, style, rng)
+        clip = bank_clips[i % len(bank_clips)] if bank_clips else None
+        probe = (
+            _bank_probe(clip, speaker_id)
+            if clip is not None
+            else _probe_tokens(attack, victim_utterances, attacker_pool, style, rng)
+        )
         csbg = score_llr(
             [probe],
             victim,
             ubm,
             lid_confidence_floor=pipeline.settings.lid_confidence_floor,
         )
-        acoustic = model.draw(rng)
+        acoustic = float(clip.ecapa_similarity) if clip is not None else model.draw(rng)
 
         forged = _attack_audio(attack, victim_clips, rng)
         integrity_score: float | None = None
@@ -347,7 +359,11 @@ def run_attack(
             speaker_threshold=speaker_threshold,
             csbg_score=csbg.normalised_score,
             csbg_threshold=0.5,
-            knowledge_score=1.0 if _knows_answer(attack) else 0.0,
+            knowledge_score=(
+                clip.answer_score
+                if clip is not None and clip.answer_score is not None
+                else (1.0 if _knows_answer(attack) else 0.0)
+            ),
             knowledge_threshold=pipeline.settings.knowledge_threshold,
             # A replay answers a challenge that has already been used or has
             # expired -- that is what makes it a replay. Every other attack
@@ -356,14 +372,14 @@ def run_attack(
             admissible=admissible,
             simulated=True,
             style_source=style_source,
-            text_generator="template",
+            text_generator="asr" if clip is not None else "template",
             csbg_reliable=csbg.n_scored_tokens >= pipeline.settings.min_scored_tokens,
             integrity_score=integrity_score,
             integrity_threshold=INTEGRITY_FLOOR,
             provenance={
                 "n_scored_tokens": csbg.n_scored_tokens,
                 "raw_llr": round(csbg.raw_score, 4),
-                "acoustic_source": "modelled",
+                "acoustic_source": acoustic_source,
                 "integrity_source": "measured" if integrity_score is not None else "n/a",
             },
         )
@@ -397,6 +413,7 @@ def run_attack(
     # worth having; a reproducible identifier is a collision.
     run = conv.attack_run_to_wire(
         run_id=new_id(f"atk_{attack.value}"),
+        acoustic_source=acoustic_source,
         attack=attack,
         target_speaker_id=speaker_id,
         table=table,
@@ -632,6 +649,59 @@ def per_speaker_iapmr(store: Store) -> schemas.PerSpeakerIapmr:
         min_trials_per_cell=MIN_TRIALS_PER_CELL,
         simulated=simulated,
         notes=notes,
+    )
+
+
+def _bank_clips(
+    pipeline: Pipeline, speaker_id: str, attack: AttackType, notes: list[str]
+) -> list[CloneClip]:
+    """Measured clones of this victim for this attack, or [] with a stated reason.
+
+    A broken bank is reported in the run's notes, never swallowed: a measured
+    row quietly replaced by a modelled one looks exactly the same on screen.
+    """
+    try:
+        bank = pipeline.clone_bank()
+    except BankError as exc:
+        notes.append(f"The clone bank could not be used, so this run is modelled: {exc}")
+        return []
+    if bank is None or bank.victim_speaker_id != speaker_id:
+        return []
+    return bank.measured(attack)
+
+
+def _bank_notes(pipeline: Pipeline, attack: AttackType, clips: list[CloneClip]) -> list[str]:
+    bank = pipeline.clone_bank()
+    summary = bank.yield_summary(attack) if bank is not None else None
+    lines = [
+        f"Measured, not modelled: this run used {len(clips)} pre-generated clone(s) of the "
+        "victim's voice. The acoustic score is each clip's real ECAPA similarity to the "
+        "enrolled template, the CSBG score is the real scorer over the real transcript of "
+        "that clip, and the knowledge score is the real answer matcher."
+    ]
+    if summary is not None and summary.yield_rate is not None:
+        lines.append(
+            f"Attack yield: {summary.admissible}/{summary.annotated} clones fooled the "
+            f"voiceprint ({summary.yield_rate:.0%}), from {summary.sources} source "
+            "speaker(s). Clones the voiceprint stopped are excluded from the rates below, "
+            "not counted as defended."
+        )
+    lines.append(
+        "Trials are capped at the number of distinct clips: resampling a handful of clips "
+        "to a larger count would give an interval narrower than the evidence. The run is "
+        "still simulated -- one session per speaker, a same-sitting template and the demo's "
+        "thresholds -- so `paper_ready()` refuses it."
+    )
+    return lines
+
+
+def _bank_probe(clip: CloneClip, speaker_id: str) -> UtteranceTokens:
+    """The clip's real, stored tokens as the scorer's input."""
+    return conv.utterance_tokens_from_wire(
+        clip.clip_id,
+        [schemas.Token.model_validate(t) for t in (clip.tokens or [])],
+        speaker_id=speaker_id,
+        transcript=clip.transcript or "",
     )
 
 
