@@ -35,11 +35,14 @@ reasoning, every decision (R1-R10, each with its cost if wrong) and every measur
 | `kavach.studio.enrol --speaker S04 --sessions S1,..,S5` | rebuild the demo voiceprint from Studio sessions (the browser-microphone path); DB backed up first; stores provenance |
 | `kavach.calibrate_voice --sessions S1,..,S5` | leave-one-session-out threshold from the presenter's `words` clips against the cached cohorts; writes `data/voice_policy.json` + a report that opens with its limits |
 | `kavach.studio.words_check --speaker S04` | does Whisper hear the presenter's words? pass rate, misses, what a looser gate would cost |
+| `kavach.cohort --corpus ... --chunk 5` | embed a public impostor corpus once, in login-length chunks, into the cache the calibration reads |
 | `kavach.demo_check --presenter S04 --flows` | now also: voice gate on, calibrated policy, voiceprint provenance, a synthetic stranger and a recording of other words must be refused |
 
-Cohort embeddings (public: LibriSpeech dev-clean 40 speakers; Google Tamil SLR65 25 male + 25 female) are cached under
-`data/cohort/emb/` (git-ignored; built by scratch scripts, not in the repo: rebuild by embedding those corpora with
-the ECAPA wrapper in 5 s chunks, `*@5s.npz`). The demo screen is `/unlock`; `run_demo.ps1` opens it.
+Cohort embeddings (public: LibriSpeech dev-clean 40 speakers; Google Tamil SLR65 25 male + 25 female; nobody was
+recorded for them) are cached under `data/cohort/emb/` (git-ignored) and rebuilt with
+`python -m kavach.cohort --corpus libri-dev|tamil-m|tamil-f --root <extracted corpus> --chunk 5`
+(the module docstring has the download URLs and licences; a cache is never silently overwritten). The demo screen is
+`/unlock`; `run_demo.ps1` opens it.
 
 **Blocked on the presenter, not faked**
 
