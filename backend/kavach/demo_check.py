@@ -35,6 +35,26 @@ SLOW_LOGIN_MS = 45_000
 #: Other speakers needed for the CSBG's background model (api.pipeline.MIN_COHORT).
 MIN_OTHERS = 3
 
+#: Staged clips must not read as replays. The replay detector's envelope
+#: similarity is the peak cross-correlation normalised by the full energies,
+#: which for a cut of a stored clip is about sqrt(cut / clip); it flags at 0.85,
+#: i.e. a cut over ~72% of the clip. Cutting at most 40% scores ~0.63. Found by
+#: running the preflight: a 20 s cut of a 24 s clip tripped the integrity gate
+#: before the voiceprint ran. `tests/test_demo_staging.py` pins these to the
+#: detector, and the UI's `stagingCut` (lib/audioClip.ts) mirrors them.
+STAGING_MAX_SHARE = 0.4
+STAGING_MIN_SOURCE_SEC = 20.0
+STAGING_MAX_CUT_SEC = 12.0
+
+
+def cut_plan(duration_sec: float) -> tuple[float, float] | None:
+    """(start, length) in seconds for a staged clip cut from a stored one, or
+    None when the stored clip is too short to cut safely."""
+    if duration_sec < STAGING_MIN_SOURCE_SEC:
+        return None
+    length = min(STAGING_MAX_CUT_SEC, STAGING_MAX_SHARE * duration_sec)
+    return min(2.0, duration_sec - length), length
+
 
 @dataclass(slots=True)
 class Check:
@@ -318,21 +338,34 @@ def _branch(result: dict[str, Any], name: str) -> dict[str, Any] | None:
     return next((b for b in result.get("branches", []) if b["name"] == name), None)
 
 
-def _long_clip(t: Transport, speaker_id: str) -> str | None:
-    clips = [u for u in t.get(f"/api/speakers/{speaker_id}/utterances") if u["durationSec"] >= 8]
-    return clips[0]["audioUrl"] if clips else None
+def _staging_clip(t: Transport, speaker_id: str) -> tuple[str, float] | None:
+    clips = [
+        u
+        for u in t.get(f"/api/speakers/{speaker_id}/utterances")
+        if u["durationSec"] >= STAGING_MIN_SOURCE_SEC
+    ]
+    return (clips[0]["audioUrl"], float(clips[0]["durationSec"])) if clips else None
 
 
 def _flow_checks(
     t: Transport, speakers: list[dict[str, Any]], me: dict[str, Any], health: dict[str, Any]
 ) -> list[Check]:
     out: list[Check] = []
-    own_url = _long_clip(t, me["id"])
+    own_clip = _staging_clip(t, me["id"])
     others = [s for s in speakers if s["id"] != me["id"]]
-    other_url = next((u for u in (_long_clip(t, s["id"]) for s in others) if u), None)
-    if own_url is None or other_url is None:
-        return [Check("flows can be staged", FAIL, "no stored clip of 8 s or more", "enrol more audio")]
-    own, other = t.get_bytes(own_url), t.get_bytes(other_url)
+    other_clip = next((c for c in (_staging_clip(t, s["id"]) for s in others) if c), None)
+    if own_clip is None or other_clip is None:
+        return [
+            Check(
+                "flows can be staged",
+                FAIL,
+                f"no stored clip of {STAGING_MIN_SOURCE_SEC:.0f} s or more",
+                "enrol longer clips: a staged cut must stay well under the replay threshold",
+            )
+        ]
+    own, other = t.get_bytes(own_clip[0]), t.get_bytes(other_clip[0])
+    own_start, own_len = cut_plan(own_clip[1])
+    other_start, other_len = cut_plan(other_clip[1])
 
     def login(wav: bytes, name: str) -> dict[str, Any]:
         cid = t.post_json("/api/challenge", {"speakerId": me["id"]})["id"]
@@ -340,19 +373,39 @@ def _flow_checks(
 
     results: dict[str, dict[str, Any]] = {}
     for kind, wav in (
-        ("standin", _cut_wav(own, 2.0, 20.0)),
+        ("standin", _cut_wav(own, own_start, own_len)),
         ("replay", own),
-        ("impostor", _cut_wav(other, 2.0, 20.0)),
+        ("impostor", _cut_wav(other, other_start, other_len)),
     ):
         results[kind] = login(wav, f"{kind}.wav")
 
     r = results["standin"]
+    voice, gate = _branch(r, "speaker_embedding"), _branch(r, "signal_integrity")
+    gate_ok = gate is None or gate["passed"]
+    voice_ok = voice is not None and voice["passed"]
+    if not gate_ok:
+        level, fix = FAIL, "the integrity gate rejected a genuine clip: check splice detection is off"
+    elif not voice_ok:
+        level, fix = FAIL, "the voiceprint did not recognise the presenter: add microphone clips or re-enrol"
+    elif r["decision"] == "ACCEPT":
+        level, fix = PASS, ""
+    else:
+        # A stand-in is a cut of old audio: it cannot answer the random
+        # challenge, so the knowledge branch scores low and the verdict can
+        # legitimately be BORDERLINE. What matters is that the voiceprint
+        # passed. The live spoken answer scores higher and must be rehearsed.
+        level = WARN
+        fix = (
+            "a stand-in cannot answer the challenge, so its knowledge score is low; "
+            "rehearse the live spoken answer once on the demo laptop"
+        )
     out.append(
         Check(
-            "flow: genuine stand-in is accepted",
-            PASS if r["decision"] == "ACCEPT" else FAIL,
-            f"{r['decision']} at {r['fusedScore']:.3f}",
-            "" if r["decision"] == "ACCEPT" else "re-enrol or add microphone clips; check the voiceprint branch",
+            "flow: genuine stand-in passes the voiceprint",
+            level,
+            f"{r['decision']} at {r['fusedScore']:.3f}; voice "
+            f"{'passed' if voice_ok else 'FAILED'}; integrity {'ok' if gate_ok else 'TRIPPED'}",
+            fix,
         )
     )
     r = results["replay"]

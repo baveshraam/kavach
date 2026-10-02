@@ -189,10 +189,28 @@ def test_an_impostor_rejected_by_the_integrity_gate_instead_of_the_voice_fails()
     assert got["flow: impostor is rejected by the voiceprint"].level == FAIL
 
 
-def test_a_genuine_stand_in_that_is_rejected_fails() -> None:
-    bad = auth("REJECT", [b("speaker_embedding", False)])
+def test_a_genuine_stand_in_whose_voice_fails_is_a_failure() -> None:
+    bad = auth("REJECT", [b("signal_integrity", True), b("speaker_embedding", False)])
     got = by_name(run_checks(flows(standin=bad), presenter="S04", flows=True))
-    assert got["flow: genuine stand-in is accepted"].level == FAIL
+    assert got["flow: genuine stand-in passes the voiceprint"].level == FAIL
+
+
+def test_a_stand_in_the_integrity_gate_rejects_is_a_failure() -> None:
+    bad = auth("REJECT", [b("signal_integrity", False, 0.0)])
+    got = by_name(run_checks(flows(standin=bad), presenter="S04", flows=True))
+    assert got["flow: genuine stand-in passes the voiceprint"].level == FAIL
+
+
+def test_a_borderline_stand_in_with_a_passing_voice_only_warns() -> None:
+    """A stand-in is a cut of old audio and cannot answer the random challenge,
+    so its knowledge branch scores low. BORDERLINE with the voiceprint passing is
+    expected, not a defect -- but it must say the live answer needs rehearsing."""
+    borderline = auth(
+        "BORDERLINE", [b("signal_integrity", True), b("speaker_embedding", True), b("knowledge", False, 0.3)]
+    )
+    got = by_name(run_checks(flows(standin=borderline), presenter="S04", flows=True))
+    c = got["flow: genuine stand-in passes the voiceprint"]
+    assert c.level == WARN and "live" in c.fix, c
 
 
 def test_a_slow_login_warns() -> None:

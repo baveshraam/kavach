@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient, assetUrl } from '../api/client';
-import { trimToWav, fetchExact } from '../lib/audioClip';
+import { trimToWav, fetchExact, stagingCut, STAGING_MIN_SOURCE_SEC } from '../lib/audioClip';
 import { PageHeader, PageBody } from '../components/layout/PageHeader';
 import { AudioRecorder } from '../components/ui/AudioRecorder';
 import { Challenge, AuthResult, BranchScore } from '../api/types';
@@ -232,15 +232,18 @@ function DemoClips({ claimedId, speakers, busy, onSubmit, challengeId, cloneEnab
       }
       const ownerId = kind === 'impostor' ? impostor : claimedId;
       const utts = await apiClient.getSpeakerUtterances(ownerId);
-      const pool = utts.filter(u => u.durationSec >= 8);
-      if (!pool.length) throw new Error('That speaker has no stored recording long enough to use.');
+      // A replay submits a whole stored clip. The others are *cuts*, and a cut
+      // that is most of a stored clip is itself caught as a replay, so they are
+      // drawn only from recordings long enough to cut safely (see stagingCut).
+      const pool = kind === 'replay' ? utts.filter(u => u.durationSec >= 8) : utts.filter(u => stagingCut(u.durationSec));
+      if (!pool.length) throw new Error(`That speaker has no stored recording of ${STAGING_MIN_SOURCE_SEC} s or more to cut from.`);
       const pick = pool[Math.floor(Math.random() * pool.length)];
       const url = assetUrl(pick.audioUrl);
       if (kind === 'replay') {
         onSubmit(await fetchExact(url), `replay_${pick.id}.wav`, `Replay attack · stored clip of ${nameOf(ownerId)}`);
       } else {
-        const start = Math.min(2, Math.max(0, pick.durationSec - 20));
-        const blob = await trimToWav(url, start, 20);
+        const cut = stagingCut(pick.durationSec)!;
+        const blob = await trimToWav(url, cut.start, cut.length);
         onSubmit(blob, `${kind}_${pick.id}.wav`, kind === 'impostor'
           ? `Impostor · ${nameOf(ownerId)} claiming to be ${nameOf(claimedId)}`
           : `Stand-in · cut of ${nameOf(ownerId)}’s own enrolment audio`);
