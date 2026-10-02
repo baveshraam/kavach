@@ -20,7 +20,7 @@ personal-question login below is the stronger step-up and the Attack Lab is the 
 | 2. Judge | Hand a judge the laptop; they read the same six words | "Access denied": the voice meter in the red, "the voice does not match", the words ticked | the words gate passes, the **voice** gate does not; a correct recital cannot make up for it |
 | 3. Replay | Play back your own recording of an earlier unlock | refused on the words: "the words spoken are not the words shown for this attempt" | the words are drawn at random for each attempt |
 | 4. Interruption | While you read, a judge talks over you | borderline, then one stricter second phrase; after the phrase, a judge speaking is ignored | the voice is judged only on the stretch where the shown words were said |
-| 5. Brute force | A judge tries four times | the fourth waits 5 s, then 10, 20, 30; the owner's success clears it | failed attempts slow down |
+| 5. Brute force | A judge fails four times in a row | three failures are free; after the fourth, the next challenge waits 5 s, then 10, 20, 30; the owner's success clears it | failed attempts slow down |
 | 6. Step up (optional) | Switch to Authenticate, answer a personal question | the question login, with the code-switch graph | the strongest factor; needs facts |
 
 **Say plainly** (the numbers come from `kavach.calibrate_voice`, once the sessions are recorded): one enrolled
@@ -46,7 +46,7 @@ sessions are recorded.
 | Owner, then the judge speaks after the phrase | borderline 0.54 before the span change; `ACCEPT` 0.83 after |
 | Owner and judge speaking together | `BORDERLINE` 0.59: never accepted |
 | Silence | `REJECT` in 0.2 s, no model runs, not counted against anyone |
-| Four wrong attempts, then the owner | the fourth challenge waits; the owner's success clears it |
+| Four wrong attempts, then the owner | after the fourth failure the next challenge waits (HTTP 429, "wait 5 s"); the owner's success clears it |
 | Browser end to end | owner unlocked (0.82), judge denied (0.21), owner unlocked (0.78); no page errors |
 
 **If something goes wrong on stage.** A noisy room: move the laptop closer, or use the headset you enrolled with
