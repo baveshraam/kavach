@@ -1,75 +1,165 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+  Design tokens. Two rules shape the whole palette:
+
+  1. Colour carries meaning, never decoration. Tamil and English are the two
+     things this system measures, so they own the only two hues that appear
+     outside status: terracotta for Tamil, ink blue for English. Accept /
+     reject / warning are reserved for decisions. Everything else is neutral.
+  2. No gradients, glows or saturated neon. Hierarchy comes from type size,
+     weight and spacing; surfaces separate by a 1px border and a slight tone
+     shift, not by shadow.
+*/
 @theme {
   --color-app-bg: var(--app-bg);
   --color-app-surface: var(--app-surface);
+  --color-app-surface-muted: var(--app-surface-muted);
   --color-app-border: var(--app-border);
   --color-app-border-strong: var(--app-border-strong);
-  
+
   --color-app-text: var(--app-text);
   --color-app-text-muted: var(--app-text-muted);
-  
+  --color-app-text-subtle: var(--app-text-subtle);
+
   --color-app-accent: var(--app-accent);
   --color-app-accent-hover: var(--app-accent-hover);
-  --color-app-accent-muted: var(--app-accent-muted);
-  
+  --color-app-accent-muted: var(--app-accent-soft);
+  --color-app-accent-soft: var(--app-accent-soft);
+  --color-app-on-accent: var(--app-on-accent);
+
+  --color-app-ta: var(--app-ta);
+  --color-app-ta-soft: var(--app-ta-soft);
+  --color-app-en: var(--app-en);
+  --color-app-en-soft: var(--app-en-soft);
+
   --color-app-accept: var(--app-accept);
+  --color-app-accept-soft: var(--app-accept-soft);
   --color-app-reject: var(--app-reject);
+  --color-app-reject-soft: var(--app-reject-soft);
+  --color-app-reject-subtle: var(--app-reject-soft);
   --color-app-warning: var(--app-warning);
-  --color-app-reject-subtle: var(--app-reject-subtle);
+  --color-app-warning-soft: var(--app-warning-soft);
 
   --font-sans: 'Inter', system-ui, sans-serif;
+  --font-serif: 'Source Serif 4', Georgia, serif;
   --font-mono: 'IBM Plex Mono', 'JetBrains Mono', monospace;
 }
 
 @layer base {
   :root {
-    --app-bg: #FAFAF9;
+    --app-bg: #F6F5F1;
     --app-surface: #FFFFFF;
-    --app-surface-muted: #F2F1EE;
-    --app-border: #E5E4E1;
-    --app-border-strong: #D1D0CE;
-    
-    --app-text: #1A1A19;
-    --app-text-muted: rgba(26, 26, 25, 0.6);
-    
-    --app-accent: #2C4A6E;
-    --app-accent-hover: #1E334D;
-    --app-accent-muted: #E2E8F0;
-    
-    --app-accept: #2F6F4E;
-    --app-reject: #9B3232;
-    --app-reject-subtle: #FEF2F2;
-    --app-warning: #8A6A1F;
+    --app-surface-muted: #F1EFE9;
+    --app-border: #E4E1D9;
+    --app-border-strong: #CDC9BE;
+
+    --app-text: #1C1B19;
+    --app-text-muted: #66625A;
+    --app-text-subtle: #9A958A;
+
+    --app-accent: #2B4C7E;
+    --app-accent-hover: #203B63;
+    --app-accent-soft: #E7ECF4;
+    --app-on-accent: #FFFFFF;
+
+    --app-ta: #B5562F;
+    --app-ta-soft: #F5E6DE;
+    --app-en: #2B4C7E;
+    --app-en-soft: #E7ECF4;
+
+    --app-accept: #2F7A52;
+    --app-accept-soft: #E3F0E8;
+    --app-reject: #B03A3A;
+    --app-reject-soft: #F7E4E2;
+    --app-warning: #94680F;
+    --app-warning-soft: #F6EDD8;
+
+    color-scheme: light;
   }
-  
+
   .dark {
-    --app-bg: #1A1A19;
-    --app-surface: #222221;
-    --app-border: #33322F;
-    --app-border-strong: #444340;
-    
-    --app-text: #E7E5E4;
-    --app-text-muted: #A8A29E;
-    
-    --app-accent: #4A729E;
-    --app-accent-hover: #5A86B6;
-    --app-accent-muted: #1F2937;
-    
-    --app-accept: #409468;
-    --app-reject: #C84646;
-    --app-reject-subtle: #3A1D1D;
-    --app-warning: #B38928;
+    --app-bg: #131312;
+    --app-surface: #1B1B19;
+    --app-surface-muted: #222220;
+    --app-border: #2E2D2A;
+    --app-border-strong: #403E39;
+
+    --app-text: #ECE9E2;
+    --app-text-muted: #A5A095;
+    --app-text-subtle: #6F6B63;
+
+    --app-accent: #86A8DB;
+    --app-accent-hover: #A0BBE6;
+    --app-accent-soft: #1D2636;
+    --app-on-accent: #10151F;
+
+    --app-ta: #E08B64;
+    --app-ta-soft: #36231A;
+    --app-en: #86A8DB;
+    --app-en-soft: #1D2636;
+
+    --app-accept: #62B68A;
+    --app-accept-soft: #16271E;
+    --app-reject: #E27575;
+    --app-reject-soft: #331B1B;
+    --app-warning: #D8AA4C;
+    --app-warning-soft: #30260F;
+
+    color-scheme: dark;
   }
 
   body {
     @apply bg-app-bg text-app-text font-sans antialiased;
-    font-size: 13px;
-    line-height: 1.5;
+    font-size: 14px;
+    line-height: 1.55;
+    font-feature-settings: 'cv11', 'ss01';
   }
 
   .mono {
     @apply font-mono;
     font-variant-numeric: tabular-nums;
   }
+
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+
+  ::selection {
+    background: var(--app-accent-soft);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--app-accent);
+    outline-offset: 2px;
+  }
+
+  /* Quiet scrollbars: present, never the loudest thing on the page. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--app-border-strong) transparent;
+  }
+
+  select {
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none' stroke='%23908b80' stroke-width='1.5'%3E%3Cpath d='M1 1l4 4 4-4'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    padding-right: 28px !important;
+  }
+
+  audio {
+    height: 32px;
+  }
+}
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+.animate-in {
+  animation: fade-up 220ms ease-out both;
 }

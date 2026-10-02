@@ -118,6 +118,10 @@ export interface AttackRun {
   trials: number;
   successRateByConfig: Record<'ecapa_only' | 'plus_knowledge' | 'plus_csbg' | 'full_fusion', number>;
   generatedAt: string;
+  // Backend extras: every run says whether it was simulated and why.
+  simulated?: boolean;
+  yieldRate?: number | null;
+  notes?: string[];
 }
 
 export interface SpeakerIapmr {
@@ -160,4 +164,53 @@ export interface EvalMetrics {
   stabilityCurve: Array<{ durationSec: number; eer: number; ciLow: number; ciHigh: number }>;
   fairness: Array<{ condition: string; group: string; eer: number; sampleCount: number }>;
   scoreDistributions: Array<{ branch: string; genuine: number[]; impostor: number[] }>;
+}
+
+// ---------------------------------------------------------------------------
+// Offline experiment runs (`python -m kavach.experiments`), passed through
+// verbatim from paper/<run>/results.json. Only the fields the UI reads are
+// typed; the rest stays available as `unknown`.
+// ---------------------------------------------------------------------------
+
+export interface OfflineConfiguration {
+  name: string;
+  branches: string[];
+  eer: number;
+  eer_ci: [number, number];
+  min_dcf: number;
+  far_at_frr_1pct: number | null;
+  frr_at_far_1pct: number | null;
+  auc: number;
+  n_genuine: number;
+  n_impostor: number;
+  n_vetoed: number;
+  is_reliable: boolean;
+}
+
+export interface OfflineResults {
+  reportable: boolean;
+  blockers: string[];
+  environment: { generated_utc: string; git_commit: string };
+  corpus: {
+    name: string; provenance: string; n_speakers: number; n_sessions: number;
+    n_utterances: number; n_annotated: number; session_split: string; cross_session: boolean;
+    branch_coverage: { name: string; measured: number; unavailable: number; coverage: number }[];
+  };
+  split: { dev_speakers: string[]; test_speakers: string[]; n_dev_trials: number; n_test_trials: number };
+  fitted: { weights: Record<string, number>; threshold: number; veto_floor: number | null; weights_source: string };
+  configurations: OfflineConfiguration[];
+  ablations: { name: string; scope: string; eer: number; delta: number; note: string }[];
+  stability: { n_utterances: number; approx_seconds: number; eer: number; ci_low: number; ci_high: number }[];
+  coverage: {
+    total_tokens: number; total_choice_tokens: number; n_speakers: number;
+    classes: { class: string; n_tokens: number; n_speakers_with_own_evidence: number }[];
+  };
+  speaker_consistency?: Record<string, number>;
+  caveats: string[];
+}
+
+export interface OfflineRun {
+  id: string;
+  results: OfflineResults;
+  figures: string[];
 }

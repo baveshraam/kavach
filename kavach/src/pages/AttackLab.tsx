@@ -1,15 +1,29 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '../api/client';
-import { PageHeader } from '../components/layout/PageHeader';
-import { AttackType } from '../api/types';
+import { PageHeader, PageBody } from '../components/layout/PageHeader';
+import { AttackRun, AttackType } from '../api/types';
+import { Card, CardHeader, CardBody, Button, Select, Field, Badge, Notice, Table, Th, Td, EmptyState, pct, cn } from '../components/ui/kit';
+import { Repeat, Scissors, Bot, BookKey, Wand2, Swords, ChevronDown } from 'lucide-react';
 
-const ATTACKS: { id: AttackType, code: string, name: string, desc: string, input: string }[] = [
-  { id: 'A1_REPLAY', code: 'A1', name: 'Replay', desc: 'Replay a previously recorded utterance', input: 'Auth record' },
-  { id: 'A2_SPLICE', code: 'A2', name: 'Splice', desc: 'Concatenate recorded word segments', input: 'Corpus audio' },
-  { id: 'A3_CLONE_NAIVE', code: 'A3', name: 'Clone (naive)', desc: 'TTS voice clone, blind to graph', input: 'Text (imposter)' },
-  { id: 'A4_CLONE_KNOWLEDGE', code: 'A4', name: 'Clone + Knowledge', desc: 'TTS clone speaking correct answer', input: 'Text (target)' },
-  { id: 'A5_CLONE_ADAPTIVE', code: 'A5', name: 'Style-Adaptive Clone', desc: 'Clone imitating CS pattern', input: 'Text (target + CSBG)' }
+const ATTACKS: { id: AttackType; code: string; name: string; desc: string; icon: any; realism: 'real' | 'partial' }[] = [
+  { id: 'A1_REPLAY', code: 'A1', name: 'Replay', icon: Repeat, realism: 'real',
+    desc: 'Plays back one of the victim’s real recordings.' },
+  { id: 'A2_SPLICE', code: 'A2', name: 'Splice', icon: Scissors, realism: 'real',
+    desc: 'Cuts and cross-fades the victim’s real audio into a new answer.' },
+  { id: 'A3_CLONE_NAIVE', code: 'A3', name: 'Voice clone', icon: Bot, realism: 'partial',
+    desc: 'A cloned voice that does not know the answer.' },
+  { id: 'A4_CLONE_KNOWLEDGE', code: 'A4', name: 'Clone + knowledge', icon: BookKey, realism: 'partial',
+    desc: 'A cloned voice that knows the answer, in the attacker’s own words.' },
+  { id: 'A5_CLONE_ADAPTIVE', code: 'A5', name: 'Style-adaptive clone', icon: Wand2, realism: 'partial',
+    desc: 'Also imitates the victim’s code-switching, estimated from overheard speech.' },
+];
+
+const CONFIGS: { key: keyof AttackRun['successRateByConfig']; label: string }[] = [
+  { key: 'ecapa_only', label: 'Voiceprint only' },
+  { key: 'plus_knowledge', label: '+ Knowledge' },
+  { key: 'plus_csbg', label: '+ Code-switch graph' },
+  { key: 'full_fusion', label: 'Full system' },
 ];
 
 export function AttackLab() {
@@ -17,200 +31,157 @@ export function AttackLab() {
   const { data: speakers } = useQuery({ queryKey: ['speakers'], queryFn: apiClient.getSpeakers });
   const { data: attacks } = useQuery({ queryKey: ['attacks'], queryFn: apiClient.getAttacks });
   const { data: perSpeaker } = useQuery({ queryKey: ['attacks', 'per-speaker'], queryFn: apiClient.getPerSpeakerIapmr });
+  const [target, setTarget] = useState('');
+  const [running, setRunning] = useState<AttackType | null>(null);
 
-  const [selectedSpeakerId, setSelectedSpeakerId] = useState('');
-
-  const generateMutation = useMutation({
-    mutationFn: ({ type }: { type: AttackType }) => apiClient.generateAttack(type, selectedSpeakerId, 100),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['attacks'] })
+  const generate = useMutation({
+    mutationFn: (type: AttackType) => { setRunning(type); return apiClient.generateAttack(type, target, 100); },
+    onSettled: () => { setRunning(null); queryClient.invalidateQueries({ queryKey: ['attacks'] }); },
   });
 
+  const name = (id: string) => speakers?.find(s => s.id === id)?.displayName ?? id;
+
   return (
-    <div className="flex flex-col h-full">
-      <PageHeader title="Attack Lab" />
-      <div className="p-6 max-w-[1400px] w-full mx-auto flex-1 overflow-auto flex flex-col gap-8">
-        
-        <div className="border border-app-border p-3 bg-app-bg text-[12px] text-app-text-muted border-l-4 border-l-app-warning">
-          Ethics Notice: Generated attack audio is used strictly for evaluating system defences. It is stored securely, in isolation, and is never included in the released corpus.
-        </div>
+    <>
+      <PageHeader
+        eyebrow="Research"
+        title="Attack Lab"
+        description="Run the five attacks from the threat model against an enrolled speaker and see which part of the system stops each one. A cell is the attack success rate — lower is better."
+        actions={
+          <Field label="Target speaker" className="w-64">
+            <Select value={target} onChange={e => setTarget(e.target.value)}>
+              <option value="" disabled>Choose a victim…</option>
+              {speakers?.map(s => <option key={s.id} value={s.id}>{s.displayName}</option>)}
+            </Select>
+          </Field>
+        }
+      />
+      <PageBody>
+        <Notice tone="warning" title="What is real here">
+          The code-switch graph and splice-detection scores are computed on real recordings. Voice-clone attacks (A3–A5) use modelled voiceprint scores, because no Tamil voice cloner is wired in yet, so those rows show how the defence behaves, not a measured result. Attack audio never enters the released corpus.
+        </Notice>
 
-        <section>
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-[13px] font-semibold uppercase tracking-wider text-app-text-muted">Generate Attack</h3>
-            <label className="flex items-center gap-2 text-[12px]">
-              <span className="text-app-text-muted">Target Speaker:</span>
-              <select value={selectedSpeakerId} onChange={e => setSelectedSpeakerId(e.target.value)} className="h-8 border border-app-border px-2 focus:border-app-accent focus:outline-none bg-app-surface w-48">
-                 <option value="" disabled>Select speaker...</option>
-                 {speakers?.map(s => <option key={s.id} value={s.id}>{s.displayName}</option>)}
-              </select>
-            </label>
-          </div>
-
-          <div className="grid grid-cols-5 gap-4">
-            {ATTACKS.map(atk => (
-              <div key={atk.id} className="border border-app-border bg-app-surface p-4 flex flex-col gap-3">
-                <div className="flex items-center gap-2">
-                  <span className="mono text-[11px] px-1.5 py-0.5 border border-app-border-strong text-app-text-muted">{atk.code}</span>
-                  <span className="font-semibold text-[13px]">{atk.name}</span>
+        <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-5 gap-4">
+          {ATTACKS.map(atk => (
+            <Card key={atk.id} className="flex flex-col p-4 gap-3">
+              <div className="flex items-center justify-between">
+                <div className="w-9 h-9 rounded-md bg-app-surface-muted border border-app-border flex items-center justify-center text-app-text-muted">
+                  <atk.icon className="w-4 h-4" strokeWidth={1.75} />
                 </div>
-                <div className="text-[11px] text-app-text-muted leading-relaxed flex-1">
-                  {atk.desc}
-                </div>
-                <div className="text-[10px] uppercase tracking-wider text-app-text-muted mb-2">Input: {atk.input}</div>
-                <button
-                  onClick={() => generateMutation.mutate({ type: atk.id })}
-                  disabled={!selectedSpeakerId || generateMutation.isPending}
-                  className="h-8 w-full border border-app-accent text-app-accent font-medium text-[12px] hover:bg-app-accent hover:text-white transition-colors duration-120 disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-app-accent"
-                >
-                  Generate (100 trials)
-                </button>
+                <Badge tone={atk.realism === 'real' ? 'accept' : 'warning'}>{atk.realism === 'real' ? 'real audio' : 'modelled voice'}</Badge>
               </div>
-            ))}
-          </div>
-        </section>
+              <div>
+                <div className="text-[12px] text-app-text-subtle font-medium">{atk.code}</div>
+                <div className="text-[14px] font-semibold">{atk.name}</div>
+              </div>
+              <p className="text-[12.5px] text-app-text-muted leading-relaxed flex-1">{atk.desc}</p>
+              <Button size="sm" variant={running === atk.id ? 'primary' : 'secondary'} disabled={!target || (generate.isPending && running !== atk.id)}
+                loading={running === atk.id} onClick={() => generate.mutate(atk.id)}>
+                Run 100 trials
+              </Button>
+            </Card>
+          ))}
+        </div>
+        {generate.error && <Notice tone="reject" title="Attack run failed">{(generate.error as Error).message}</Notice>}
 
-        <section className="flex-1 min-h-0 flex flex-col">
-           <h3 className="text-[13px] font-semibold uppercase tracking-wider text-app-text-muted mb-4">Attack Results</h3>
-           <div className="flex-1 overflow-auto border border-app-border bg-app-surface">
-              <table className="w-full text-left border-collapse">
-                <thead className="bg-app-bg sticky top-0 border-b border-app-border z-10">
-                  <tr>
-                    <th className="px-4 py-2 text-[11px] uppercase tracking-wider text-app-text-muted w-32">Run ID</th>
-                    <th className="px-4 py-2 text-[11px] uppercase tracking-wider text-app-text-muted w-32">Type</th>
-                    <th className="px-4 py-2 text-[11px] uppercase tracking-wider text-app-text-muted w-32">Target</th>
-                    <th className="px-4 py-2 text-[11px] uppercase tracking-wider text-app-text-muted border-l border-app-border text-center">ECAPA only</th>
-                    <th className="px-4 py-2 text-[11px] uppercase tracking-wider text-app-text-muted border-l border-app-border text-center">+ Knowledge</th>
-                    <th className="px-4 py-2 text-[11px] uppercase tracking-wider text-app-text-muted border-l border-app-border text-center">+ CSBG</th>
-                    <th className="px-4 py-2 text-[11px] uppercase tracking-wider text-app-text-muted border-l border-app-border text-center bg-app-bg/50">Full Fusion</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-app-border">
-                  {attacks?.map(a => {
-                    const renderCell = (rate: number, bgClass: string = '') => {
-                      // single-hue tint: transparent to light red
-                      const alpha = rate * 0.4; // max 0.4 opacity red
-                      return (
-                        <td className={`px-4 py-2 mono text-center border-l border-app-border ${bgClass}`} style={{ backgroundColor: `rgba(155, 50, 50, ${alpha})` }}>
-                          {(rate * 100).toFixed(1)}%
-                        </td>
-                      );
-                    };
-
-                    return (
-                      <tr key={a.id} className="hover:bg-app-bg/50 transition-colors">
-                        <td className="px-4 py-2 mono text-app-text-muted">{a.id}</td>
-                        <td className="px-4 py-2">{ATTACKS.find(x => x.id === a.attackType)?.code}</td>
-                        <td className="px-4 py-2 mono">{a.targetSpeakerId}</td>
-                        {renderCell(a.successRateByConfig.ecapa_only)}
-                        {renderCell(a.successRateByConfig.plus_knowledge)}
-                        {renderCell(a.successRateByConfig.plus_csbg)}
-                        {renderCell(a.successRateByConfig.full_fusion, 'font-medium')}
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-           </div>
-        </section>
-
-        {/*
-          Per-speaker exposure. The mean is what hides the failure: a system
-          that stops every attack on 24 speakers and none on the 25th reports
-          96% while one person is completely unprotected.
-        */}
-        <section className="flex flex-col">
-          <div className="flex items-baseline justify-between mb-4">
-            <h3 className="text-[13px] font-semibold uppercase tracking-wider text-app-text-muted">Per-Speaker Exposure</h3>
-            <span className="text-[11px] text-app-text-muted">
-              {perSpeaker?.meanIapmr === null || perSpeaker?.meanIapmr === undefined
-                ? 'Mean: not measured'
-                : `Mean IAPMR: ${(perSpeaker.meanIapmr * 100).toFixed(1)}%`}
-            </span>
-          </div>
-
-          {perSpeaker?.notes?.length ? (
-            <ul className="mb-4 flex flex-col gap-1">
-              {perSpeaker.notes.map((note, i) => (
-                <li key={i} className="border border-app-border border-l-4 border-l-app-warning bg-app-bg px-3 py-2 text-[11px] text-app-text-muted leading-relaxed">
-                  {note}
-                </li>
-              ))}
-            </ul>
-          ) : null}
-
-          <div className="border border-app-border bg-app-surface">
-            <table className="w-full text-left border-collapse">
-              <thead className="bg-app-bg border-b border-app-border">
+        <Card className="overflow-hidden">
+          <CardHeader title="Attack results" subtitle="Share of attack trials that were accepted, per system configuration. Expand a row for the run’s own notes." />
+          {attacks?.length ? (
+            <Table>
+              <thead>
                 <tr>
-                  <th className="px-4 py-2 text-[11px] uppercase tracking-wider text-app-text-muted">Speaker</th>
-                  <th className="px-4 py-2 text-[11px] uppercase tracking-wider text-app-text-muted w-24 text-right">Trials</th>
-                  <th className="px-4 py-2 text-[11px] uppercase tracking-wider text-app-text-muted border-l border-app-border w-32 text-center">IAPMR</th>
-                  <th className="px-4 py-2 text-[11px] uppercase tracking-wider text-app-text-muted border-l border-app-border w-40 text-center">95% CI (Wilson)</th>
-                  <th className="px-4 py-2 text-[11px] uppercase tracking-wider text-app-text-muted border-l border-app-border">Attacks run</th>
+                  <Th>Attack</Th>
+                  <Th>Target</Th>
+                  {CONFIGS.map(c => <Th key={c.key} align="center">{c.label}</Th>)}
+                  <Th className="w-10" />
                 </tr>
               </thead>
-              <tbody className="divide-y divide-app-border">
-                {perSpeaker?.speakers.map(s => (
-                  <tr key={s.speakerId} className="hover:bg-app-bg/50 transition-colors">
-                    <td className="px-4 py-2">
-                      {s.name || s.speakerId}
-                      {s.speakerId === perSpeaker.worstSpeakerId && (
-                        <span className="ml-2 mono text-[10px] px-1.5 py-0.5 border border-app-border-strong text-app-text-muted uppercase tracking-wider">most exposed</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-2 mono text-right">
-                      {s.trials}
-                      {s.belowMinTrials && (
-                        <span className="ml-1 text-app-text-muted" title={`Fewer than ${perSpeaker.minTrialsPerCell} trials: the interval is too wide to compare against another speaker.`}>*</span>
-                      )}
-                    </td>
-                    <td
-                      className="px-4 py-2 mono text-center border-l border-app-border"
-                      style={{ backgroundColor: `rgba(155, 50, 50, ${s.iapmr * 0.4})` }}
-                    >
-                      {(s.iapmr * 100).toFixed(1)}%
-                    </td>
-                    <td className="px-4 py-2 mono text-center text-app-text-muted border-l border-app-border">
-                      {(s.ciLow * 100).toFixed(1)}–{(s.ciHigh * 100).toFixed(1)}%
-                    </td>
-                    <td className="px-4 py-2 mono text-[11px] text-app-text-muted border-l border-app-border">
-                      {s.attackTypes.join(', ') || '—'}
-                    </td>
-                  </tr>
-                ))}
-                {/*
-                  Unmeasured speakers get rows of their own rather than being
-                  left out. An absent speaker reads as a safe one.
-                */}
-                {perSpeaker?.unmeasuredSpeakerIds.map(id => (
-                  <tr key={id} className="text-app-text-muted">
-                    <td className="px-4 py-2">{speakers?.find(s => s.id === id)?.displayName || id}</td>
-                    <td className="px-4 py-2 mono text-right">0</td>
-                    <td className="px-4 py-2 mono text-center border-l border-app-border" colSpan={3}>
-                      not measured — no attack has been run against this speaker
-                    </td>
-                  </tr>
-                ))}
-                {!perSpeaker?.speakers.length && !perSpeaker?.unmeasuredSpeakerIds.length && (
-                  <tr>
-                    <td className="px-4 py-6 text-center text-[12px] text-app-text-muted" colSpan={5}>
-                      No speakers enrolled.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+              <tbody>{attacks.map(a => <AttackRow key={a.id} run={a} target={name(a.targetSpeakerId)} />)}</tbody>
+            </Table>
+          ) : (
+            <EmptyState icon={<Swords className="w-5 h-5" />} title="No attacks run yet">Choose a target speaker above and run an attack.</EmptyState>
+          )}
+        </Card>
 
-          <p className="mt-2 text-[11px] text-app-text-muted leading-relaxed">
-            <span className="mono">*</span> fewer than {perSpeaker?.minTrialsPerCell ?? 30} trials, so the interval is too
-            wide to rank this speaker against another. Intervals are Wilson, not the normal approximation:
-            these rates sit at 0 and 1, where the normal interval runs outside [0, 1].
-          </p>
-        </section>
-
-      </div>
-    </div>
+        {/* The mean hides the failure: a system that stops every attack on 24
+            speakers and none on the 25th reports 96% while one person is
+            completely unprotected. Unmeasured speakers get rows of their own. */}
+        <Card className="overflow-hidden">
+          <CardHeader
+            title="Exposure per speaker"
+            subtitle="Averages hide the one person left unprotected, so every speaker is listed — including those nobody has attacked yet."
+            actions={<Badge tone="neutral">mean {perSpeaker?.meanIapmr == null ? 'not measured' : pct(perSpeaker.meanIapmr)}</Badge>}
+          />
+          <Table>
+            <thead><tr><Th>Speaker</Th><Th align="right">Trials</Th><Th align="center">Attack success</Th><Th align="center">95% interval (Wilson)</Th><Th>Attacks run</Th></tr></thead>
+            <tbody>
+              {perSpeaker?.speakers.map(s => (
+                <tr key={s.speakerId}>
+                  <Td className="font-medium">
+                    {s.name || s.speakerId}
+                    {s.speakerId === perSpeaker.worstSpeakerId && <Badge tone="reject" className="ml-2">most exposed</Badge>}
+                  </Td>
+                  <Td align="right" className="tnum">{s.trials}{s.belowMinTrials && <span className="text-app-text-subtle" title="too few trials to compare"> *</span>}</Td>
+                  <Td align="center"><RateCell rate={s.iapmr} /></Td>
+                  <Td align="center" className="tnum text-app-text-muted">{pct(s.ciLow)}–{pct(s.ciHigh)}</Td>
+                  <Td className="text-[12.5px] text-app-text-muted">{s.attackTypes.map(t => t.slice(0, 2)).join(', ') || '—'}</Td>
+                </tr>
+              ))}
+              {perSpeaker?.unmeasuredSpeakerIds.map(id => (
+                <tr key={id} className="text-app-text-subtle">
+                  <Td>{name(id)}</Td>
+                  <Td align="right" className="tnum">0</Td>
+                  <Td align="center" colSpan={3} className="text-[12.5px]">not measured — no attack has been run against this speaker</Td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+          {!!perSpeaker?.notes?.length && (
+            <div className="px-5 py-3 border-t border-app-border flex flex-col gap-1">
+              {perSpeaker.notes.map((n, i) => <p key={i} className="text-[12px] text-app-text-muted">{n}</p>)}
+            </div>
+          )}
+        </Card>
+      </PageBody>
+    </>
   );
 }
 
+function RateCell({ rate }: { rate: number }) {
+  return (
+    <span className={cn('inline-flex min-w-[64px] justify-center rounded-md px-2 py-1 tnum text-[12.5px] font-medium',
+      rate >= 0.5 ? 'bg-app-reject-soft text-app-reject' : rate >= 0.1 ? 'bg-app-warning-soft text-app-warning' : 'bg-app-accept-soft text-app-accept')}>
+      {pct(rate)}
+    </span>
+  );
+}
+
+function AttackRow({ run, target }: { run: AttackRun; target: string }) {
+  const [open, setOpen] = useState(false);
+  const atk = ATTACKS.find(x => x.id === run.attackType);
+  return (
+    <>
+      <tr className="hover:bg-app-surface-muted/50 cursor-pointer" onClick={() => setOpen(o => !o)}>
+        <Td>
+          <div className="font-medium">{atk?.code} · {atk?.name}</div>
+          <div className="text-[11.5px] text-app-text-subtle tnum">{run.trials} trials · {new Date(run.generatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}{run.simulated ? ' · simulated' : ''}</div>
+        </Td>
+        <Td>{target}</Td>
+        {CONFIGS.map(c => <Td key={c.key} align="center"><RateCell rate={run.successRateByConfig[c.key]} /></Td>)}
+        <Td><ChevronDown className={cn('w-4 h-4 text-app-text-subtle transition-transform', open && 'rotate-180')} /></Td>
+      </tr>
+      {open && (
+        <tr>
+          <td colSpan={7} className="px-5 py-3 bg-app-surface-muted/40 border-b border-app-border">
+            {run.yieldRate != null && <p className="text-[12.5px] mb-1.5">Clone yield (fooled the voiceprint): <span className="font-semibold tnum">{pct(run.yieldRate)}</span></p>}
+            <ul className="flex flex-col gap-1">
+              {(run.notes?.length ? run.notes : ['No notes recorded for this run.']).map((n, i) => (
+                <li key={i} className="text-[12.5px] text-app-text-muted leading-relaxed">• {n}</li>
+              ))}
+            </ul>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}

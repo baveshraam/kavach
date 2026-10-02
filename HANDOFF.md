@@ -6,6 +6,112 @@ things stand and what is left.
 
 ---
 
+## Update 2026-09-29 — demo build on the existing 12 speakers (no new data)
+
+Goal of this pass: a demo-ready system on the data already collected. Research
+notes and the demo script are in [DEMO_PLAN.md](DEMO_PLAN.md).
+
+**Run it:** `powershell -ExecutionPolicy Bypass -File .\run_demo.ps1`
+(`-Seed` rebuilds the demo DB first).
+
+### Done
+
+- **Demo DB holds all 12 consented speakers** — `python -m kavach.seed_demo`
+  loads corpus_v2 + corpus_v3 (161 utterances, 1.12 h, 9,750 tagged words)
+  with their *manifest* transcripts and tags (no ASR/LLM re-run), builds every
+  CSBG and ECAPA template (self-consistency 0.77–0.91), and carries over the
+  hand-typed SKG facts. The old DB is moved to `data/demo_backup_*`, never deleted.
+- **Consent is recorded**: `data/consent_register.csv` is YES for S01–S12
+  (the "every row is still PENDING" line further down is out of date).
+- **UI rework** (`kavach/`): new design tokens (`src/index.css`), a shared kit
+  (`src/components/ui/kit.tsx`), and every page rebuilt on it. Tamil is
+  terracotta and English is ink-blue everywhere; no gradients or neon.
+  Removed fake content: Enrolment's hard-coded log, "density 0.82" and mock
+  triples; an Evaluation fairness chart keyed on Male/Female groups no backend
+  emits. New: guided Authenticate flow with file upload (for replay/clone
+  clips), SKG fact editor in the Speakers drawer, a "language axis" CSBG
+  layout plus a two-speaker dumbbell comparison, and an Evaluation tab that
+  renders `paper/*/results.json` with its blockers (`GET /api/offline-results`).
+- `@types/react` was missing, so `tsc` had been type-checking JSX loosely; installed.
+- The live-EER table printed fractions as percentages (100x too small); fixed.
+
+### Found, and fixed for the demo
+
+1. **The splice gate rejects 167 of 168 genuine recordings** (every speaker).
+   Codec output (runs of exact zeros, sample-level jumps) reads as edits;
+   `INTEGRITY_FLOOR` was calibrated on synthetic audio only. New
+   `Settings.integrity_check_splice` (default on); `run_demo.ps1` turns it
+   off. Replay/duplicate detection is unaffected and does catch a resubmitted
+   corpus clip. **Pending:** recalibrate `attacks.splice` on the genuine corpus
+   plus splices built from it (`calibrate_floor`) — this data exists now.
+2. **A live login could hang for 10+ minutes.** The OpenAI-compatible client
+   used the SDK's 600 s timeout plus 2 hidden retries under our 6. Now 45 s
+   per request, SDK retries off, and the live path uses `live_llm_attempts=2`.
+   If tagging still fails, the login **degrades**: CSBG reported unmeasured
+   (never scored on rules-only OTHER tokens), knowledge still runs, the reason
+   appears in the explanation. Corpus annotation keeps its full retry budget
+   and still raises.
+3. **Uploads froze the whole server.** `/api/authenticate` and
+   `/api/utterances` were `async` routes calling the pipeline synchronously;
+   now in a threadpool (health stays at ~0.2 s during a login).
+4. **Whisper took 219 s for an 18 s clip on CPU** (repetition-loop re-decode
+   times temperature fallback). ASR `auto` now detects CUDA through
+   CTranslate2 (torch here is a CPU build, so the old check always said CPU)
+   and uses the GPU when cuBLAS 12 + cuDNN 9 load (`nvidia-cublas-cu12`,
+   `nvidia-cudnn-cu12` in the venv).
+5. `Settings.warm_models_on_start` loads the models at server start (on in `run_demo.ps1`). Demo switches live there, not in `.env`, because the test suite reads `.env` (trap 4).
+
+### Round 2 — data collection is over; workarounds so the prototype works
+
+**Standing constraint from the user: no more data collection, ever.** Work
+with the 12 speakers on disk; anything that needs more data stays pending.
+
+6. **Live ASR is single-pass greedy** (`Settings.live_fast_asr`,
+   `WhisperASR.transcribe(fast=True)`): 6.8 s for an 18 s clip on CPU versus
+   49 s at beam 5 and 219 s when a loop triggered the re-decode. CPU threads
+   raised from CTranslate2's default 4 to 8. Corpus annotation keeps beam 5.
+7. **Offline tagger** (`lid/lexicon.py`): majority (language, class) per word
+   over the 9,750 corpus tokens the LLM already tagged — 2,701 entries, 60–86%
+   coverage on unseen code-mixed sentences. Used when the LLM fails or no key
+   is set; the CSBG is scored if coverage >= 50% and the login explanation
+   says it was lexicon-tagged. Live path only, never for annotation.
+8. **CSBG veto off for the demo** (`Settings.csbg_veto_enabled`): both
+   offline runs fitted it on dev and discarded it; a veto on a chance-level
+   branch rejects genuine users at random.
+9. **No model download mid-login** (`SemanticMatcher(allow_download=False)`
+   on the live path). A login had started the 1.9 GB LaBSE download and sat
+   on it; the HF cache still holds a partial copy. Fetch everything once with
+   `python -m kavach.prefetch` (or `run_demo.ps1 -Prefetch`); until then the
+   knowledge branch uses its three string matchers only.
+10. **Hallucinated-script tokens are dropped** at login and when a graph is
+    built (`asr.FOREIGN_SCRIPT`), and the login explanation counts them. The
+    seeded graphs predate this: rebuild a speaker (Speakers → Rebuild) or
+    re-run `seed_demo` to apply it to stored tokens.
+11. **Microphone top-up** (Speakers drawer): add 2–3 clips from the demo
+    laptop to an enrolled speaker and rebuild, so the voiceprint knows the
+    demo microphone — enrolment audio is all phone recordings.
+12. **Attack demo from stored audio** (Authenticate → "Demo with stored
+    audio"): replay = a stored clip byte-for-byte (duplicate detector);
+    impostor = a 20 s cut of another speaker re-encoded in the browser (so the
+    voiceprint, not the duplicate check, has to reject it); genuine stand-in =
+    a cut of the claimed speaker's own enrolment audio, labelled as such.
+
+**Not yet re-verified end to end** (paused at the user's request while their
+training job runs): a full live login after items 6–12. Run the targeted
+tests and one login before presenting.
+
+### Found, not fixed (needs a decision or more work)
+
+- **13 of 161 stored transcripts contain hallucinated script** — Greek,
+  Cyrillic, Hangul, CJK, Hebrew letters inside Tamil-English speech (e.g.
+  S03_p04, S04_p11, S12_p07). They were tagged and are in the graphs.
+  `repetition_loop` / `looks_translated` do not catch this; a foreign-script
+  check belongs next to them.
+- The CSBG result stands: 50% EER on free speech (5 speakers). Everything that
+  needs a second session is still blocked on data (table below).
+
+---
+
 ## Current state
 
 - **932 tests passing**, offline, in about 47 seconds.
