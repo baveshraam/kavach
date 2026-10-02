@@ -96,6 +96,22 @@ class CloneBackend(Protocol):
         ...
 
 
+@runtime_checkable
+class VoiceConverter(Protocol):
+    """Converts one person's *speech* into another person's voice.
+
+    The sibling of `CloneBackend` for voice conversion (kNN-VC): the input is
+    audio, not text, so it cannot satisfy `SynthesisRequest`. The attacker
+    supplies the words and the style; the converter supplies only the voice,
+    which is exactly the A4 story -- voice stolen, answer known, code-switching
+    habits the attacker's own.
+    """
+
+    def convert(self, source: Audio, target_reference: list[Audio]) -> Audio: ...
+
+    def name(self) -> str: ...
+
+
 class XTTSCloner:
     """Coqui XTTS-v2 zero-shot voice cloning.
 
@@ -374,6 +390,7 @@ __all__ = [
     "EchoCloner",
     "MIN_REFERENCE_SEC",
     "SynthesisRequest",
+    "VoiceConverter",
     "XTTSCloner",
     "check_language_support",
     "screen_clone",
