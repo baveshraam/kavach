@@ -48,13 +48,26 @@ class FakeEmbedder:
 
 
 class FakeASR:
-    def __init__(self, text: str) -> None:
+    def __init__(self, text: str, words=None) -> None:
         self.text = text
+        self.words = words or []
         self.calls: list[dict] = []
 
     def transcribe(self, audio, **kwargs):
         self.calls.append(kwargs)
-        return Transcript(text=self.text, words=[])
+        return Transcript(text=self.text, words=self.words)
+
+
+class SpyEmbedder(FakeEmbedder):
+    """Remembers how long each clip it was asked to embed was."""
+
+    def __init__(self, vector) -> None:
+        super().__init__(vector)
+        self.seen_seconds: list[float] = []
+
+    def embed(self, audio):
+        self.seen_seconds.append(audio.duration_sec)
+        return super().embed(audio)
 
 
 class ExplodingLID:
@@ -67,7 +80,7 @@ class ExplodingLID:
         raise AssertionError("the tagger must not run for a phrase challenge")
 
 
-def wav_bytes(tmp_path: Path, seconds: float = 4.0) -> bytes:
+def wav_bytes(tmp_path: Path, seconds: float = 4.0) -> bytes:  # noqa: D103
     n = next(_COUNTER)
     rng = np.random.default_rng(n)
     t = np.linspace(0, seconds, int(16_000 * seconds), endpoint=False)
@@ -333,3 +346,70 @@ class TestStepUp:
         c = issue(client, speaker)
         login(client, pipeline, tmp_path, c, heard=" ".join(c["phrase"]), cosine=0.2)
         assert self.step_up(client, speaker).status_code == 409
+
+
+class TestVoiceIsJudgedOnThePhraseSpan:
+    """Speech before or after the shown words must not dilute (or hijack) the voiceprint."""
+
+    @staticmethod
+    def timed(words_and_times):
+        from kavach.asr import Word
+        return [Word(text=t, start_ms=a, end_ms=b) for t, a, b in words_and_times]
+
+    def run(self, client, pipeline, tmp_path, speaker, *, seconds, layout):
+        c = issue(client, speaker)
+        words = c["phrase"]
+        timed = self.timed(layout(words))
+        spy = SpyEmbedder(probe_with_cosine(0.9))
+        pipeline._embedder = spy
+        pipeline._asr = FakeASR(" ".join(t.text for t in timed), words=timed)
+        r = client.post(
+            "/api/authenticate",
+            files={"audio": ("a.wav", wav_bytes(tmp_path, seconds=seconds), "audio/wav")},
+            data={"challengeId": c["id"]},
+        ).json()
+        return r, spy
+
+    def test_a_judge_speaking_after_the_phrase_is_not_part_of_the_voice_sample(self, client, pipeline, speaker, tmp_path):
+        def layout(w):
+            phrase = [(x, 1000 + i * 500, 1400 + i * 500) for i, x in enumerate(w)]  # 1.0 s .. 3.9 s
+            judge = [("let", 6000, 6200), ("me", 6200, 6300), ("try", 6300, 6600)]
+            return phrase + judge
+
+        r, spy = self.run(client, pipeline, tmp_path, speaker, seconds=8.0, layout=layout)
+        assert r["decision"] == "ACCEPT", r["explanation"]
+        assert spy.seen_seconds and spy.seen_seconds[0] == pytest.approx(3.3, abs=0.2)  # 1.0..3.9 plus margins, not 8 s
+
+    def test_with_no_word_timings_the_whole_recording_is_used(self, client, pipeline, speaker, tmp_path):
+        c = issue(client, speaker)
+        spy = SpyEmbedder(probe_with_cosine(0.9))
+        pipeline._embedder = spy
+        pipeline._asr = FakeASR(" ".join(c["phrase"]), words=[])
+        client.post(
+            "/api/authenticate",
+            files={"audio": ("a.wav", wav_bytes(tmp_path, seconds=5.0), "audio/wav")},
+            data={"challengeId": c["id"]},
+        )
+        assert spy.seen_seconds[0] == pytest.approx(5.0, abs=0.05)
+
+    def test_a_span_too_short_to_embed_falls_back_to_the_whole_recording(self, client, pipeline, speaker, tmp_path):
+        def layout(w):
+            return [(x, 2000 + i * 100, 2090 + i * 100) for i, x in enumerate(w)]  # six words in 0.6 s
+
+        r, spy = self.run(client, pipeline, tmp_path, speaker, seconds=5.0, layout=layout)
+        assert spy.seen_seconds[0] == pytest.approx(5.0, abs=0.05)
+
+    def test_the_span_never_runs_past_the_ends_of_the_recording(self, client, pipeline, speaker, tmp_path):
+        def layout(w):
+            return [(x, 100 + i * 500, 500 + i * 500) for i, x in enumerate(w)]  # starts almost at 0
+
+        r, spy = self.run(client, pipeline, tmp_path, speaker, seconds=3.2, layout=layout)
+        assert 0 < spy.seen_seconds[0] <= 3.2 + 1e-6
+
+    def test_the_explanation_says_which_part_was_scored(self, client, pipeline, speaker, tmp_path):
+        def layout(w):
+            return [(x, 1000 + i * 500, 1400 + i * 500) for i, x in enumerate(w)]
+
+        r, _ = self.run(client, pipeline, tmp_path, speaker, seconds=6.0, layout=layout)
+        voice = next(b for b in r["branches"] if b["name"] == "speaker_embedding")
+        assert voice["passed"]

@@ -22,7 +22,7 @@ import random
 import re
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from typing import Sequence
+from typing import Any, Sequence
 
 #: Two tokens at least this similar count as the same word (forgives "tigers" for "tiger").
 FUZZY_RATIO = 0.8
@@ -62,6 +62,10 @@ class PhraseMatch:
     matched_words: tuple[str, ...]
     missing_words: tuple[str, ...]
     detail: str
+    span_ms: tuple[int, int] | None = None
+    """Where in the recording the matched words were spoken, from the ASR word timings; None when
+    no timings were given or nothing matched. The voice is judged on this span, so speech before
+    or after the phrase (a judge saying "let me try") cannot dilute or hijack the voiceprint."""
 
 
 def _same_word(expected: str, heard: str) -> bool:
@@ -70,29 +74,45 @@ def _same_word(expected: str, heard: str) -> bool:
     return SequenceMatcher(None, expected, heard).ratio() >= FUZZY_RATIO
 
 
-def match_phrase(expected: Sequence[str], transcript: str) -> PhraseMatch:
+def match_phrase(expected: Sequence[str], transcript: str, *, words: Sequence[Any] | None = None) -> PhraseMatch:
     """How much of the shown phrase the transcript contains, in order.
 
     Each expected word is looked for after the previous match, so the right words in the wrong
     order score low: a recording of those words made for another attempt is not an answer to
     this one.
+
+    With `words` (ASR words carrying `.text`, `.start_ms`, `.end_ms`) the match runs over them and
+    the result says where in the recording the matched words were spoken (`span_ms`).
     """
-    words = [w.lower() for w in expected]
-    heard = re.findall(r"[a-z]+", transcript.lower())
+    wanted = [w.lower() for w in expected]
+    if words:
+        tokens = [
+            (tok, int(w.start_ms), int(w.end_ms))
+            for w in words
+            for tok in re.findall(r"[a-z]+", str(w.text).lower())
+        ]
+    else:
+        tokens = [(tok, -1, -1) for tok in re.findall(r"[a-z]+", transcript.lower())]
+    heard = [t[0] for t in tokens]
     matched: list[str] = []
     missing: list[str] = []
+    hits: list[int] = []
     pos = 0
-    for w in words:
+    for w in wanted:
         hit = next((i for i in range(pos, len(heard)) if _same_word(w, heard[i])), None)
         if hit is None:
             missing.append(w)
         else:
             matched.append(w)
+            hits.append(hit)
             pos = hit + 1
-    total = len(words)
+    total = len(wanted)
     score = len(matched) / total if total else 0.0
+    span = None
+    if hits and tokens[hits[0]][1] >= 0:
+        span = (tokens[hits[0]][1], tokens[hits[-1]][2])
     if not heard:
         detail = "nothing in the transcript could be matched to the words shown"
     else:
         detail = f"matched {len(matched)} of {total}: heard {', '.join(matched) or 'none'}; missing {', '.join(missing) or 'none'}"
-    return PhraseMatch(score, len(matched), total, tuple(matched), tuple(missing), detail)
+    return PhraseMatch(score, len(matched), total, tuple(matched), tuple(missing), detail, span)

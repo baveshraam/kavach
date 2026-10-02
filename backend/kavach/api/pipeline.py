@@ -847,10 +847,10 @@ class Pipeline:
                 integrity=integrity,
             )
 
-        branches.append(self._speaker_branch(speaker_id, audio, notes))
-
         if challenge.kind == "phrase":
             return self._verify_phrase(challenge, audio, branches, notes, started, integrity)
+
+        branches.append(self._speaker_branch(speaker_id, audio, notes))
 
         annotation = self.annotate(audio, utterance_id=challenge.id, speaker_id=speaker_id)
         if annotation is not None and annotation.dropped_hallucinated:
@@ -953,6 +953,7 @@ class Pipeline:
         threshold = self.settings.phrase_min_match
         asr = self.asr
         annotation: Annotation | None = None
+        voice_audio, span_note = audio, ""
         if asr is None:
             reason = self._failed.get("asr", "speech recognition is not available")
             notes.append(f"Speech recognition is unavailable: {reason}")
@@ -966,7 +967,7 @@ class Pipeline:
             transcript = asr.transcribe(
                 audio, language="en", initial_prompt="", fast=self.settings.live_fast_asr
             )
-            match = match_phrase(challenge.phrase, transcript.text)
+            match = match_phrase(challenge.phrase, transcript.text, words=transcript.words)
             branches.append(
                 BranchScore(
                     branch=Branch.PHRASE, score=match.score, threshold=threshold,
@@ -980,6 +981,9 @@ class Pipeline:
                     transcript=transcript.text,
                 ),
             )
+            voice_audio, span_note = self._phrase_span_audio(audio, match.span_ms)
+
+        branches.append(self._speaker_branch(challenge.speaker_id, voice_audio, notes, detail_suffix=span_note))
         result = fuse(branches, self._policy(strict_voice=challenge.strict_voice))
         return VerificationOutcome(
             fusion=result,
@@ -990,6 +994,27 @@ class Pipeline:
             latency_ms=int((time.perf_counter() - started) * 1000),
             notes=notes,
             integrity=integrity,
+        )
+
+    #: Margin kept around the phrase when the voice is scored on it alone.
+    SPAN_MARGIN_SEC = 0.2
+
+    def _phrase_span_audio(self, audio: Audio, span_ms: tuple[int, int] | None) -> tuple[Audio, str]:
+        """The part of the recording where the shown words were spoken, for the voiceprint.
+
+        Whatever else was said before or after (a judge: "let me try") is not part of the sample,
+        so it can neither dilute the owner's voice nor stand in for it. If the span is too short
+        to embed, or there are no word timings, the whole recording is used.
+        """
+        if span_ms is None:
+            return audio, ""
+        start = max(0.0, span_ms[0] / 1000.0 - self.SPAN_MARGIN_SEC)
+        end = min(audio.duration_sec, span_ms[1] / 1000.0 + self.SPAN_MARGIN_SEC)
+        if end - start < self.settings.min_audio_seconds or end - start >= audio.duration_sec - 0.05:
+            return audio, ""
+        return (
+            audio.slice_seconds(start, end),
+            f"; scored on the {end - start:.1f} s span where the shown words were spoken ({start:.1f}-{end:.1f} s of {audio.duration_sec:.1f} s)",
         )
 
     def _policy(self, *, strict_voice: bool = False) -> FusionPolicy:
@@ -1017,7 +1042,7 @@ class Pipeline:
         return policy
 
     def _speaker_branch(
-        self, speaker_id: str, audio: Audio, notes: list[str]
+        self, speaker_id: str, audio: Audio, notes: list[str], *, detail_suffix: str = ""
     ) -> BranchScore:
         embedder = self.embedder
         template = self.load_template(speaker_id)
@@ -1059,7 +1084,7 @@ class Pipeline:
             threshold=threshold,
             weight=0.0,
             detail=(
-                f"ECAPA-TDNN cosine against a {len(template.embeddings)}-clip template."
+                f"ECAPA-TDNN cosine against a {len(template.embeddings)}-clip template{detail_suffix}."
             ),
         )
 
