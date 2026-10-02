@@ -125,6 +125,14 @@ export interface AttackRun {
   notes?: string[];
 }
 
+export interface CloneMatch {
+  clipId: string;
+  audioUrl: string;
+  attackType: string;
+  backend: string;
+  similarity: number;
+}
+
 export interface SpeakerIapmr {
   speakerId: string;
   name: string;

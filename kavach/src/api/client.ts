@@ -1,4 +1,4 @@
-import { AuthResult, Challenge, CSBG, EvalMetrics, Speaker, Utterance, Triple, AttackRun, AttackType, PerSpeakerIapmr, OfflineRun } from './types';
+import { AuthResult, Challenge, CloneMatch, CSBG, EvalMetrics, Speaker, Utterance, Triple, AttackRun, AttackType, PerSpeakerIapmr, OfflineRun } from './types';
 import { mockSpeakers, mockUtterances, mockTriples, mockCSBG, mockAuthResults, mockAttacks, mockEvalMetrics } from './mock';
 
 // @ts-ignore
@@ -27,12 +27,22 @@ async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> 
 }
 
 export const apiClient = {
-  health: async (): Promise<{ status: string, models: string[], device: string }> => {
+  health: async (): Promise<{ status: string, models: string[], device: string, demoAttackBank?: boolean }> => {
     if (USE_MOCK) {
       await delay(200);
       return { status: 'connected', models: ['ecapa-tdnn-v2', 'wav2vec2-large-xlsr-ta', 'llama-3-8b-instruct'], device: 'cuda:0' };
     }
     return fetchApi('/api/health');
+  },
+
+  /** The attacker's cloned answer to an issued challenge (demo builds only; 404 otherwise). */
+  matchCloneClip: async (challengeId: string): Promise<CloneMatch> => {
+    if (USE_MOCK) throw new Error('The clone bank needs the real backend.');
+    return fetchApi('/api/clone-bank/match', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ challengeId }),
+    });
   },
 
   getSpeakers: async (): Promise<Speaker[]> => {

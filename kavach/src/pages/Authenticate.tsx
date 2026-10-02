@@ -28,6 +28,8 @@ export function Authenticate() {
     enabled: !!speakerId,
   });
 
+  const { data: health } = useQuery({ queryKey: ['health'], queryFn: apiClient.health });
+
   const issue = useMutation({
     mutationFn: (id: string) => apiClient.issueChallenge(id),
     onSuccess: data => { setChallenge(data); setResult(null); },
@@ -140,6 +142,7 @@ export function Authenticate() {
                   <AudioRecorder allowUpload busy={auth.isPending} acceptLabel="Verify"
                     onAccept={(blob, _d, name) => auth.mutate({ blob, name, label: name ? `Uploaded file · ${name}` : 'Live answer' })} />
                   <DemoClips claimedId={speakerId} speakers={speakers ?? []} busy={auth.isPending}
+                    challengeId={challenge.id} cloneEnabled={!!health?.demoAttackBank}
                     onSubmit={(blob, name, label) => auth.mutate({ blob, name, label })} />
                   {auth.isPending && <div className="mt-3"><Spinner label="Transcribing, tagging and scoring… (a few seconds on CPU)" /></div>}
                   {auth.error && <Notice tone="reject" className="mt-3" title="Verification failed">{(auth.error as Error).message}</Notice>}
@@ -197,8 +200,10 @@ function Step({ n, title, done, disabled, children }: { n: number; title: string
  *            is not in the room. Labelled as such: the voice matches trivially
  *            (it is enrolment audio), and it does not answer the question.
  */
-function DemoClips({ claimedId, speakers, busy, onSubmit }: {
+function DemoClips({ claimedId, speakers, busy, onSubmit, challengeId, cloneEnabled }: {
   claimedId: string;
+  challengeId: string;
+  cloneEnabled: boolean;
   speakers: import('../api/types').Speaker[];
   busy: boolean;
   onSubmit: (blob: Blob, name: string, label: string) => void;
@@ -210,10 +215,21 @@ function DemoClips({ claimedId, speakers, busy, onSubmit }: {
   const impostor = impostorId && impostorId !== claimedId ? impostorId : others[0]?.id ?? '';
   const nameOf = (id: string) => speakers.find(s => s.id === id)?.displayName ?? id;
 
-  const run = async (kind: 'replay' | 'impostor' | 'standin') => {
+  const run = async (kind: 'replay' | 'impostor' | 'standin' | 'clone') => {
     setError(null);
     setPreparing(kind);
     try {
+      if (kind === 'clone') {
+        // The attacker's pre-cloned answer to the challenge just issued. A 404
+        // here carries a useful reason ("the bank covers: ..."), shown below.
+        const match = await apiClient.matchCloneClip(challengeId);
+        onSubmit(
+          await fetchExact(assetUrl(match.audioUrl)),
+          `clone_${match.clipId}.wav`,
+          `Clone attack · synthetic ${match.backend} clip of ${nameOf(claimedId)} (voiceprint ${match.similarity.toFixed(2)})`,
+        );
+        return;
+      }
       const ownerId = kind === 'impostor' ? impostor : claimedId;
       const utts = await apiClient.getSpeakerUtterances(ownerId);
       const pool = utts.filter(u => u.durationSec >= 8);
@@ -242,7 +258,7 @@ function DemoClips({ claimedId, speakers, busy, onSubmit }: {
         <div className="text-[13px] font-semibold">Demo with stored audio</div>
         <div className="text-[12px] text-app-text-muted">Stage an attack from recordings already in the corpus, instead of speaking.</div>
       </div>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+      <div className={cn('grid grid-cols-1 gap-2', cloneEnabled ? 'sm:grid-cols-4' : 'sm:grid-cols-3')}>
         <Button size="sm" variant="secondary" disabled={busy || !!preparing} loading={preparing === 'replay'} onClick={() => run('replay')}>
           Replay attack
         </Button>
@@ -252,6 +268,11 @@ function DemoClips({ claimedId, speakers, busy, onSubmit }: {
         <Button size="sm" variant="ghost" disabled={busy || !!preparing} loading={preparing === 'standin'} onClick={() => run('standin')}>
           Genuine stand-in
         </Button>
+        {cloneEnabled && (
+          <Button size="sm" variant="secondary" disabled={busy || !!preparing} loading={preparing === 'clone'} onClick={() => run('clone')}>
+            Clone attack
+          </Button>
+        )}
       </div>
       <Field label="Impostor speaker">
         <Select value={impostor} onChange={e => setImpostorId(e.target.value)}>
