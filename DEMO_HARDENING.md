@@ -50,14 +50,16 @@ This file is the memory of the pass. Read it top to bottom to resume.
   the phrase (a judge saying "let me try") diluted the owner's voiceprint: real-model rehearsal, owner then
   judge, BORDERLINE 0.54; after the change ACCEPT 0.83. A judge speaking *over* the phrase still lowers the
   score (borderline, never accept). Falls back to the whole recording without timings or under 1 s.
-- **R6. The voice threshold is measured, midway.** `kavach.calibrate_voice`: the accept threshold is the
-  midpoint between the strangers' tail (the 99.9th percentile of impostor scores, or the worst seen when
-  there are too few trials) and the owner's low end (99% of their held-out probes reach it); the borderline
-  band reaches halfway down to the strangers' tail. If the classes overlap the strangers' tail wins and the
-  owner's false-reject rate is reported with the remedy. The result is written to `data/voice_policy.json`
-  and loaded at start; a damaged file falls back to 0.62/0.08 and `/api/health` says so. Why not the plain
-  impostor quantile: it puts the threshold at the edge of the strangers, no margin for an unseen judge.
-  Cost if wrong: a threshold below 0.62 is possible if the owner's scores are low; `MIN_THRESHOLD` is 0.50.
+- **R6. The voice threshold is measured, and sits nearer the owner.** `kavach.calibrate_voice`: the strangers'
+  edge U is the 99.9th percentile of impostor scores (the worst seen when there are too few trials); the owner's
+  edge G is the score 99% of their held-out probes reach. When G clears U by 0.04 or more, the accept threshold
+  is 60% of the way from U to G (the owner can retry, a stranger is owed nothing, so the margin is not split
+  evenly) and the borderline band reaches halfway down to U. When the classes overlap, U wins and the owner's
+  false-reject rate is reported with the remedy. Never below 0.55: against the corpus speakers as targets the
+  nearest public-cohort stranger reached 0.604. Written to `data/voice_policy.json`, loaded at start; a damaged
+  file falls back to 0.62/0.08 and `/api/health` says so. A first version used the plain impostor quantile; a
+  synthetic rehearsal showed it would sit at the strangers' edge (0.575), below the old default, and then a
+  plain midpoint did the same, hence the weighting and the floor.
 - **R7. Studio gets a `words` kind and the final enrolment uses every session.** The login's own task (six
   random words) is recorded 10-15 times per session, deterministically per session id so a refresh keeps
   its place. Calibration is leave-one-session-out over all five sessions on those clips; the demo template is
@@ -69,6 +71,13 @@ This file is the memory of the pass. Read it top to bottom to resume.
   synthetic stranger (Windows SAPI) that must be rejected on the voice, and a recording of other words
   that must be rejected on the words. Cost if wrong: synthetic speech is not a human; it proves the
   plumbing only.
+- **R10. Ten words, six needed (was six, four).** Probe length is the strongest lever on the voice margin.
+  LibriSpeech, cross-chapter, owner 2nd percentile minus strangers' 99.9th percentile: +0.10 at 4-8 s, +0.20 at
+  8-11 s, +0.26 at 11-15 s. Ten words are about seven seconds. An unrelated ten-word recording matched 4 or more
+  of the shown words in order 1.4e-4 of the time and 5 or more never (100,000 random pairs), so 6 of 10 is
+  replay-proof and tolerates four misheard words. Cost if wrong: ten words are a longer chore on stage, and a
+  Tamil-accented speaker may be misheard more; `kavach.studio.words_check` measures that on the presenter's own
+  clips and prints what a looser gate would cost.
 - **R9. WavLM-SV (and ResNet) are not used.** On the 12 corpus speakers, within-session, ECAPA's EER was
   0.03% and WavLM-SV's 3.73% (raw cosine; centring did not help). ResNet embedding was abandoned for CPU.
   A second embedder is not worth the risk this close to the demo.
@@ -99,6 +108,15 @@ This file is the memory of the pass. Read it top to bottom to resume.
   silence rejected in 0.2 s. These are synthetic voices: the voice scores prove the gates, not human variation.
 - Browser end to end (Chrome fake microphone fed the TTS of the words shown on screen, real backend):
   owner unlocked (0.82), judge denied (0.21), owner again unlocked (0.78); no page errors, no failing requests.
+
+- Phrase-length (5 s) strangers against S04's *current* template (13 phone clips): 3,664 probes (LibriSpeech
+  1,803, Tamil male 532, Tamil female 636, the 11 corpus teammates 693): mean 0.118, p99.9 0.497, max 0.577
+  (a teammate); 0 reached 0.62, 1 reached 0.55. S04's own 5 s probes against the same template, same sitting
+  (optimistic): mean 0.817, 5th percentile 0.697, minimum 0.624. A same-sitting minimum already at the
+  threshold is the reason the demo template must be rebuilt through the laptop-microphone path and the
+  threshold measured, not assumed.
+- Probe length, LibriSpeech cross-chapter, clean (owner n / stranger n): 4-6 s p2 0.588 vs p99.9 0.486
+  (margin +0.10); 6-8 s +0.10; 8-11 s +0.20 (0.661 vs 0.463); 11-15 s +0.26; 15-19 s +0.29.
 
 ## 4. Honest limits (state these, do not paper over them)
 
