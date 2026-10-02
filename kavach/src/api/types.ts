@@ -130,6 +130,10 @@ export interface AttackRun {
   notes?: string[];
 }
 
+export interface Voiceprint {
+  nClips: number; selfConsistency: number;
+  provenance: { source: string; sessions: string[]; devices: string[]; n_clips: number } | null;
+}
 export interface StudioPlanItem { kind: 'read' | 'free' | 'fact' | 'words'; promptId: string; textEn: string; textTa: string; repeat: number }
 export interface StudioPlan {
   speaker: string; sessionId: string; hasFacts: boolean; estimatedMinutes: number;

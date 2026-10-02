@@ -112,6 +112,7 @@ export function Unlock() {
   }, [speakers, speakerId]);
 
   const speaker = speakers?.find(s => s.id === speakerId);
+  const { data: vp } = useQuery({ queryKey: ['voiceprint', speakerId], queryFn: () => apiClient.voiceprint(speakerId), enabled: !!speakerId, retry: false });
   const firstName = speaker?.displayName.split(/[\s(·-]/)[0] ?? 'this speaker';
 
   const issue = useMutation({
@@ -181,7 +182,9 @@ export function Unlock() {
           <Card className="min-h-[520px]">
             <CardHeader
               title={<span className="flex items-center gap-2">{result?.decision === 'ACCEPT' ? <LockOpen className="w-4 h-4 text-app-accept" /> : <Lock className="w-4 h-4 text-app-text-subtle" />} {speaker ? `${firstName}'s voiceprint` : 'No speaker enrolled'}</span>}
-              subtitle={speaker ? `${speaker.utteranceCount} enrolment clips · ${(speaker.totalDurationSec / 60).toFixed(1)} min of speech` : undefined}
+              subtitle={speaker ? (vp?.provenance
+                ? `Voiceprint from ${vp.nClips} clips · Studio sessions ${vp.provenance.sessions.join(', ')} · ${vp.provenance.devices.join(', ').toLowerCase().replace(/_/g, ' ')}`
+                : `Voiceprint from ${vp?.nClips ?? speaker.utteranceCount} enrolment clips`) : undefined}
               actions={speakers && speakers.length > 1 ? (
                 <Select value={speakerId} onChange={e => reset(e.target.value)} className="!h-8 !text-[12.5px] w-44">
                   {speakers.map(s => <option key={s.id} value={s.id}>{s.displayName}</option>)}
@@ -282,6 +285,12 @@ export function Unlock() {
                 <GateLine title="Untouched" text="The recording is not a copy of one already seen." />
                 <GateLine title="Said now" text="The words you speak are the words on screen, in order. A recording made for another attempt cannot contain them." />
                 <GateLine title="Your voice" text={`The voiceprint must reach ${(health?.voiceThreshold ?? 0.62).toFixed(2)}. Below ${((health?.voiceThreshold ?? 0.62) - (health?.voiceGreyMargin ?? 0.08)).toFixed(2)} it is a flat no; in between you are asked once more.`} />
+                <div className="pt-1 flex flex-wrap gap-2">
+                  <Badge tone={health?.voicePolicySource === 'calibrated' && !health?.voicePolicyProvisional ? 'accept' : 'warning'}>
+                    {health?.voicePolicySource === 'calibrated' ? (health?.voicePolicyProvisional ? 'threshold measured (provisional)' : 'threshold measured on held-out sessions') : 'default threshold, not yet measured'}
+                  </Badge>
+                  {health?.voicePolicyError && <Badge tone="reject">policy file ignored</Badge>}
+                </div>
               </CardBody>
             </Card>
             <Card>
