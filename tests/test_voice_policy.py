@@ -159,3 +159,21 @@ class TestEvidenceRoute:
         p = Pipeline(store, settings)
         body = self.app_for(store, settings, p).get("/api/voice-policy").json()
         assert body["source"] == "default" and body["error"]
+
+
+def test_the_provenance_block_reports_the_threshold_actually_in_force(store, settings, speaker):
+    """`reportable` is what someone copies into a write-up; it must not name the default 0.62 while a
+    calibrated threshold is judging the logins."""
+    from kavach.api.app import create_app, get_pipeline, get_settings, get_store
+    from kavach.api.pipeline import Pipeline
+
+    (Path(settings.data_dir) / "voice_policy.json").write_text(
+        json.dumps({"threshold": 0.71, "grey_margin": 0.06, "provisional": False}), encoding="utf-8")
+    p = Pipeline(store, settings)
+    app = create_app(settings)
+    app.dependency_overrides[get_store] = lambda: store
+    app.dependency_overrides[get_pipeline] = lambda: p
+    app.dependency_overrides[get_settings] = lambda: settings
+    rep = TestClient(app).get("/api/health").json()["reportable"]
+    assert rep["speaker_threshold"] == pytest.approx(0.71)
+    assert rep["voice_grey_margin"] == pytest.approx(0.06)
