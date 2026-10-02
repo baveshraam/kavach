@@ -95,3 +95,34 @@ class TestMatch:
     def test_it_reports_what_was_heard_for_the_explanation(self):
         m = match_phrase(self.EXPECTED, "tiger river window")
         assert "tiger" in m.detail and "mango" in m.detail  # names the words that were missing
+
+
+class TestSpan:
+    """Where in the recording the shown words were spoken: the voice is judged on that span."""
+
+    @staticmethod
+    def words(spec):
+        from kavach.asr import Word
+        return [Word(text=t, start_ms=s, end_ms=e) for t, s, e in spec]
+
+    def test_the_span_runs_from_the_first_matched_word_to_the_last(self):
+        w = self.words([("okay", 0, 300), ("Tiger,", 1000, 1400), ("river", 1500, 1900), ("mango.", 2000, 2500), ("thanks", 4000, 4400)])
+        m = match_phrase(["tiger", "river", "mango"], "okay Tiger, river mango. thanks", words=w)
+        assert m.span_ms == (1000, 2500)
+
+    def test_speech_before_and_after_is_outside_the_span(self):
+        w = self.words([("hey", 0, 400), ("tiger", 1000, 1400), ("river", 1500, 1900), ("let", 3000, 3200), ("me", 3200, 3300), ("try", 3300, 3500)])
+        m = match_phrase(["tiger", "river"], "hey tiger river let me try", words=w)
+        assert m.span_ms == (1000, 1900)
+
+    def test_no_word_timings_means_no_span(self):
+        assert match_phrase(["tiger"], "tiger").span_ms is None
+
+    def test_no_match_means_no_span(self):
+        w = self.words([("bridge", 0, 400)])
+        assert match_phrase(["tiger", "river"], "bridge", words=w).span_ms is None
+
+    def test_an_unordered_straggler_does_not_stretch_the_span(self):
+        w = self.words([("river", 0, 400), ("tiger", 1000, 1400), ("river", 1500, 1900)])
+        m = match_phrase(["tiger", "river"], "river tiger river", words=w)
+        assert m.span_ms == (1000, 1900)
