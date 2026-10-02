@@ -1,4 +1,4 @@
-import { AuthResult, Challenge, CloneBankInfo, CloneMatch, CSBG, StudioPlan, StudioSummary, EvalMetrics, Speaker, Utterance, Triple, AttackRun, AttackType, PerSpeakerIapmr, OfflineRun } from './types';
+import { AuthResult, Challenge, Voiceprint, CloneBankInfo, CloneMatch, CSBG, StudioPlan, StudioSummary, EvalMetrics, Speaker, Utterance, Triple, AttackRun, AttackType, PerSpeakerIapmr, OfflineRun } from './types';
 import { mockSpeakers, mockUtterances, mockTriples, mockCSBG, mockAuthResults, mockAttacks, mockEvalMetrics } from './mock';
 
 // @ts-ignore
@@ -27,7 +27,7 @@ async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> 
 }
 
 export const apiClient = {
-  health: async (): Promise<{ status: string, models: string[], device: string, demoAttackBank?: boolean, voiceGate?: boolean, voiceThreshold?: number, voiceGreyMargin?: number }> => {
+  health: async (): Promise<{ status: string, models: string[], device: string, demoAttackBank?: boolean, voiceGate?: boolean, voiceThreshold?: number, voiceGreyMargin?: number, voicePolicySource?: string, voicePolicyProvisional?: boolean, voicePolicyError?: string }> => {
     if (USE_MOCK) {
       await delay(200);
       return { status: 'connected', models: ['ecapa-tdnn-v2', 'wav2vec2-large-xlsr-ta', 'llama-3-8b-instruct'], device: 'cuda:0' };
@@ -171,6 +171,12 @@ export const apiClient = {
   deleteUtterance: async (id: string): Promise<{ deleted: true }> => {
     if (USE_MOCK) return delay(300).then(() => ({ deleted: true }));
     return fetchApi(`/api/utterances/${id}`, { method: 'DELETE' });
+  },
+
+  /** How the enrolled voiceprint was built (clip count, Studio sessions, devices). */
+  voiceprint: async (speakerId: string): Promise<Voiceprint> => {
+    if (USE_MOCK) return { nClips: 13, selfConsistency: 0.85, provenance: null };
+    return fetchApi(`/api/speakers/${speakerId}/voiceprint`);
   },
 
   issueChallenge: async (speakerId: string, kind: 'question' | 'phrase' = 'question', stepUp = false): Promise<Challenge> => {
