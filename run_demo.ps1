@@ -25,6 +25,11 @@ $env:PYTHONIOENCODING = "utf-8"
 $env:KAVACH_INTEGRITY_CHECK_SPLICE = "false"
 $env:KAVACH_WARM_MODELS_ON_START = "true"
 $env:KAVACH_CSBG_VETO_ENABLED = "false"
+# The clone-attack demo: the bank holds the presenter's cloned answers and its
+# routes return audio that SAYS the answer, so this build announces itself in
+# /api/health (demoAttackBank). Only the presenter has agreed to be cloned.
+$env:KAVACH_DEMO_ATTACK_BANK = "true"
+$env:KAVACH_CLONE_VICTIMS = '["S04"]'
 
 if ($Prefetch) {
     Write-Host "Downloading every model the demo needs (run once, on a good connection) ..." -ForegroundColor Cyan
