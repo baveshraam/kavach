@@ -6,6 +6,81 @@ things stand and what is left.
 
 ---
 
+## Update 2026-10-02 -- the demo is verified end to end; splice tests are off, with the measurement
+
+Goal of this pass: finish the demo-ready prototype on the 12 speakers on disk
+(no new data). Five commits sit on top of `df0796b`; **nothing has been pushed**.
+
+### Verified live: real backend, no mock
+
+Whisper `small`, ECAPA, Gemini tagging, LaBSE listed, `integrity_check_splice`
+at its new default (off). The three demo flows, staged from stored audio the way
+the UI's "Demo with stored audio" does it:
+
+| Flow | Decision | What decided it |
+|---|---|---|
+| Genuine stand-in (20 s cut of the claimed speaker's own audio) | ACCEPT, 0.635 / 0.55 | voice 0.922; CSBG 0.508 (margin **+0.008**); knowledge 0.38 *failed* |
+| Replay (stored clip, byte for byte) | REJECT, 7 ms | integrity gate: byte-identical to a stored recording |
+| Impostor (another speaker, 20 s cut, re-encoded) | REJECT, 0.299 | voice 0.142 against 0.62; integrity passed, so the voiceprint decides |
+
+Read these honestly. The stand-in's knowledge branch failing is expected -- the
+clip does not answer the challenge. The CSBG's +0.008 margin is a coin flip,
+which is what 50% EER on free speech means. The first login took 31.5 s cold and
+the next 7.6 s. LaBSE is **not** prefetched (1.9 GB), so the knowledge branch
+runs on its string matchers only: `run_demo.ps1 -Prefetch` once, on a good
+connection, before presenting. These three logins were removed from the demo DB
+afterwards (restored from a backup), so its history is as it was.
+
+### The splice tests are off by default, and why
+
+`python -m kavach.calibrate_integrity --manifest data/corpus_v2/manifest.json
+--manifest data/corpus_v3/manifest.json` (17 s, no models) reproduces this.
+
+- They reject **167 of 168 genuine clips**. Three causes, none a threshold:
+  exact-zero runs sit at the *edges* of 75 clips (decoder padding); the click
+  test fires 19-256 times per genuine clip on ordinary fricatives; the
+  background-step test sees a median 6 dB step across genuine pauses against a
+  4 dB threshold, because real pauses are reverb tails, not stationary room tone.
+- Retuning does not rescue it. At a matched duration, splices cut from a
+  speaker's own clips are not separable from genuine windows by any cue (AUC
+  0.49-0.60; at most 11% detected at a 5% false-reject rate). The best click
+  setting finds 59% of known hard-cut joins while flagging every genuine file.
+- `calibrate_floor` calls a floor of 0.0 "feasible" -- it meets the false-reject
+  budget by rejecting nothing -- so the new command asks the prior question and
+  ends in a verdict. Today's is "do not enable".
+- Same-sitting splices are the only kind a one-session corpus can build, so this
+  says nothing about cross-session splices. It is a limitation to state, not a
+  result to claim.
+- The checker no longer says "no edit artefacts found" when no edit test ran, and
+  the Attack Lab says its A2 integrity column measures nothing about splices
+  while the tests are off. With them on it prints the genuine false-reject rate
+  beside the catch rate: a detector that flags everything catches 100% of attacks.
+
+### Also fixed
+
+- `w 0.00` on every weighted branch: callers pass a placeholder weight and the
+  policy owns the real one, so `fuse` now reports the weight it used.
+- `TokenText` had no whitespace between tokens in the DOM (a CSS margin faked it).
+- A replay's rejection explanation called it a splice.
+- The 21 hallucinated-script tokens (13 utterances, 7 speakers) are out of the
+  stored graphs; those speakers were rebuilt CSBG-only, no re-embedding. Backups:
+  `data/kavach.db.pre-foreign-rebuild-*`, `data/kavach.db.pre-live-*`.
+
+### Still open
+
+- **Clone attacks (A3-A5 acoustic scores are still modelled).** Needs its own
+  spec: kNN-VC is voice *conversion*, so it does not fit `CloneBackend`, which is
+  text-to-speech. Consent of whoever is cloned comes first (IndicF5's terms
+  forbid cloning without permission).
+- Gold-set labelling needs a bilingual human; nothing in code unblocks it.
+- The Attack Lab cuts A2 segments from 0.0 s of each clip, which for speakers
+  with decoder padding starts inside exact zeros. It only matters if the splice
+  tests are ever turned back on; start segments after `calibrate_integrity.EDGE_MARGIN_SEC`.
+- The 200+ h video-speech set has not been looked at.
+- Push to `PremKxmar/speech.git`.
+
+---
+
 ## Update 2026-09-29 — demo build on the existing 12 speakers (no new data)
 
 Goal of this pass: a demo-ready system on the data already collected. Research
@@ -42,8 +117,8 @@ notes and the demo script are in [DEMO_PLAN.md](DEMO_PLAN.md).
    `INTEGRITY_FLOOR` was calibrated on synthetic audio only. New
    `Settings.integrity_check_splice` (default on); `run_demo.ps1` turns it
    off. Replay/duplicate detection is unaffected and does catch a resubmitted
-   corpus clip. **Pending:** recalibrate `attacks.splice` on the genuine corpus
-   plus splices built from it (`calibrate_floor`) — this data exists now.
+   corpus clip. **Done 2026-10-02:** recalibrated on the genuine corpus plus splices built
+   from it. Nothing separates them, so the tests stay off (see the update above).
 2. **A live login could hang for 10+ minutes.** The OpenAI-compatible client
    used the SDK's 600 s timeout plus 2 hidden retries under our 6. Now 45 s
    per request, SDK retries off, and the live path uses `live_llm_attempts=2`.
@@ -96,9 +171,7 @@ with the 12 speakers on disk; anything that needs more data stays pending.
     voiceprint, not the duplicate check, has to reject it); genuine stand-in =
     a cut of the claimed speaker's own enrolment audio, labelled as such.
 
-**Not yet re-verified end to end** (paused at the user's request while their
-training job runs): a full live login after items 6–12. Run the targeted
-tests and one login before presenting.
+**Re-verified end to end on 2026-10-02** after items 6–12 (see the update above).
 
 ### Found, not fixed (needs a decision or more work)
 
@@ -114,8 +187,8 @@ tests and one login before presenting.
 
 ## Current state
 
-- **932 tests passing**, offline, in about 47 seconds.
-- Working tree clean, everything pushed to `PremKxmar/speech.git`.
+- **989 tests passing**, offline, in about 2-5 minutes on this laptop (as of 2026-10-02).
+- Working tree clean as of the last commit; **not pushed** -- see the 2026-10-02 update.
 - Backend runs and serves the UI. All eight pages render, `tsc --noEmit` is
   clean, `vite build` succeeds, and the Graph Explorer now draws the SKG as
   well as the CSBG. `/api/health` reports `connected` on a Gemini key alone.
@@ -164,7 +237,7 @@ Neither of these depends on the script, so both survive into the paper:
 git clone https://github.com/PremKxmar/speech.git
 cd speech
 pip install -r requirements-core.txt
-pytest                    # expect 932 passed
+pytest                    # expect 989 passed
 ```
 
 The suite reaches no network and loads no checkpoint. Two autouse fixtures in
@@ -537,6 +610,16 @@ Still open:
     `type(asr).model = property(...)` in a new ASR test took down an unrelated
     numeral-suppression test three classes away. Set the instance's private
     backing field, or use `monkeypatch`.
+
+17. **A catch rate is unreadable without the rate at which the same test flags
+    genuine audio.** The splice tests caught 82.5% on the synthetic generator
+    and 100% of A2 in the Attack Lab on real clips -- because they also flagged
+    167 of 168 genuine recordings. A detector that flags everything catches every
+    attack. `calibrate_floor` hid it a second way: it calls a floor of 0.0
+    "feasible", since rejecting nothing meets any false-reject budget. Feasible
+    is not useful. Ask first whether the scores separate the classes at all, at
+    a matched duration (`kavach.calibrate_integrity`), and print the genuine
+    rate beside every catch rate.
 
 ---
 

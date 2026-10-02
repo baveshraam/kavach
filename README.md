@@ -47,7 +47,7 @@ backend/kavach/         the system
     audio.py asr.py embedding.py matcher.py skg.py challenge.py fusion.py
 kavach/                 the frontend (Vite + React + TypeScript)
 participant_scripts/    read-speech scripts, one language profile per speaker
-tests/                  964 tests, none of which need a GPU
+tests/                  989 tests, none of which need a GPU
 ```
 
 Recording a corpus? Read **[RECORDING_PROTOCOL.md](RECORDING_PROTOCOL.md)**
@@ -108,7 +108,7 @@ answer, which the backend deliberately never sends.
 ### Tests
 
 ```bash
-pytest                                    # 964 passed, ~90s
+pytest                                    # 989 passed, ~2-5 min
 pytest -m models                          # only the tests needing real checkpoints
 ```
 
