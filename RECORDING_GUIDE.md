@@ -13,7 +13,7 @@ heard. Everything stays on this laptop under `data/studio/S04/` (git-ignored). N
 3. **Read the three sentences once** (the first screen of a session shows them). If one is awkward to
    say, tell me and I will replace it before you record: they should feel like things you would
    actually say.
-4. Close other apps that use the microphone. Plug in the headset and charge the phone.
+4. Close other apps that use the microphone. Plug in the headset.
 
 ## The five sessions
 
@@ -23,10 +23,10 @@ Set them in the Studio before pressing Start. Take a real break between sessions
 | Session | Device and room | What it is | Time |
 |---|---|---|---|
 | **S1** | **Demo laptop mic**, quiet room | enrols you | 35 min |
-| **S2** | **Phone** (open the Studio page on the phone, or use the laptop with the phone as the mic), quiet room | enrols you | 35 min |
+| **S2** | **Headset** microphone (plugged into the laptop), quiet room | enrols you | 35 min |
 | **S3** | **Demo laptop mic**, a *different* spot: another room, or standing, or farther from the mic | enrols you | 25 min |
 | **S4** | **Demo laptop mic**, as the demo will be, **after a break of at least 30 minutes** | **held out: never enrolled** | 25 min |
-| **S5** | **Headset**, or the laptop in a noisier room, after another break | **held out #2: never enrolled** | 20 min |
+| **S5** | **Demo laptop mic in a noisier room** (a corridor, a fan on, people nearby), after another break | **held out #2: never enrolled** | 20 min |
 
 **S4 and S5 are the ones that matter.** Two, because one held-out sitting is one cluster and cannot give a meaningful error interval on its own. They are scored against a voiceprint built from S1-S3 only, so it tells
 us what happens when you walk in on demo day. Do not look at any results between S3 and S5, and do not
@@ -45,8 +45,12 @@ adjust anything after seeing them.
 
 ## If the page is refreshed
 
-The queue restarts from the top. Use **Skip this one** to jump forward to where you were. Nothing
-already saved is lost or duplicated in the index.
+The Studio **keeps your place**: after a refresh it says "Recording into S1 ..." and carries on at the
+same prompt. It will never move the rest of a sitting into the next session. To start a *different*
+sitting (new device, new room, after a break), press **Start a new session instead**. The Studio also
+refuses to save a clip whose device or room differs from its session's, so a mix-up cannot be saved.
+Nothing already saved is lost or duplicated, and a recording cut short by a crash is quarantined, not
+lost.
 
 ## When you are done
 
