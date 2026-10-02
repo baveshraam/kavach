@@ -163,8 +163,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             demo_attack_bank=cfg.demo_attack_bank,
             studio_enabled=cfg.studio_enabled,
             voice_gate=cfg.voice_gate,
-            voice_threshold=cfg.speaker_threshold,
-            voice_grey_margin=cfg.voice_grey_margin,
+            voice_threshold=pipeline.voice_threshold,
+            voice_grey_margin=pipeline.voice_grey_margin,
+            voice_policy_source="calibrated" if pipeline.voice_policy else "default",
+            voice_policy_provisional=bool(pipeline.voice_policy and pipeline.voice_policy.provisional),
+            voice_policy_error=pipeline.voice_policy_error,
             # `llm_model` is overridden with the model that actually tagged,
             # not the configured default. This block is the provenance record
             # someone copies into a write-up, so naming an Anthropic model on a

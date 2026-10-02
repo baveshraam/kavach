@@ -22,8 +22,11 @@ uses today and any normalised scores a later change may adopt.
 
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -69,6 +72,47 @@ class OperatingPoint:
         d = {k: getattr(self, k) for k in self.__slots__}
         d["grey_margin"] = self.grey_margin
         return d
+
+
+@dataclass(slots=True)
+class LosoScores:
+    genuine: np.ndarray
+    impostor: np.ndarray
+    by_session: dict[str, np.ndarray]
+    """Genuine scores per held-out session: the unit of independence for the owner."""
+
+
+def _unit(rows) -> np.ndarray:
+    m = np.asarray(rows, dtype=float)
+    if not np.isfinite(m).all():
+        raise ValueError("non-finite embedding: refusing to calibrate on it")
+    return m / np.linalg.norm(m, axis=-1, keepdims=True)
+
+
+def loso_scores(sessions: dict[str, Any], cohort) -> LosoScores:
+    """Leave-one-session-out scores: each session against a template built from the others.
+
+    The template is the centroid of the other sessions' embeddings (what the demo would be enrolled
+    with), so a session never contributes to the template it is scored against. The cohort (other
+    people's embeddings) is scored against every fold's template, so impostor and genuine scores
+    come from the same templates. Needs at least two sessions.
+    """
+    if len(sessions) < 2:
+        raise ValueError("leave-one-session-out needs at least two sessions")
+    units = {s: _unit(v) for s, v in sessions.items()}
+    imp_pool = _unit(cohort)
+    genuine: list[np.ndarray] = []
+    impostor: list[np.ndarray] = []
+    by_session: dict[str, np.ndarray] = {}
+    for held, probes in units.items():
+        rest = np.concatenate([v for s, v in units.items() if s != held])
+        centroid = rest.mean(axis=0)
+        centroid /= np.linalg.norm(centroid)
+        scores = probes @ centroid
+        by_session[held] = scores
+        genuine.append(scores)
+        impostor.append(imp_pool @ centroid)
+    return LosoScores(np.concatenate(genuine), np.concatenate(impostor), by_session)
 
 
 def choose_operating_point(
@@ -149,4 +193,79 @@ def choose_operating_point(
         provisional=provisional,
         ready=ready,
         notes=notes,
+    )
+
+
+# --------------------------------------------------------------------------
+# The policy file: written by the calibration tool, read by the live pipeline
+# --------------------------------------------------------------------------
+
+#: Highest threshold the live system will accept from a file: above this nobody could pass.
+MAX_THRESHOLD = 0.95
+MAX_MARGIN = 0.30
+POLICY_FILE = "voice_policy.json"
+
+
+class PolicyError(ValueError):
+    """A voice policy file that must not be trusted; the message says what is wrong with it."""
+
+
+@dataclass(slots=True)
+class VoicePolicy:
+    threshold: float
+    grey_margin: float
+    provisional: bool = True
+    ready: bool = False
+    built_at: str = ""
+    sessions: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
+
+def write_voice_policy(path: Path | str, op: OperatingPoint, **provenance: Any) -> Path:
+    """Write the operating point, with what it was measured on, as the live policy."""
+    payload = {
+        **op.to_dict(),
+        "built_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        **provenance,
+    }
+    out = Path(path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+    return out
+
+
+def load_voice_policy(path: Path | str) -> VoicePolicy | None:
+    """The calibrated policy, or None when there is no file.
+
+    Anything that would make the login weaker than intended or unusable is refused: a threshold
+    under `MIN_THRESHOLD` would admit strangers, one over `MAX_THRESHOLD` would admit nobody, and a
+    margin outside [0, MAX_MARGIN] is not a band. The caller falls back to the defaults and says so.
+    """
+    p = Path(path)
+    if not p.exists():
+        return None
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise PolicyError(f"{p.name} is not valid JSON: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise PolicyError(f"{p.name} must hold a JSON object")
+    try:
+        threshold, margin = float(raw["threshold"]), float(raw["grey_margin"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise PolicyError(f"{p.name} needs numeric 'threshold' and 'grey_margin'") from exc
+    if not (math.isfinite(threshold) and math.isfinite(margin)):
+        raise PolicyError(f"{p.name} holds a non-finite number")
+    if not (MIN_THRESHOLD <= threshold <= MAX_THRESHOLD):
+        raise PolicyError(f"threshold {threshold} is outside [{MIN_THRESHOLD}, {MAX_THRESHOLD}]")
+    if not (0.0 <= margin <= MAX_MARGIN):
+        raise PolicyError(f"grey_margin {margin} is outside [0, {MAX_MARGIN}]")
+    return VoicePolicy(
+        threshold=threshold,
+        grey_margin=margin,
+        provisional=bool(raw.get("provisional", True)),
+        ready=bool(raw.get("ready", False)),
+        built_at=str(raw.get("built_at", "")),
+        sessions=[str(x) for x in raw.get("sessions", [])],
+        notes=[str(x) for x in raw.get("notes", [])],
     )

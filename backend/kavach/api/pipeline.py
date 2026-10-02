@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from ..asr import FOREIGN_SCRIPT, Transcript, WhisperASR
@@ -58,6 +59,7 @@ from ..lid.lexicon import MIN_USEFUL_COVERAGE
 from ..lid.pipeline import LIDPipeline
 from ..matcher import AnswerMatcher, SemanticMatcher
 from ..phrase import match_phrase
+from ..calibrate_voice import POLICY_FILE, PolicyError, VoicePolicy, load_voice_policy
 from ..throttle import AttemptThrottle
 from .converters import utterance_tokens_from_wire
 from .store import Store, StoreError
@@ -130,6 +132,14 @@ class Pipeline:
         self.settings = settings or get_settings()
         self.store = store
         self.ledger = ChallengeLedger(ttl_seconds=self.settings.challenge_ttl_seconds)
+        self.voice_policy: VoicePolicy | None = None
+        self.voice_policy_error: str = ""
+        try:
+            self.voice_policy = load_voice_policy(Path(self.settings.data_dir) / POLICY_FILE)
+        except PolicyError as exc:
+            # A damaged file must neither crash the login nor silently change it: the defaults
+            # stay in force, and /api/health says why the calibrated policy is not in use.
+            self.voice_policy_error = str(exc)
         self._step_up: dict[str, float] = {}
         """speaker_id -> when their last attempt was borderline (a step-up is on offer)."""
         self.throttle = AttemptThrottle(
@@ -670,6 +680,15 @@ class Pipeline:
             return bank
         return None
 
+    @property
+    def voice_threshold(self) -> float:
+        """The accept threshold on the voice score: calibrated if a policy file is in force."""
+        return self.voice_policy.threshold if self.voice_policy else self.settings.speaker_threshold
+
+    @property
+    def voice_grey_margin(self) -> float:
+        return self.voice_policy.grey_margin if self.voice_policy else self.settings.voice_grey_margin
+
     #: How long after a borderline attempt a step-up challenge may be requested.
     STEP_UP_WINDOW_SEC = 120.0
 
@@ -1032,7 +1051,7 @@ class Pipeline:
             threshold=self.settings.fused_threshold,
             borderline_margin=self.settings.borderline_margin,
             voice_gate=self.settings.voice_gate,
-            voice_grey_margin=0.0 if strict_voice else self.settings.voice_grey_margin,
+            voice_grey_margin=0.0 if strict_voice else self.voice_grey_margin,
         )
         if not self.settings.csbg_veto_enabled:
             # The offline run fitted the veto on dev and discarded it: no floor
@@ -1046,7 +1065,7 @@ class Pipeline:
     ) -> BranchScore:
         embedder = self.embedder
         template = self.load_template(speaker_id)
-        threshold = self.settings.speaker_threshold
+        threshold = self.voice_threshold
 
         if embedder is None or template is None:
             reason = (
