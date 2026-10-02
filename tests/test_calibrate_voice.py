@@ -19,21 +19,28 @@ def gauss(mean, sd, n, seed):
     return np.random.default_rng(seed).normal(mean, sd, n)
 
 
-def test_well_separated_scores_give_a_threshold_between_the_classes_and_a_band_under_it():
+def test_well_separated_scores_put_the_threshold_midway_so_the_margin_is_the_same_on_both_sides():
     g, i = gauss(0.85, 0.05, 200, 1), gauss(0.20, 0.10, 5000, 2)
     op = choose_operating_point(g, i)
-    assert op.threshold > np.percentile(i, 99.9) - 1e-9
-    assert op.floor < op.threshold
-    assert op.frr_at_threshold == 0.0
-    assert op.far_at_threshold <= 0.001
+    worst_stranger = float(np.quantile(i, 0.999))
+    owner_edge = float(np.quantile(g, 0.01))
+    assert worst_stranger < op.threshold < owner_edge
+    assert (op.threshold - worst_stranger) == pytest.approx(owner_edge - op.threshold, abs=1e-6)
+    assert op.floor < op.threshold and op.floor > worst_stranger
+    assert op.frr_at_threshold == 0.0 and op.far_at_threshold == 0.0
     assert op.ready
 
 
-def test_the_threshold_is_the_impostor_quantile_not_a_midpoint():
+def test_a_threshold_at_the_edge_of_the_strangers_would_leave_no_margin__the_midpoint_does():
     g, i = gauss(0.85, 0.05, 200, 1), gauss(0.30, 0.08, 5000, 2)
     op = choose_operating_point(g, i, far_target=0.001)
+    assert op.threshold - float(np.quantile(i, 0.999)) > 0.05
+
+
+def test_when_the_classes_overlap_the_false_accept_rate_has_priority():
+    g, i = gauss(0.60, 0.10, 200, 1), gauss(0.45, 0.10, 5000, 2)
+    op = choose_operating_point(g, i, far_target=0.001)
     assert op.threshold == pytest.approx(np.quantile(i, 0.999), abs=1e-9)
-    assert op.threshold > MIN_THRESHOLD  # so the quantile, not the floor on the threshold, decided it
 
 
 def test_the_threshold_never_drops_below_the_minimum_however_low_the_impostors_are():
