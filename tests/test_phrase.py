@@ -126,3 +126,17 @@ class TestSpan:
         w = self.words([("river", 0, 400), ("tiger", 1000, 1400), ("river", 1500, 1900)])
         m = match_phrase(["tiger", "river"], "river tiger river", words=w)
         assert m.span_ms == (1000, 1900)
+
+
+def test_an_unrelated_recording_almost_never_clears_the_gate_by_chance():
+    """The replay defence in numbers: 6 random pool words against 6 other random pool words.
+    Measured on 200,000 pairs: 4 or more in order never happened, 3 or more happened 1.3e-4 of the
+    time. Pinned on a smaller seeded sample so a smaller pool or a looser matcher cannot slip in."""
+    rng = random.Random(1)
+    n, ge3, ge4 = 50_000, 0, 0
+    for _ in range(n):
+        m = match_phrase(rng.sample(WORDS, 6), " ".join(rng.sample(WORDS, 6))).matched
+        ge3 += m >= 3
+        ge4 += m >= 4
+    assert ge4 == 0
+    assert ge3 / n < 5e-4

@@ -87,3 +87,12 @@ def test_a_clip_changed_after_recording_is_refused(studio):
     studio.wav_path(victim).write_bytes(b"tampered")
     with pytest.raises(ValueError, match="hash"):
         check_words(studio, asr=ScriptedASR(["x"] * 6), threshold=0.67)
+
+
+def test_the_report_shows_what_a_looser_gate_would_buy_and_what_it_would_cost(studio):
+    heard = ["tiger river mango window candle silver"] * 4 + ["tiger river mango"] * 2   # 3 of 6 words
+    r = check_words(studio, asr=ScriptedASR(heard), threshold=0.67)
+    assert r.pass_rate == pytest.approx(4 / 6)
+    assert r.pass_rate_at(0.5) == 1.0
+    text = r.report()
+    assert "3 of 6" in text and "1.3e-4" in text.replace("0.00013", "1.3e-4")
