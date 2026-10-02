@@ -7,10 +7,11 @@ Two edges, one from each set of scores:
 * **The owner's edge `G`.** The quantile of the owner's own held-out scores that `genuine_cover` of
   them reach: nearly every genuine attempt is at or above it.
 
-When the classes are separated (`G` clears `U` by at least twice `MIN_BAND`) the accept threshold is the
-**midpoint**: the same margin to the strangers' tail as to the owner's, so an unseen judge who scores a
-little above the strangers measured here is still well below it, and the owner on a worse day is still
-well above it. The inconclusive band reaches down halfway from the threshold to `U`. When the classes
+When the classes are separated (`G` clears `U` by at least twice `MIN_BAND`) the accept threshold sits
+`OWNER_WEIGHT` (60%) of the way up from `U` to `G`: clear of both edges, nearer the owner's. The owner can
+retry (a second sample, another attempt); a stranger is owed nothing, so the margin is not split evenly. An
+unseen judge who scores a little above the strangers measured here is still well below the threshold, and the
+owner on a worse day is still above it. The inconclusive band reaches down halfway from the threshold to `U`. When the classes
 overlap, nothing can be balanced: the false-accept rate has priority, the threshold is `U`, and the
 owner's false-reject rate is reported plainly with the remedy (more enrolment audio, longer phrases).
 
@@ -38,10 +39,13 @@ import numpy as np
 from .attacks.suite import wilson_interval
 
 #: Never set the threshold below this, however low the impostors score: a data set with no
-#: voice that sounds like the owner says nothing about the next voice that does.
-MIN_THRESHOLD = 0.50
+#: voice that sounds like the owner says nothing about the next voice that does. Measured: against the
+#: corpus speakers as targets the nearest stranger from the public cohorts reached 0.604.
+MIN_THRESHOLD = 0.55
 #: The band is never narrower than this: scores are noisy to about this much.
 MIN_BAND = 0.02
+#: How far from the strangers' edge toward the owner's the threshold sits when the classes separate.
+OWNER_WEIGHT = 0.6
 #: Fewer genuine scores than this and the owner's spread is a guess.
 MIN_GENUINE = 30
 #: Impostor trials needed to see at least this many events at the target rate.
@@ -166,7 +170,7 @@ def choose_operating_point(
     owner_edge = float(np.quantile(g, 1.0 - genuine_cover))
 
     if owner_edge - stranger_edge >= 2 * MIN_BAND:
-        threshold = stranger_edge + (owner_edge - stranger_edge) / 2.0
+        threshold = stranger_edge + OWNER_WEIGHT * (owner_edge - stranger_edge)
         floor = threshold - max(MIN_BAND, (threshold - stranger_edge) / 2.0)
     else:
         threshold = stranger_edge
