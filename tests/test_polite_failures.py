@@ -166,3 +166,37 @@ class TestUnusableAudio:
         )
         text = " ".join(response.json()["explanation"]).lower()
         assert "no speech" not in text and "seconds long" not in text, text
+
+
+class TestRealWorldFormats:
+    """Phone voice memos and browser recordings arrive in containers ffmpeg
+    cannot always read from a pipe. An MP4/M4A written without +faststart keeps
+    its `moov` atom at the END of the file; read from a non-seekable pipe,
+    ffmpeg says "partial file", exits 0 and emits nothing, and the upload was
+    reported as "Decoded audio is empty". Found by rehearsing the demo against
+    the real backend with a real .m4a."""
+
+    @pytest.mark.parametrize(
+        "ext,codec",
+        [
+            ("m4a", ["-c:a", "aac"]),
+            ("m4a", ["-c:a", "aac", "-ar", "44100"]),
+            ("webm", ["-c:a", "libopus"]),
+            ("ogg", ["-c:a", "libvorbis"]),
+            ("mp3", ["-c:a", "libmp3lame"]),
+        ],
+    )
+    @needs_ffmpeg
+    def test_a_real_encoded_upload_decodes_in_full(self, tmp_path, ext, codec) -> None:
+        import subprocess
+
+        (tmp_path / "in.wav").write_bytes(wav(10.0))
+        out = tmp_path / f"o.{ext}"
+        subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-i", str(tmp_path / "in.wav"), *codec, str(out)],
+            check=False,
+        )
+        if not out.exists():
+            pytest.skip(f"this ffmpeg build cannot encode {ext} with {codec}")
+        audio = decode_bytes(out.read_bytes(), suffix=f".{ext}")
+        assert audio.duration_sec == pytest.approx(10.0, abs=0.6), (ext, audio.duration_sec)

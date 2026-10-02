@@ -15,6 +15,7 @@ import hashlib
 import io
 import logging
 import subprocess
+import tempfile
 import wave
 from dataclasses import dataclass
 from pathlib import Path
@@ -302,18 +303,25 @@ def decode_bytes(
             pass  # fall through to ffmpeg
 
     try:
-        proc = subprocess.run(
-            [
-                "ffmpeg", "-hide_banner", "-loglevel", "error",
-                "-i", "pipe:0",
-                "-f", "f32le", "-acodec", "pcm_f32le",
-                "-ac", "1", "-ar", str(target_sr),
-                "pipe:1",
-            ],
-            input=raw,
-            capture_output=True,
-            check=True,
-        )
+        # A seekable file, not a pipe. An MP4/M4A written without +faststart
+        # (a phone voice memo) keeps its `moov` atom at the end; from a pipe
+        # ffmpeg cannot seek to it, reports "partial file", exits 0 and emits
+        # nothing. The name carries no suffix: the container is probed from
+        # the bytes, and the suffix is client-controlled.
+        with tempfile.TemporaryDirectory() as workdir:
+            source = Path(workdir) / "upload"
+            source.write_bytes(raw)
+            proc = subprocess.run(
+                [
+                    "ffmpeg", "-hide_banner", "-loglevel", "error",
+                    "-i", str(source),
+                    "-f", "f32le", "-acodec", "pcm_f32le",
+                    "-ac", "1", "-ar", str(target_sr),
+                    "pipe:1",
+                ],
+                capture_output=True,
+                check=True,
+            )
     except FileNotFoundError as exc:
         raise AudioError(
             "ffmpeg is required to decode browser audio (WebM/Opus). "
