@@ -28,6 +28,29 @@ def cluster_bootstrap_rate(
     return float(np.nanpercentile(rates, 2.5)), float(np.nanpercentile(rates, 97.5))
 
 
+#: Fewer clusters than this and a percentile bootstrap has too few distinct resamples to mean much
+#: (two clusters can produce about three distinct values).
+MIN_CLUSTERS = 5
+
+
+def reported_interval(
+    k: int, n: int, flags_by_cluster: dict[str, list[bool]], *, seed: int = 7
+) -> tuple[float, float, bool]:
+    """The interval to print: the wider of Wilson and the cluster bootstrap, never narrower than Wilson.
+
+    A percentile bootstrap over a handful of clusters is anti-conservative, and with zero events it
+    collapses to (0, 0) -- "0% (0.0-0.0%)" shown to a review panel from two sittings. Wilson is the
+    floor. `informative` is False when the cluster interval carries no information (fewer than
+    `MIN_CLUSTERS` clusters, or no events), so the report can say so instead of implying precision.
+    """
+    from ..attacks.suite import wilson_interval
+
+    w_lo, w_hi = wilson_interval(k, n)
+    c_lo, c_hi = cluster_bootstrap_rate(flags_by_cluster)
+    informative = len(flags_by_cluster) >= MIN_CLUSTERS and k > 0
+    return min(w_lo, c_lo), max(w_hi, c_hi), informative
+
+
 def d_prime(genuine: np.ndarray, impostor: np.ndarray) -> float:
     """Standardised distance between two score distributions."""
     g, i = np.asarray(genuine, float), np.asarray(impostor, float)
