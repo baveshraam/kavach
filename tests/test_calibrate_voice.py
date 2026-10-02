@@ -103,3 +103,49 @@ def test_it_serialises_for_the_policy_file():
     g, i = gauss(0.85, 0.05, 200, 1), gauss(0.20, 0.10, 5000, 2)
     d = choose_operating_point(g, i).to_dict()
     assert {"threshold", "floor", "grey_margin", "far_target", "n_genuine", "n_impostor", "provisional"} <= set(d)
+
+
+class TestLeaveOneSessionOut:
+    """Each session is scored against a template built from the *other* sessions only."""
+
+    @staticmethod
+    def owner(seed, n, base, noise=0.15):
+        r = np.random.default_rng(seed)
+        v = base + noise * r.standard_normal((n, base.size))
+        return v / np.linalg.norm(v, axis=1, keepdims=True)
+
+    def test_every_clip_is_scored_once_as_genuine_and_the_cohort_once_per_fold(self):
+        from kavach.calibrate_voice import loso_scores
+
+        base = np.random.default_rng(0).standard_normal(64)
+        sessions = {"S1": self.owner(1, 6, base), "S2": self.owner(2, 5, base), "S3": self.owner(3, 4, base)}
+        cohort = np.random.default_rng(9).standard_normal((50, 64))
+        cohort /= np.linalg.norm(cohort, axis=1, keepdims=True)
+        out = loso_scores(sessions, cohort)
+        assert len(out.genuine) == 15
+        assert len(out.impostor) == 3 * 50
+        assert set(out.by_session) == {"S1", "S2", "S3"}
+
+    def test_a_held_out_session_never_contributes_to_its_own_template(self):
+        from kavach.calibrate_voice import loso_scores
+
+        r = np.random.default_rng(0)
+        a, b = r.standard_normal(64), r.standard_normal(64)
+        sessions = {"S1": self.owner(1, 6, a), "S2": self.owner(2, 6, a), "S3": self.owner(3, 6, b)}  # S3 is another voice
+        cohort = r.standard_normal((20, 64))
+        out = loso_scores(sessions, cohort)
+        assert out.by_session["S3"].mean() < 0.4  # scored against S1+S2 only, so it looks like a stranger
+
+    def test_one_session_cannot_be_cross_validated(self):
+        from kavach.calibrate_voice import loso_scores
+
+        with pytest.raises(ValueError, match="two"):
+            loso_scores({"S1": np.ones((3, 8))}, np.ones((4, 8)))
+
+    def test_non_finite_embeddings_are_refused(self):
+        from kavach.calibrate_voice import loso_scores
+
+        bad = np.ones((3, 8))
+        bad[1, 2] = np.nan
+        with pytest.raises(ValueError, match="non-finite"):
+            loso_scores({"S1": bad, "S2": np.ones((3, 8))}, np.ones((4, 8)))
