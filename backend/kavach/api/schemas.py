@@ -434,6 +434,9 @@ class Health(Model):
     """True when the clone-bank routes are live. Those routes return audio that
     says the answer to a challenge, so a build with them on must announce it."""
 
+    studio_enabled: bool = False
+    """True when the recording Studio accepts uploads."""
+
     reportable: dict[str, Any] = Field(default_factory=dict)
     """The settings that must accompany any reported number, from
     `Settings.reportable()`."""
