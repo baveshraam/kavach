@@ -263,17 +263,32 @@ def _static_checks(
         else:
             covered = set(bank.get("coveredFacts", []))
             missing = [p for p in predicates if p not in covered]
-            out.append(
-                Check(
-                    "clone bank covers the presenter's facts",
-                    PASS if not missing else WARN,
-                    "all covered" if not missing else "no cloned answer for: " + ", ".join(missing),
-                    ""
-                    if not missing
-                    else "the Clone attack button will say so for those questions; "
-                    "record those answers and regenerate",
+            if not covered:
+                # Never read an empty bank as covered: with no facts to cover,
+                # "nothing is missing" would otherwise be vacuously true.
+                detail = "the bank has no usable clips"
+                if missing:
+                    detail += "; no cloned answer for: " + ", ".join(missing)
+                out.append(
+                    Check(
+                        "clone bank covers the presenter's facts",
+                        WARN,
+                        detail,
+                        "generate and annotate the bank (see DEMO_RUNBOOK.md)",
+                    )
                 )
-            )
+            else:
+                out.append(
+                    Check(
+                        "clone bank covers the presenter's facts",
+                        PASS if not missing else WARN,
+                        "all covered" if not missing else "no cloned answer for: " + ", ".join(missing),
+                        ""
+                        if not missing
+                        else "the Clone attack button will say so for those questions; "
+                        "record those answers and regenerate",
+                    )
+                )
     else:
         out.append(
             Check(
