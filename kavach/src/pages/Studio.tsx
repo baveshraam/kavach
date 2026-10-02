@@ -6,7 +6,7 @@ import { AudioRecorder } from '../components/ui/AudioRecorder';
 import { Card, CardHeader, CardBody, Button, Field, Select, Input, Badge, Notice, Spinner } from '../components/ui/kit';
 import type { StudioPlanItem } from '../api/types';
 
-const KIND_LABEL: Record<string, string> = { read: 'Read aloud', free: 'Speak freely', fact: 'Answer about yourself', words: 'Read the six words' };
+const KIND_LABEL: Record<string, string> = { read: 'Read aloud', free: 'Speak freely', fact: 'Answer about yourself', words: 'Read the words' };
 
 /** One queue entry per repetition, in the plan's order. */
 function expand(items: StudioPlanItem[]) {

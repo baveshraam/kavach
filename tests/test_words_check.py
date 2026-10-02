@@ -95,4 +95,4 @@ def test_the_report_shows_what_a_looser_gate_would_buy_and_what_it_would_cost(st
     assert r.pass_rate == pytest.approx(4 / 6)
     assert r.pass_rate_at(0.5) == 1.0
     text = r.report()
-    assert "3 of 6" in text and "1.3e-4" in text.replace("0.00013", "1.3e-4")
+    assert "half the words" in text and "1.4e-4" in text

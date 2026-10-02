@@ -17,6 +17,8 @@ from pathlib import Path
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .phrase import DEFAULT_MIN_MATCH, DEFAULT_PHRASE_WORDS
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -149,15 +151,15 @@ class Settings(BaseSettings):
     """Inconclusive band under `speaker_threshold` (cosine units). A score inside
     it is BORDERLINE (ask for a second sample); below it is a hard reject."""
 
-    phrase_words: int = 6
-    """Random words shown in a 'read these words' challenge. Six is about five
-    seconds of speech -- long enough for a stable voiceprint, short enough to read
-    in one breath."""
+    phrase_words: int = DEFAULT_PHRASE_WORDS
+    """Random words shown in a 'read these words' challenge. Ten is about seven
+    seconds of speech: probe length is the strongest lever on the voice margin
+    (see `phrase.DEFAULT_PHRASE_WORDS`), and ten words still read in one go."""
 
-    phrase_min_match: float = 0.67
-    """Share of the shown words (in order) the transcript must contain. 4 of 6.
-    One misheard word is forgiven; a recording made for another attempt matches
-    none of them."""
+    phrase_min_match: float = DEFAULT_MIN_MATCH
+    """Share of the shown words (in order) the transcript must contain. 6 of 10.
+    Four misheard words are forgiven; a recording made for another attempt
+    matches almost none of them."""
 
     throttle_enabled: bool = True
     throttle_free_attempts: int = 3

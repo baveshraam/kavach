@@ -3,7 +3,7 @@
 Four kinds, four purposes. `read`: a few fixed sentences repeated many times,
 the voice-only same-sentence test. `free`: the 14 bilingual `PROTOCOL_V1`
 prompts, natural speech for the code-switch analysis. `fact`: a question about
-one of the presenter's own facts, the personal-question login. `words`: six random
+one of the presenter's own facts, the personal-question login. `words`: ten random
 words, read the way the Unlock screen asks for them: the login's own task, so the
 calibration measures the scores the login will actually see (a few seconds of a list of
 words, not a sentence).
@@ -21,7 +21,7 @@ from typing import Any, Sequence
 
 from ..challenge import TEMPLATE_QUESTIONS
 from ..corpus import PROTOCOL_V1
-from ..phrase import new_phrase
+from ..phrase import DEFAULT_PHRASE_WORDS, new_phrase
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,8 +69,8 @@ DEMO_SENTENCES: tuple[tuple[str, str, str], ...] = (
 _SECONDS = {"read": 9.0, "free": 40.0, "fact": 15.0, "words": 8.0}
 
 
-def words_items(session_id: str, n: int) -> list[PlanItem]:
-    """`n` prompts of six random words, each different, the same every time this is called.
+def words_items(session_id: str, n: int, n_words: int = DEFAULT_PHRASE_WORDS) -> list[PlanItem]:
+    """`n` prompts of `n_words` random words, each different, the same every time this is called.
 
     The page rebuilds the plan on every request and keeps its place by index, so the words are
     drawn from a generator seeded by the session id rather than from the system's randomness.
@@ -78,8 +78,8 @@ def words_items(session_id: str, n: int) -> list[PlanItem]:
     rng = random.Random(f"kavach-words-{session_id}")
     out = []
     for k in range(n):
-        shown = ", ".join(new_phrase(6, rng=rng))
-        out.append(PlanItem("words", f"words_{session_id}_{k + 1:02d}", "Read these six words clearly, then stop", f"Say: {shown}", 1))
+        shown = ", ".join(new_phrase(n_words, rng=rng))
+        out.append(PlanItem("words", f"words_{session_id}_{k + 1:02d}", "Read these words clearly, then stop", f"Say: {shown}", 1))
     return out
 
 
@@ -92,6 +92,8 @@ def build_plan(
     session_id: str,
     facts: Sequence[Any],
     sentences: Sequence[tuple[str, str, str]] = DEMO_SENTENCES,
+    *,
+    phrase_words: int = DEFAULT_PHRASE_WORDS,
 ) -> list[PlanItem]:
     r = RECIPES.get(session_id, DEFAULT_RECIPE)
     items = [PlanItem("read", pid, en, ta, r.read) for pid, ta, en in sentences]
@@ -100,7 +102,7 @@ def build_plan(
         PlanItem("fact", f"fact_{f.predicate}", f"About your {f.predicate}", fact_question(f.predicate), r.fact)
         for f in facts
     ]
-    items += words_items(session_id, r.words)
+    items += words_items(session_id, r.words, phrase_words)
     return items
 
 

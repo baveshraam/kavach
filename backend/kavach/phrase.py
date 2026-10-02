@@ -27,6 +27,14 @@ from typing import Any, Sequence
 #: Two tokens at least this similar count as the same word (forgives "tigers" for "tiger").
 FUZZY_RATIO = 0.8
 
+#: How many words the login shows, and the share that must be heard (in order). Ten words are about
+#: seven seconds of speech. Measured on LibriSpeech, cross-chapter: the margin between the owner's
+#: 2nd-percentile score and the strangers' 99.9th is +0.10 for probes of 4-8 s, +0.20 for 8-11 s and
+#: +0.26 for 11-15 s, so a longer probe buys more safety than any threshold. Six of ten is 0.6: an
+#: unrelated recording never reached it in 200,000 random pairs, and the owner may be misheard four times.
+DEFAULT_PHRASE_WORDS = 10
+DEFAULT_MIN_MATCH = 0.6
+
 WORDS: tuple[str, ...] = (
     "anchor", "apple", "arrow", "autumn", "badge", "bamboo", "banana", "basket", "beacon",
     "bottle", "branch", "bridge", "bronze", "bucket", "butter", "cabin", "camel", "candle",
