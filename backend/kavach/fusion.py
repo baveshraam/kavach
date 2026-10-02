@@ -110,6 +110,10 @@ class Branch(str, Enum):
     """Edit- and duplicate-artefact evidence. A gate, never a weighted term --
     it answers "was this file assembled?", not "who is speaking?", and the two
     must not be averaged. See `kavach.integrity`."""
+    PHRASE = "phrase"
+    """Did the recording contain the random words shown for *this* attempt? A
+    gate, like liveness: it answers "was this made for this challenge?", which no
+    voice similarity can compensate for. See `kavach.phrase`."""
 
 
 @dataclass(slots=True)
@@ -190,6 +194,10 @@ class FusionPolicy:
 
     Set to `{}` to disable vetoes entirely, which is the correct setting for
     the ablation that measures what the veto is worth."""
+
+    phrase_is_gate: bool = True
+    """Treat the spoken-phrase check as pass/fail when a phrase challenge was issued.
+    Inert for question challenges, which carry no PHRASE branch."""
 
     voice_gate: bool = False
     """Make the voiceprint a necessary condition rather than one weighted vote.
@@ -320,6 +328,37 @@ def fuse(
                 ],
                 contributing_branches=[],
             )
+
+    # --- Phrase gate: was this recording made for this challenge? -----------
+    # Only when the challenge showed words to read. A phrase that cannot be checked
+    # (no speech recognition) fails closed: the whole point of the words is that they
+    # prove freshness, so "could not tell" must not be read as "fine".
+    phrase = by_branch.get(Branch.PHRASE)
+    if policy.phrase_is_gate and phrase is not None and not phrase.passed:
+        if not phrase.available:
+            lines = [
+                "Rejected: the spoken words could not be checked"
+                + (f" ({phrase.detail})" if phrase.detail else "")
+                + ". The words are what prove this recording was made now, so without "
+                "them nobody is accepted; this is a system failure, not evidence about the speaker.",
+            ]
+        else:
+            lines = [
+                "Rejected: the words spoken are not the words shown for this attempt "
+                f"({phrase.detail or 'no match'}).",
+                "A recording made for another attempt cannot contain these words, so this is "
+                "the signature of a replay or a pre-recorded voice; a matching voiceprint cannot "
+                "make up for it, and no other branch overrides it.",
+            ]
+        return FusionResult(
+            decision=Decision.REJECT,
+            fused_score=0.0,
+            threshold=policy.threshold,
+            branches=branches,
+            liveness_ok=liveness_ok,
+            explanation=lines,
+            contributing_branches=[],
+        )
 
     # --- Voice gate: the identity factor must pass on its own. ------------
     voice_grey = False

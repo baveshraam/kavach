@@ -56,6 +56,7 @@ from ..integrity import IntegrityChecker, IntegrityReport, build_integrity_branc
 from ..lid.lexicon import MIN_USEFUL_COVERAGE
 from ..lid.pipeline import LIDPipeline
 from ..matcher import AnswerMatcher, SemanticMatcher
+from ..phrase import match_phrase
 from .converters import utterance_tokens_from_wire
 from .store import Store, StoreError
 
@@ -659,12 +660,22 @@ class Pipeline:
             return bank
         return None
 
-    def issue_challenge(self, speaker_id: str) -> Challenge:
-        """Generate an adaptive challenge for a login attempt.
+    def issue_challenge(
+        self, speaker_id: str, *, kind: str = "question", strict_voice: bool = False
+    ) -> Challenge:
+        """Generate a challenge for a login attempt.
+
+        `kind="phrase"` is the 'read these random words' login: it needs no facts and no
+        language tagger. `kind="question"` is the adaptive personal-question login.
 
         Raises:
-            ChallengeError: If the speaker has no knowledge-graph facts.
+            ChallengeError: If a question is asked of a speaker with no
+                knowledge-graph facts.
         """
+        if kind == "phrase":
+            return self.challenges.generate_phrase(
+                speaker_id, n_words=self.settings.phrase_words, strict_voice=strict_voice
+            )
         skg = self.store.get_skg(speaker_id)
         if len(skg) == 0:
             raise ChallengeError(
@@ -793,6 +804,9 @@ class Pipeline:
 
         branches.append(self._speaker_branch(speaker_id, audio, notes))
 
+        if challenge.kind == "phrase":
+            return self._verify_phrase(challenge, audio, branches, notes, started, integrity)
+
         annotation = self.annotate(audio, utterance_id=challenge.id, speaker_id=speaker_id)
         if annotation is not None and annotation.dropped_hallucinated:
             notes.append(
@@ -875,8 +889,69 @@ class Pipeline:
             integrity=integrity,
         )
 
-    def _policy(self) -> FusionPolicy:
+    def _verify_phrase(
+        self,
+        challenge: Challenge,
+        audio: Audio,
+        branches: list[BranchScore],
+        notes: list[str],
+        started: float,
+        integrity: IntegrityReport,
+    ) -> VerificationOutcome:
+        """Score a 'read these words' response: freshness (the words) and identity (the voice).
+
+        No language tagger, no CSBG, no knowledge: nothing here touches the network, so
+        this path works with the venue's wifi down. The words are transcribed as English
+        and without the code-mixing prompt, which would bias Whisper toward writing
+        English words in Tamil script and defeat a Latin-script match.
+        """
+        threshold = self.settings.phrase_min_match
+        asr = self.asr
+        annotation: Annotation | None = None
+        if asr is None:
+            reason = self._failed.get("asr", "speech recognition is not available")
+            notes.append(f"Speech recognition is unavailable: {reason}")
+            branches.append(
+                BranchScore(
+                    branch=Branch.PHRASE, score=0.0, threshold=threshold, weight=0.0,
+                    available=False, detail=reason,
+                )
+            )
+        else:
+            transcript = asr.transcribe(
+                audio, language="en", initial_prompt="", fast=self.settings.live_fast_asr
+            )
+            match = match_phrase(challenge.phrase, transcript.text)
+            branches.append(
+                BranchScore(
+                    branch=Branch.PHRASE, score=match.score, threshold=threshold,
+                    weight=0.0, detail=match.detail,
+                )
+            )
+            annotation = Annotation(
+                transcript=transcript,
+                tokens=UtteranceTokens(
+                    utterance_id=challenge.id, tokens=[], speaker_id=challenge.speaker_id,
+                    transcript=transcript.text,
+                ),
+            )
+        result = fuse(branches, self._policy(strict_voice=challenge.strict_voice))
+        return VerificationOutcome(
+            fusion=result,
+            annotation=annotation,
+            csbg_score=None,
+            speaker_id=challenge.speaker_id,
+            challenge_id=challenge.id,
+            latency_ms=int((time.perf_counter() - started) * 1000),
+            notes=notes,
+            integrity=integrity,
+        )
+
+    def _policy(self, *, strict_voice: bool = False) -> FusionPolicy:
         """Fusion policy from settings.
+
+        `strict_voice` is a step-up challenge: the voice must pass outright, so the
+        inconclusive band is closed.
 
         The weights and the veto floor are `FusionPolicy`'s defaults, which are
         reasoned starting points rather than fitted values -- `eval.ablation`
@@ -887,7 +962,7 @@ class Pipeline:
             threshold=self.settings.fused_threshold,
             borderline_margin=self.settings.borderline_margin,
             voice_gate=self.settings.voice_gate,
-            voice_grey_margin=self.settings.voice_grey_margin,
+            voice_grey_margin=0.0 if strict_voice else self.settings.voice_grey_margin,
         )
         if not self.settings.csbg_veto_enabled:
             # The offline run fitted the veto on dev and discarded it: no floor
