@@ -38,12 +38,14 @@ class Recipe:
     fact: int
 
 
-#: S1-S3 enrol; S4 is the held-out test and is never enrolled (spec section 5).
+#: S1-S3 enrol; S4 and S5 are held out and never enrolled. Two, because one held-out sitting is one
+#: cluster and cannot support a false-reject interval (the evaluation says so).
 RECIPES: dict[str, Recipe] = {
     "S1": Recipe(read=15, free=2, fact=4),
     "S2": Recipe(read=15, free=2, fact=4),
     "S3": Recipe(read=10, free=1, fact=3),
     "S4": Recipe(read=20, free=1, fact=3),
+    "S5": Recipe(read=15, free=1, fact=3),
 }
 DEFAULT_RECIPE = Recipe(read=10, free=1, fact=3)
 
