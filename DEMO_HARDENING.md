@@ -89,6 +89,17 @@ This file is the memory of the pass. Read it top to bottom to resume.
   against a real risk that a model trained on the owner's laptop-microphone clips versus other people's studio
   clips learns the channel, which a same-room judge would then share. Not worth it for this demo.
 
+- **R12. No noise/echo augmentation of the enrolment (inconclusive, not adopted).** Same data as the room table
+  (12 owners, 55 owner and 117 stranger probes), template = centroid over each enrolment clip plus its opus,
+  opus + 15 dB noise and opus + reverb copies. Owner mean rose by 0.03-0.05 in bad conditions (noise 15 dB 0.669 to
+  0.698; noise 8 dB 0.592 to 0.643; reverb 0.665 to 0.690), owner rejection at 0.62 fell (noise 15 dB 23.6% to
+  14.5%; noise 8 dB 69.1% to 30.9%; reverb 23.6% to 9.1%), and clean opus was unchanged (0.779 to 0.771). But the
+  strangers' maximum rose too (reverb 0.422 to 0.470; noise 15 dB 0.479 to 0.496; noise 8 dB 0.495 to 0.508) and the
+  owner's 5th percentile barely moved, so the margin at the tail is about the same (noise 15 dB +0.10 to +0.09;
+  reverb +0.16 to +0.14; noise 8 dB -0.01 to +0.03). With 55 probes that is within noise. The presenter's real
+  S2 (headset) and S5 (noisy room) sessions put genuine variety into the final template anyway, which is better
+  than synthetic copies. Cost if wrong: a noisy room costs the owner more than it needed to.
+
 ## 3. Measurements so far (all on this laptop, ECAPA `speechbrain/spkrec-ecapa-voxceleb`, cosine)
 
 - 12 corpus speakers, phone recordings, 1,771 cross-speaker pairs: mean 0.240, sd 0.119, p95 0.450,
@@ -193,7 +204,6 @@ Open, in order:
    this; the threshold in force until then is the default 0.62, and the screen and the preflight say so.
 2. One live read-through on the real microphone in the presenter's room.
 3. Decide, from `words_check`, whether the words gate needs a larger Whisper or a looser match (6 of 10 now).
-4. Optional: enrol with noise and echo augmentation (tested on public speech, see the log below if it ran),
-   a code-switched phrase style, a second-voice guard (messaging only), anti-spoofing (not claimed).
+4. Optional: a code-switched phrase style, a second-voice guard (messaging only), anti-spoofing (not claimed).
 5. An independent review of this branch (`/code-review`): this pass reviewed its own work and found and fixed one real
    bug that way (the fused threshold leaking into phrase logins), which is a reason to want another pair of eyes.
