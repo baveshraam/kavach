@@ -441,10 +441,12 @@ def fuse(
     if voice_grey:
         voice_weight = carried.get(Branch.SPEAKER, 0.0)
         effective = fused + voice_weight * (by_branch[Branch.SPEAKER].threshold - by_branch[Branch.SPEAKER].score)
-    tolerance = max(policy.borderline_margin, 1e-9)
-    if abs(effective - policy.threshold) <= tolerance:
+    margin = policy.borderline_margin
+    # `effective` for a grey voice equals the threshold up to float error, so it must count as reaching it.
+    reaches = effective >= policy.threshold - (1e-9 if voice_grey else 0.0)
+    if margin > 0 and abs(effective - policy.threshold) <= margin:
         decision = Decision.BORDERLINE
-    elif effective >= policy.threshold:
+    elif reaches:
         decision = Decision.ACCEPT
     else:
         decision = Decision.REJECT
