@@ -93,3 +93,18 @@ def test_the_gate_leaves_the_research_default_alone():
     """Ablations and the paper's fusion tables use FusionPolicy(); the gate is a
     property of the live system's policy, so it is opt-in at this layer."""
     assert FusionPolicy().voice_gate is False
+
+
+def test_a_login_whose_only_weighted_branch_is_the_voice_follows_the_voice_zones_exactly():
+    """The read-these-words login: fused threshold = voice threshold, no borderline margin."""
+    policy = FusionPolicy(threshold=VOICE_THRESHOLD, borderline_margin=0.0, voice_gate=True, voice_grey_margin=0.08)
+    assert fuse([voice(0.70)], policy).decision is Decision.ACCEPT
+    assert fuse([voice(VOICE_THRESHOLD)], policy).decision is Decision.ACCEPT
+    assert fuse([voice(0.58)], policy).decision is Decision.BORDERLINE
+    assert fuse([voice(0.53)], policy).decision is Decision.REJECT
+
+
+def test_a_grey_voice_is_judged_as_if_it_were_at_the_threshold_so_the_others_decide():
+    """Perfect others cannot accept a grey voice, but bad others still reject it."""
+    assert fuse([voice(0.58), *others()], GATED).decision is Decision.BORDERLINE
+    assert fuse([voice(0.58), *others(csbg=0.05, knowledge=0.0)], GATED).decision is Decision.REJECT

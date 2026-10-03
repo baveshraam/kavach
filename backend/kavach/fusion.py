@@ -432,9 +432,19 @@ def fuse(
     branches = [replace(b, weight=carried.get(b.branch, 0.0)) for b in branches]
 
     # --- Decision. ------------------------------------------------------
-    if abs(fused - policy.threshold) <= policy.borderline_margin:
+    # A voice in the grey band is inconclusive, not a vote against: judge the login as if the voice
+    # sat exactly at its threshold, so the OTHER branches decide whether it can be asked again
+    # (BORDERLINE) or is rejected outright. Without this, a login whose only weighted branch is the
+    # voice (a read-these-words login) would see fused < threshold and be rejected, and one whose
+    # fused threshold differs from the voice threshold would be decided by the wrong number.
+    effective = fused
+    if voice_grey:
+        voice_weight = carried.get(Branch.SPEAKER, 0.0)
+        effective = fused + voice_weight * (by_branch[Branch.SPEAKER].threshold - by_branch[Branch.SPEAKER].score)
+    tolerance = max(policy.borderline_margin, 1e-9)
+    if abs(effective - policy.threshold) <= tolerance:
         decision = Decision.BORDERLINE
-    elif fused >= policy.threshold:
+    elif effective >= policy.threshold:
         decision = Decision.ACCEPT
     else:
         decision = Decision.REJECT
