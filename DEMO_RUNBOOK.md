@@ -54,6 +54,11 @@ Why ten words: on LibriSpeech (cross-chapter), the gap between the owner's 2nd-p
 99.9th was +0.10 for 4-8 s probes, +0.20 for 8-11 s and +0.26 for 11-15 s. Probe length buys more safety than any
 threshold. Ten random words are about seven seconds.
 
+**The room matters more than any judge.** Measured on real speech (`DEMO_HARDENING.md` section 3): strangers' scores
+barely move with noise, echo or a phone-quality channel, but the owner's drop by about 0.11 in a moderately noisy or
+echoey room and 0.19 in a hard one. Present in a quiet room with the microphone close (or the headset you enrolled
+with, S2), rehearse in that room, and let the S5 session (a noisier room) set the threshold.
+
 **If something goes wrong on stage.** A noisy room: move the laptop closer, or use the headset you enrolled with
 (S2). "Not sure yet": say one more phrase, it is meant to happen occasionally and is the system being careful.
 "Please wait N s": a judge's failures slowed the next attempt; wait it out, or the preflight's reset

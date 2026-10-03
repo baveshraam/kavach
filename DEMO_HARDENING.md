@@ -125,6 +125,27 @@ This file is the memory of the pass. Read it top to bottom to resume.
 - Probe length, LibriSpeech cross-chapter, clean (owner n / stranger n): 4-6 s p2 0.588 vs p99.9 0.486
   (margin +0.10); 6-8 s +0.10; 8-11 s +0.20 (0.661 vs 0.463); 11-15 s +0.26; 15-19 s +0.29.
 
+- **Rooms and codecs, real human speech** (LibriSpeech, 12 owners enrolled on other chapters, 55 owner probes and 117
+  stranger probes of 5 s, every probe through the same condition, opus where the browser would apply it):
+
+  | condition | owner mean | owner 5th pct | owner min | strangers 99.9th | strangers max | owner rejected at 0.62 | at 0.55 | strangers accepted at 0.55 |
+  |---|---|---|---|---|---|---|---|---|
+  | clean | 0.778 | 0.694 | 0.653 | 0.431 | 0.453 | 0.0% | 0.0% | 0 |
+  | opus 24 kbps | 0.779 | 0.699 | 0.657 | 0.476 | 0.482 | 0.0% | 0.0% | 0 |
+  | opus + noise 15 dB | 0.669 | 0.581 | 0.563 | 0.461 | 0.479 | **23.6%** | 0.0% | 0 |
+  | opus + noise 8 dB | 0.592 | 0.483 | 0.430 | 0.459 | 0.495 | **69.1%** | 21.8% | 0 |
+  | opus + reverb (RT60 0.45 s) | 0.665 | 0.581 | 0.536 | 0.419 | 0.422 | **23.6%** | 1.8% | 0 |
+  | phone band 300-3400 Hz + opus | 0.671 | 0.554 | 0.496 | 0.435 | 0.442 | 10.9% | 5.5% | 0 |
+
+  Reading it: **the strangers barely move** (99.9th percentile 0.42-0.48 everywhere) while **the owner drops by
+  about 0.11 in a moderately noisy or echoey room and about 0.19 in a hard one**. A fixed 0.62 turns the owner
+  away about a quarter of the time at 15 dB of noise; 0.55 does not, and still sits above every stranger here.
+  Two consequences. The threshold must be measured on sessions that include a noisy room (S5 in the recording
+  guide is exactly that), not assumed. And the demo's practical rule is a quiet room and a close microphone (or
+  the headset enrolled in S2); the room costs the owner far more than any judge costs the system. These are
+  studio-quality strangers; the 11 corpus teammates, recorded on phones like each other, reach 0.577 against
+  S04, which is why the threshold is not simply dropped to 0.55 and why the borderline step-up exists.
+
 ## 4. Honest limits (state these, do not paper over them)
 
 - One enrolled speaker, a handful of impostor voices of the right kind. Numbers describe the presenter's
