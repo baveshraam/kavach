@@ -55,9 +55,16 @@ refuses to save a clip whose device or room differs from its session's, so a mix
 Nothing already saved is lost or duplicated, and a recording cut short by a crash is quarantined, not
 lost.
 
-## When you are done: four commands, in this order
+## When you are done
 
-Stop the Studio first (close its window), then from the repo folder:
+Stop the Studio first (close its window), then from the repo folder, in PowerShell:
+
+```
+powershell -ExecutionPolicy Bypass -File .un_after_recording.ps1
+```
+
+It runs the four steps below in order and stops at the first that fails. (Add `-DropOutliers` if step 4 refuses a clip
+and you have listened to it.) The same four commands, one at a time, if you prefer:
 
 ```
 # 1. The evidence for the claim: S1-S3 enrol, S4 and S5 never enrolled
