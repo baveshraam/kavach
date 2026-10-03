@@ -1,6 +1,9 @@
 # Evidence pipeline — design
 
-Status: **draft for review**, 2026-10-02 23:50. Sub-project 1 of 4 (see §8). Nothing here is implemented.
+> **Status, 2026-10-03: implemented on `feature/evidence-pipeline`.** Changed in review and since: the Studio gained a `words` kind, the report's intervals are never narrower than Wilson's, enrolment and calibration tools were added (`DEMO_HARDENING.md` R7). A dated design record; the living description is `HANDOFF.md` and `RECORDING_GUIDE.md`.
+
+
+Status as written (2026-10-02 23:50): draft for review, sub-project 1 of 4 (see section 8). **Since implemented; see the banner above.**
 
 ## 1. Outcome, and what is assumed
 

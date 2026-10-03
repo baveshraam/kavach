@@ -1,6 +1,9 @@
 # Clone-attack bank — design
 
-Status: **draft for review**, 2026-10-02. Nothing in this document is implemented.
+> **Status, 2026-10-03: implemented and merged to `main`** (plan: `../plans/2026-10-02-clone-attack-bank.md`). A dated design record; later changes are in `HANDOFF.md`, not here.
+
+
+Status as written (2026-10-02): draft for review. **Since implemented; see the banner above.**
 Scope: attacks A3–A5 in the Attack Lab and the live demo (`HANDOFF.md`, "Still open").
 
 ## 1. Outcome, and what is assumed

@@ -1,5 +1,8 @@
 # Participant scripts
 
+> **Status, 2026-10-03: pilot closed.** The scripts were used for the pilot corpus (S01-S07) and are kept as the record of what participants read. `SPEAKER_A.md` ... `SPEAKER_J.md` are the verbatim forwarded files and are never edited.
+
+
 Read-speech scripts, one per speaker. `SPEAKER_A.md` … `SPEAKER_J.md` are
 forwarded to participants verbatim; this file is the design behind them and is
 not sent to anyone.

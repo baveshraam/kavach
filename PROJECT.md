@@ -5,7 +5,15 @@ Technologies for Low-Resource Languages, Amrita Vishwa Vidyapeetham, Coimbatore,
 17–19 December 2026. Theme: *Knowledge Graphs for low-resource languages using LLM
 and Multimodal data.*
 
-**Repository:** `PremKxmar/speech.git`
+**Repository:** `PremKxmar/speech.git` (the teammate's original; the work now continues in
+`github.com/baveshraam/kavach`, which preserves its history)
+
+> **Status, 2026-10-03.** This file was written in August, when no speech had been recorded. Since then: a
+> 12-speaker pilot corpus exists and was annotated (the CSBG is at chance on free speech, so the paper's fallback
+> framing applies); a live demo was built and rehearsed on it; and the direction changed from a research prototype
+> that averages three factors to **evidence for a single enrolled speaker behind a gated login**. Sections 3.9-3.12
+> and 6 (sessions 9-12) carry that; section 4 is rewritten. The reasoning and every measurement of the latest pass
+> are in [DEMO_HARDENING.md](DEMO_HARDENING.md); where things stand is the top of [HANDOFF.md](HANDOFF.md).
 
 This document explains what the system is, why each design decision was made, and
 what has actually been measured versus what is still assumed. Read
@@ -55,6 +63,20 @@ audio ──► ASR (faster-whisper)  ──► word-level LID ──► semanti
                                      ACCEPT / REJECT / BORDERLINE
 ```
 
+The **live login** (the Unlock demo) is a gated pipeline rather than the weighted average above, which remains the
+research system and the paper's ablations:
+
+```
+challenge (random words) ─► recording ─► gates, all of which must pass:
+                                           liveness          unused, in time
+                                           signal integrity  not a copy of one already seen
+                                           phrase            the shown words, in order (ASR transcript)
+                                           voice             ECAPA cosine on the span where the words were
+                                                             spoken, against a MEASURED threshold
+                                         ─► ACCEPT, or BORDERLINE (one stricter second phrase), or REJECT
+                          failed attempts at one identity slow down (throttle)
+```
+
 ### Repository layout
 
 ```
@@ -81,10 +103,16 @@ backend/kavach/
     attacks.py       the Attack Lab
     app.py           19 routes + audio serving
   integrity.py     signal-integrity gate (splice + duplicate detection)
-  fusion.py        branch combination, gates, vetoes
+  fusion.py        branch combination, gates, vetoes, the voice gate
+  phrase.py        the random words of the Unlock login and their matcher
+  throttle.py      failed attempts slow down
+  calibrate_voice.py  the measured voice threshold, the policy file, leave-one-session-out
+  cohort.py        public impostor corpora, embedded once and cached
+  demo_check.py    the preflight; synthetic.py is its text-to-speech stranger
+  studio/          the presenter's recording Studio: store, plan, enrol, words_check
   audio.py  asr.py  embedding.py  matcher.py  skg.py  challenge.py  simulation.py
-kavach/            the React + Vite + TypeScript UI (user-supplied)
-tests/             600 tests
+kavach/            the React + Vite + TypeScript UI (user-supplied; /unlock is the demo screen)
+tests/             1490 tests
 ```
 
 ---
@@ -160,33 +188,66 @@ field stays so TypeScript validates, returns `""` by default, and is gated behin
 `Settings.demo_reveal_answers` (default False) which `/api/health` reports so a demo
 build announces itself.
 
+### 3.9 The voiceprint is a gate, not a vote — `fusion.py`, `Settings.voice_gate`
+
+Section 3.3 argued that a weighted average cannot express a veto, and applied it to the CSBG. The same argument
+applies harder to the identity factor itself: voice 0.45 (under a 0.62 threshold) plus a known answer plus a
+coin-flip CSBG scored 0.72 and was accepted, so a judge needed no voice at all, only a hometown from a slide.
+`FusionPolicy.voice_gate` makes the voice necessary: below `threshold - margin` is a reject, the band under the
+threshold is at best BORDERLINE, an unmeasurable voice fails closed. It is off in `FusionPolicy()` so the paper's
+ablations still measure the weighted rule, and on in `Settings` for the live system. (DEMO_HARDENING R1.)
+
+### 3.10 A phrase of random words binds a recording to one challenge — `phrase.py`
+
+A re-recorded replay of the presenter passed voice and knowledge. The Unlock login shows ten random words per
+attempt, transcribes the recording as English with no code-mixing prompt, and requires six in order; a recording
+made for another attempt cannot contain them (an unrelated ten-word recording never reached five in 100,000
+random pairs). It needs no facts, no language tagger and no network. The voice is scored only on the span where
+the shown words were spoken, so speech before or after cannot dilute or hijack it. (R2, R5, R10.)
+
+### 3.11 The threshold is measured, with a margin biased toward the owner — `calibrate_voice.py`
+
+A threshold chosen by reasoning about a score scale has been wrong twice here. `kavach.calibrate_voice` measures
+the strangers' tail (public speech corpora and the corpus speakers, cut to login length) and the owner's low end
+(leave-one-session-out over the presenter's own Studio sessions), and puts the threshold 60% of the way from the
+first to the second, never below 0.55; where the classes overlap the strangers' tail wins and the owner's
+false-reject rate is reported with the remedy. Probe length is the strongest lever found (margin +0.10 at 4-8 s,
++0.20 at 8-11 s), which is why the phrase is ten words. The result is a policy file the live system loads; a
+damaged file falls back to the default and says so. (R6, R10.)
+
+### 3.12 Evidence is for one enrolled speaker, and says so first — `eval/enrollee.py`, `calibrate_voice.py`
+
+Every report opens with its limits: one enrollee; false-accept over recorded strangers who were not recorded
+through the demo laptop and so understate a same-room judge; no population EER. Intervals are never narrower than
+Wilson's; a cluster bootstrap over fewer than five clusters is labelled not informative. (Studio spec and plan:
+`docs/superpowers/`.)
+
 ---
 
 ## 4. What has been measured, and what has not
 
 **This is the section to read before writing any number into a paper.**
 
-| Component | Status |
+| Component | Status (2026-10-03) |
 |---|---|
-| CSBG construction, LLR scoring, cohort z-norm | Real, tested (z-norm fixed in session 8 — see §5.6) |
+| CSBG construction, LLR scoring, cohort z-norm | Real, tested. **On real speech: 26.3% EER on scripted speech (a script classifier, not a speaker habit) and 50.0% EER on free speech (5 speakers, one session each: chance).** |
 | EER / minDCF / DET / bootstrap CIs | Real, tested |
-| Fitted fusion weights, threshold, veto floor | Real, fitted on a dev split |
-| Splice + duplicate detection | Real, calibrated on synthetic audio |
-| ECAPA-TDNN embeddings | Model installed and verified (192-d, loads in 0.2 s) |
-| Corpus manifest, loader, coverage, session split | Real, tested — **but no manifest has been populated** |
-| Figures and the experiment runner | Real, tested; every output stamped unreportable |
-| **Speech corpus** | **Does not exist. Everything runs on `simulation.py`.** |
-| **Voice cloning (A3–A5 acoustic scores)** | **Modelled from a documented distribution, not measured.** |
-| **Acoustic + knowledge branches in `experiments.py`** | **Documented stand-ins under `--simulate-branches`; the real models are not wired in yet.** |
-| LLM semantic tagging | Falls back to rules; not corpus-grade without an API key |
+| Fitted fusion weights, threshold, veto floor | Real, fitted on a dev split for the paper's ablations; the CSBG veto was fitted and discarded. The live login no longer uses the weighted rule: see 3.9 |
+| Splice + duplicate detection | Duplicate detection real. **Splice tests are off by default**: they rejected 167 of 168 genuine corpus clips and no cue separated splices from genuine windows (`kavach.calibrate_integrity`) |
+| ECAPA-TDNN embeddings | Real. 12-speaker corpus: cross-speaker cosine mean 0.24, max 0.588; public cohorts, 0 of about 31,000 stranger trials reached 0.62 (nearest 0.608); room, noise and codec effects measured on LibriSpeech (DEMO_HARDENING 3). **The presenter's own cross-session scores do not exist yet** |
+| Speech corpus | **Exists**: 12 consenting speakers, 1.12 h, one session each (7 scripted, 5 free), plus public corpora as impostors. No second session per speaker, so cross-session claims wait on the presenter's Studio sessions |
+| Voice cloning | kNN-VC clone bank implemented (A4); the real bank awaits a teammate's spoken answers, so A3-A5 acoustic scores remain modelled unless a bank exists, and runs stay `simulated` |
+| Acoustic + knowledge branches in `experiments.py` | Real branches wired (`--real-branches`); the knowledge branch scores nothing on a one-session corpus by construction |
+| LLM semantic tagging | Gemini free tier for annotation; an offline lexicon fallback for live logins; not corpus-grade without a key |
+| The gated login (phrase, voice gate, throttle, step-up) | Tested; rehearsed against real Whisper/ECAPA with synthetic voices and in a real browser; owner numbers pending the Studio sessions |
 
 `AttackTable.paper_ready()` refuses every current row, by design.
 
-**The single blocking gap for publication is the corpus.** No number in this
-repository is an experimental result about human speakers, because no human
-speakers have been recorded. `simulation.py` says so in its own docstring:
-synthetic speakers differ *by construction*, so a model separating them proves the
-code is correct, not that the hypothesis is true.
+**The blocking gaps are now second sessions and more speakers, not a missing corpus.** The 12-speaker pilot is real
+but single-session; the knowledge branch and cross-session stability need a second sitting per speaker, which
+cannot be collected for other people (the pilot is closed). The presenter's own sessions close the gap for one
+speaker. `simulation.py` still says in its own docstring that synthetic speakers differ *by construction*, so a
+number it produces is never an experimental result.
 
 ---
 
@@ -480,6 +541,37 @@ Also discovered: the project requires **Python 3.10+** and fails at collection o
 3.9 (`dataclass(slots=True)`). Nothing recorded that before, and the machine this
 session ran on had only the system 3.9. HANDOFF.md now says so.
 
+### Session 9 — real recordings, annotation, the demo build (August to 2026-09-30)
+
+Four, then seven, then twelve consenting speakers returned recordings (S01-S07 reading scripts, S08-S12 speaking
+freely). Transcribed with Whisper `large-v3`, tagged with Gemini, run through `kavach.experiments`: ECAPA 0.00% EER
+(same sitting, not a result), CSBG 26.3% on scripts (a script classifier) and 50.0% on free speech. Then, with data
+collection closed, a demo build on the existing 12 speakers: `seed_demo`, a reworked UI, live ASR on a fast path,
+an offline tagging lexicon, hallucinated-script filtering, a microphone top-up, stored-audio attack staging. The
+splice gate was found to reject 167 of 168 genuine clips. Details: HANDOFF, the 2026-09-29 block.
+
+### Session 10 — the clone-attack bank, a preflight, and what rehearsal found (2026-10-02)
+
+kNN-VC clone bank behind an allowlist and a flag, measured Attack Lab rows (still `simulated`), `kavach.demo_check`,
+splice calibration (the tests stay off), fixes found by rehearsing against the real backend (the impostor clip
+tripping the integrity gate first, a real `.m4a` failing to decode), and an independent review pass. Merged to
+`main`. Details: HANDOFF, the 2026-10-02 blocks; the spec and plan are in `docs/superpowers/`.
+
+### Session 11 — the evidence pipeline (2026-10-02 to 2026-10-03)
+
+The presenter's offer to record unlimited samples of themselves became the Recording Studio (`kavach/studio/`, the
+`/studio` page, an append-only index) and the single-enrollee evaluation (`kavach.eval.enrollee`), reviewed by a
+fresh reviewer and fixed (interval honesty, a degenerate dev split, a refresh that moved a session). Branch
+`feature/evidence-pipeline`. Details: HANDOFF, the 2026-10-03 block; spec and plan in `docs/superpowers/`.
+
+### Session 12 — demo hardening: the pivot (2026-10-03)
+
+An autonomous pass with design decisions delegated. Found that the login had no hard voice gate and that a replay
+passed; rebuilt it as a gated login (sections 3.9-3.12), added the Unlock screen, throttle, step-up, measured
+threshold, Studio `words` task, enrolment from Studio sessions, preflight phrase flows, and the documentation rule
+(CLAUDE.md). Found and fixed one real bug by self-review (the generic fused threshold leaking into phrase logins).
+Eleven rulings with their costs, and the measurements, are in DEMO_HARDENING.md. Branch `feature/demo-hardening`.
+
 ---
 
 ## 7. Running it
@@ -487,7 +579,7 @@ session ran on had only the system 3.9. HANDOFF.md now says so.
 ```bash
 # Backend — core only, no heavy models, runs in degraded mode
 pip install -r requirements-core.txt
-pytest                                   # 600 tests, offline, ~36s
+pytest                                   # 1490 tests, offline, ~2-5 min
 
 # Backend — everything
 pip install -r requirements.txt
@@ -511,6 +603,10 @@ Useful environment variables (all prefixed `KAVACH_`):
 | `KAVACH_OFFLINE=1` | Load no model checkpoints; exercise degraded mode deliberately |
 | `KAVACH_WHISPER_MODEL=small` | Smaller ASR checkpoint (default `large-v3`, ~3 GB) |
 | `KAVACH_DEMO_REVEAL_ANSWERS=1` | Populate `expectedAnswerEntity`. **Demos only.** |
+| `KAVACH_VOICE_GATE` / `KAVACH_PHRASE_WORDS` / `KAVACH_PHRASE_MIN_MATCH` | The voice gate (default on), the words shown (10) and the share needed (0.6) |
+| `KAVACH_THROTTLE_ENABLED` / `_FREE_ATTEMPTS` / `_BASE_DELAY` / `_MAX_DELAY` | Failed attempts slow down (3 free, then 5/10/20/30 s) |
+| `KAVACH_DEMO_TOOLS=true` | Expose `POST /api/demo/reset-throttle` for the preflight. Demo builds only |
+| `KAVACH_STUDIO_ENABLED` / `KAVACH_STUDIO_SPEAKERS` | The recording Studio, allowlist-only; set by `run_studio.ps1` |
 | `ANTHROPIC_API_KEY` | Enables LLM tagging, challenges and attacker text; adds prompt caching and the Batch API |
 | `GEMINI_API_KEY` / `GROQ_API_KEY` | The same three jobs on a free tier. Any one key is sufficient |
 | `KAVACH_LLM_PROVIDER` | Pin one provider when several keys are present (default: first available, Anthropic preferred) |
@@ -528,6 +624,8 @@ Useful environment variables (all prefixed `KAVACH_`):
 5. `backend/kavach/integrity.py` — the argument for the second gate, and the
    calibration story.
 6. `backend/kavach/eval/ablation.py` — how the paper's table is produced.
+7. `DEMO_HARDENING.md`, then `backend/kavach/phrase.py` and `calibrate_voice.py` — the live login and how its
+   threshold is measured. `CLAUDE.md` first, if you are an assistant picking this up.
 
 Module docstrings carry the reasoning throughout. Where a number was chosen rather
 than measured, the docstring says so.

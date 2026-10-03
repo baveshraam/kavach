@@ -1,5 +1,8 @@
 # Clone-Attack Bank + Demo Hardening Implementation Plan
 
+> **Status, 2026-10-03: executed and merged to `main`.** A dated plan; deviations are in `HANDOFF.md`.
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the Attack Lab's modelled A4 acoustic score and the demo's missing clone flow with a bank of pre-generated, measured clones of the presenter's voice, and make the live demo survive hostile input and a preflight check before anyone is watching.

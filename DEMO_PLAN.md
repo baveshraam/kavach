@@ -1,5 +1,13 @@
 # DEMO_PLAN — finishing KAVACH on the data we already have
 
+> **Status, 2026-10-03.** This is the research note of 2026-09-29 that set the demo's course; it is kept as a
+> record and is not edited further. Done since: Gap 1 (the 12-speaker demo database, `seed_demo`), Gap 3 (the
+> offline-results panel), Gap 2 for kNN-VC (the clone bank, `kavach.attacks`; IndicF5 was not attempted), the
+> live-demo fragilities in Gap 4 (see `DEMO_RUNBOOK.md`), and the gold-set export (labelling still needs a bilingual
+> human). **Superseded:** the demo script in section 5 is now secondary; the demo is the Unlock screen
+> (`DEMO_RUNBOOK.md` section 0), and the direction is evidence for a single enrolled speaker (`DEMO_HARDENING.md`).
+> The constraint "no new recordings" was lifted for the presenter's own voice only (2026-10-02).
+
 Research notes, 2026-09-29. Constraint: **no new recordings.** Everything below
 uses the 12 consented speakers already on disk.
 

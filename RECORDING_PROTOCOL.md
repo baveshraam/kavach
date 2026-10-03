@@ -1,5 +1,8 @@
 # Recording protocol
 
+> **Status, 2026-10-03.** The pilot corpus is final at 12 consenting speakers (S01-S12); collection from other people is closed unless the presenter says otherwise. This protocol remains the consent and recording standard for any future collection, and `corpus.py` its executable half. The presenter's own sessions follow `RECORDING_GUIDE.md` instead (one consenting speaker, recorded through the Studio).
+
+
 What to record, from whom, how, and what must be signed first. This is the
 document the corpus is collected against; `backend/kavach/corpus.py` is its
 executable half, and where the two disagree the code is authoritative because

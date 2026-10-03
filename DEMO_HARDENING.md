@@ -5,7 +5,8 @@ works essentially every time for them and does not work at all for people whose 
 (the judges), presented like a production product. Design decisions were delegated; each one is logged
 below with what it costs if wrong.
 
-This file is the memory of the pass. Read it top to bottom to resume.
+This file is the memory of the pass. Read it top to bottom to resume. Last updated 2026-10-03, at the end of the
+first pass (see HANDOFF.md, "Where things stand", for what to do next; CLAUDE.md for the rule that keeps this current).
 
 ## 1. Threat model for the live demo
 

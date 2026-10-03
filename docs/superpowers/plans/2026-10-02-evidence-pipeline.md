@@ -1,5 +1,8 @@
 # Evidence Pipeline Implementation Plan
 
+> **Status, 2026-10-03: executed on `feature/evidence-pipeline`** and then amended by a review fix pass. A dated plan.
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: superpowers:executing-plans (inline). Steps use `- [ ]`. Code blocks introduced by a line `FILE[test] <path>` or `FILE[impl] <path>` are the exact file contents: apply them with the extractor (`apply_plan.py PLAN N test|impl`), run, and read the output. Blocks introduced by `EDIT <path>` are manual single-line `Edit` anchors (the files are CRLF).
 
 **Goal:** Let the presenter record labelled sessions of their own voice through the demo's browser-mic path, and measure the real voiceprint on held-out sessions with honest intervals.

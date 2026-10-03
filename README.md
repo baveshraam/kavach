@@ -28,7 +28,7 @@ enrolled speaker, measured on held-out sessions, with claims worded accordingly.
 
 ## The demo, in one paragraph
 
-The **Unlock** screen shows six random words. The enrolled speaker reads them; the system accepts only if
+The **Unlock** screen shows ten random words. The enrolled speaker reads them; the system accepts only if
 the recording is fresh and untouched, the words spoken are the words shown (so a recording made for
 another attempt is useless), and the **voice** matches the enrolled voiceprint, as a hard gate that no
 correct answer or plausible code-switching can outvote. Someone else reading the same words is refused.
@@ -44,17 +44,23 @@ their limits, to a file the live system loads. What this does and does not estab
 
 | Document | What it is for |
 |---|---|
-| **[HANDOFF.md](HANDOFF.md)** | Current state, what is left, and the traps already hit. Read this first if you are picking the work up. |
+| **[CLAUDE.md](CLAUDE.md)** | The working rules, including the one that keeps every document current. Loaded automatically at the start of each Claude Code session. |
+| **[HANDOFF.md](HANDOFF.md)** | Where things stand, what is blocked, what to do next, and the traps already hit. Read its top section first if you are picking the work up. |
+| **[DEMO_HARDENING.md](DEMO_HARDENING.md)** | The 2026-10-03 pass: threat model, every decision with its cost if wrong, every measurement, the honest limits. |
+| **[DEMO_RUNBOOK.md](DEMO_RUNBOOK.md)** | How to present: the Unlock demo script, preflight, rehearsed drills with what actually happened, stage fallbacks, honest answers. |
+| **[RECORDING_GUIDE.md](RECORDING_GUIDE.md)** | What the presenter records (five Studio sessions) and the one command that turns the recordings into evidence, a measured threshold and the enrolment. |
 | **[PROJECT.md](PROJECT.md)** | What the system is, every design decision and why, what has been measured versus assumed, and the full session history. |
 | `KAVACH_Project_Idea.md` | The research proposal: novelty argument, experiment design, findings write-up. |
-| **[DEMO_RUNBOOK.md](DEMO_RUNBOOK.md)** | Preflight, rehearsed drills with what actually happened, and honest answers for presenting the demo. |
 
-**One thing to know before reading any number in this repository:** two corpora
-of real speakers now exist — 7 reading scripts (`SCRIPTED`) and 5 speaking freely
-(`RECORDED`) — but neither ships here; see [What is not in this
-repository](#what-is-not-in-this-repository). `simulation.py` still exists and its
-speakers differ *by construction*, so a number it produces is never an
-experimental result. See PROJECT.md §4.
+**One thing to know before reading any number in this repository:** the data behind
+every real number is not here (see [What is not in this
+repository](#what-is-not-in-this-repository)). It is: two pilot corpora of 12
+consenting speakers (7 reading scripts, `SCRIPTED`; 5 speaking freely, `RECORDED`),
+public speech corpora used as impostors (LibriSpeech, Google's Tamil set), and the
+presenter's own Studio sessions once they are recorded. `simulation.py` still exists
+and its speakers differ *by construction*, so a number it produces is never an
+experimental result. The voice numbers describe **one enrolled speaker**, not people
+in general; see PROJECT.md §4 and DEMO_HARDENING.md §3-4.
 
 ---
 
@@ -67,14 +73,23 @@ backend/kavach/         the system
     attacks/            the A1–A5 threat model and its detectors
     eval/               EER, minDCF, DET curves, ablations, figures
     api/                FastAPI layer serving the frontend
+    studio/             the presenter's recording Studio: store, plan, enrol, words_check
     corpus.py           recorded-speech manifest, loader, elicitation protocol
     ingest.py           returned participant folders -> validated manifest
     annotate.py         audio -> transcripts -> tagged tokens, in the manifest
     experiments.py      one command producing every table and figure
+    phrase.py           the random words of the Unlock login and their matcher
+    throttle.py         failed attempts at one identity slow down
+    calibrate_voice.py  measure the voice threshold; the policy file the live system loads
+    cohort.py           public impostor corpora, embedded once and cached
+    demo_check.py       the preflight; synthetic.py is its text-to-speech stranger
     audio.py asr.py embedding.py matcher.py skg.py challenge.py fusion.py
-kavach/                 the frontend (Vite + React + TypeScript)
-participant_scripts/    read-speech scripts, one language profile per speaker
-tests/                  1150 tests, none of which need a GPU
+kavach/                 the frontend (Vite + React + TypeScript): /unlock is the demo screen
+participant_scripts/    read-speech scripts, one language profile per speaker (pilot, closed)
+tests/                  1490 tests, none of which need a GPU
+run_demo.ps1            start the demo (backend :8000, UI :3000, opens /unlock)
+run_studio.ps1          start recording sessions (Studio enabled for the presenter)
+run_after_recording.ps1 evidence report, words check, calibration, enrolment, in order
 ```
 
 Recording a corpus? Read **[RECORDING_PROTOCOL.md](RECORDING_PROTOCOL.md)**
@@ -118,6 +133,23 @@ variable with a `KAVACH_` prefix or a `.env` file. Every threshold in there is
 a **reasoned starting point, not a fitted value** — `eval/` fits them on a dev
 split, and the fitted numbers are what a paper reports.
 
+### The demo, the Studio, and what to run after recording
+
+PowerShell, from the repository folder:
+
+```
+powershell -ExecutionPolicy Bypass -File .\run_demo.ps1                 # the demo; opens http://localhost:3000/unlock
+powershell -ExecutionPolicy Bypass -File .\run_studio.ps1               # record the five Studio sessions
+powershell -ExecutionPolicy Bypass -File .\run_after_recording.ps1      # evidence, words check, calibration, enrolment
+$env:PYTHONPATH = "backend"; .\.venv\Scripts\python.exe -m kavach.demo_check --presenter S04 --flows   # the preflight
+```
+
+Stop one before starting another (they share port 8000 and the database). `RECORDING_GUIDE.md` says
+what to record and what each step of the after-recording script means; `DEMO_RUNBOOK.md` is the stage
+script. The voice settings (`KAVACH_VOICE_GATE`, `KAVACH_PHRASE_WORDS`, `KAVACH_PHRASE_MIN_MATCH`,
+`KAVACH_THROTTLE_*`, `KAVACH_DEMO_TOOLS`) live in `backend/kavach/config.py`; the measured threshold comes
+from `data/voice_policy.json` and overrides the default 0.62 when present.
+
 ### Frontend
 
 ```bash
@@ -135,7 +167,7 @@ answer, which the backend deliberately never sends.
 ### Tests
 
 ```bash
-pytest                                    # 1150 passed, ~2-5 min
+pytest                                    # 1490 passed, ~2-5 min
 pytest -m models                          # only the tests needing real checkpoints
 ```
 
@@ -221,6 +253,7 @@ is exactly one thing: the audio.
 | `recordings/`, `SpeechData/` — 168 audio files, 49 MB | Participant folder names are people's real first names sitting beside their voiceprints. Direct identifiers; nothing pseudonymises them until `kavach.ingest` runs. | Transferred out of band, by the corpus owner, only to someone the consent register covers. |
 | `data/` — 175 MB: `corpus_v1`–`v3`, manifests, `kavach.db` | Voiceprints next to hometowns, schools and family names. Not encrypted. `data/attacks/clones/` also holds synthetic clips of one consenting presenter's voice: never distribute them. | Rebuilt from the audio with `kavach.ingest`, or transferred with it. |
 | `data/speakers*.csv`, `data/consent_register.csv` | The pseudonym→person mapping and the consent record. These are the *only* files that re-identify a speaker; keeping them beside the corpus would defeat the pseudonymisation. | Held by the corpus owner, outside this repository and outside `data/`. |
+| `data/studio/`, `data/cohort/`, `data/voice_policy.json` | The presenter's own recordings (a person's voice next to their facts), the cached public-corpus embeddings, and the measured voice threshold. Git-ignored with the rest of `data/`. | Recorded with `run_studio.ps1`; rebuilt with `python -m kavach.cohort` (download links in its docstring) and `python -m kavach.calibrate_voice`. |
 | `.env` | API keys. `.env.example` lists the variable names. | Recipient supplies their own; any one provider key works and a free one will do. |
 | `.venv/`, `kavach/node_modules/`, `pretrained_models/` | Regenerable. | `pip install -r requirements.txt`, `npm install`; the speechbrain checkpoint downloads on first use. |
 
@@ -252,6 +285,12 @@ expected answer out of the network tab, which does not weaken the knowledge
 branch so much as delete it. `Settings.demo_reveal_answers` exists for offline
 demos, defaults to `False`, and is reported in `/api/health` so a demo build
 announces itself.
+
+**The voice is a gate, not a vote, and its threshold is measured.** The live login rejects below
+`threshold - margin` whatever else was said (`FusionPolicy.voice_gate`); the paper's ablations still use the
+weighted rule on purpose. Do not set the threshold by reasoning about a score scale: it has been wrong before.
+Measure it (`kavach.calibrate_voice`), and quote every false-accept figure with its limit: the strangers are
+studio recordings and phone-recorded teammates, not someone speaking into the presenter's laptop.
 
 **An unmeasured branch is not a failed branch.** A missing model scoring `0.0`
 is indistinguishable from an impostor scoring `0.0`, and the first would look

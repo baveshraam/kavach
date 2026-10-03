@@ -2,7 +2,46 @@
 
 State of the work as of the last commit, and what to do next. Read
 [PROJECT.md](PROJECT.md) for the design reasoning; this file is only about where
-things stand and what is left.
+things stand and what is left. [CLAUDE.md](CLAUDE.md) holds the working rules,
+including the one that every task ends with its documents updated (`tests/test_docs.py` enforces the mechanical half).
+
+---
+
+## Where things stand (read this first; last reviewed 2026-10-03)
+
+**Branches and remotes.** The work is on `feature/demo-hardening`, pushed to `kavach`
+(github.com/baveshraam/kavach, the presenter's own repository). It sits on top of
+`feature/evidence-pipeline`; `main` has the clone-attack bank but **not** these two branches, and nothing
+has been merged. `origin` (PremKxmar/speech) is the teammate's repository: do not push to it without asking.
+
+**State.** 1490 tests pass offline; `tsc` and `vite build` are clean. The demo screen is `/unlock`.
+The login is gated (fresh challenge, untouched recording, ten random words said now, enrolled voice as a hard
+gate) and the voice threshold is **not yet measured**: it is the default 0.62 until the presenter's sessions exist.
+
+**Blocked on the presenter, in order** (nothing here can be faked):
+
+1. Record the five Studio sessions (`run_studio.ps1`, `RECORDING_GUIDE.md`, about 3 h).
+2. Stop everything, run `run_after_recording.ps1` (evidence report, words check, measured threshold, enrolment).
+3. Start `run_demo.ps1`, run `kavach.demo_check --presenter S04 --flows`, then one live read-through on the real
+   microphone in the room they will present in.
+4. Optional: S04's personal facts (only the personal-question step-up needs them) and the clone bank
+   (a teammate's spoken answers, `DEMO_RUNBOOK.md` section 6).
+
+**Where to look.** Why and what was measured: `DEMO_HARDENING.md`. How to present: `DEMO_RUNBOOK.md` section 0.
+What to record: `RECORDING_GUIDE.md`. The history, newest first, is the dated blocks below.
+
+---
+
+## Update 2026-10-03 (c) -- documentation sweep and the documentation rule
+
+Every markdown file was reviewed and brought current (README, HANDOFF, PROJECT.md sections 3.9-3.12/4/6/7, the
+runbook, `kavach/README.md`, which was an AI Studio boilerplate), and the historical ones (the 2026-09-29 research
+note, the August proposal, the pilot-collection materials, the UI prompt, the dated specs and plans) got status
+banners instead of rewrites. **`CLAUDE.md`** now holds the rule that every task ends with its documents updated, an
+end-of-task checklist, a documents map and the environment traps; it is loaded automatically in each new session.
+**`tests/test_docs.py`** is the tripwire: it fails when a markdown file is not in the map, when a documented
+`python -m kavach.*` command or `run_*.ps1` script does not exist, when a relative link is broken, or when a
+placeholder was left in. It cannot check that prose is true, only that what it points at is real.
 
 ---
 
@@ -378,8 +417,9 @@ with the 12 speakers on disk; anything that needs more data stays pending.
 
 ## Current state
 
-- **1097 tests passing**, offline, in about 2-5 minutes on this laptop (as of 2026-10-02).
-- Working tree clean as of the last commit; **not pushed** -- see the 2026-10-02 updates.
+- **1490 tests passing**, offline, in about 2-5 minutes on this laptop (as of 2026-10-03; the figure is
+  kept current in "Where things stand" at the top).
+- Pushed to the `kavach` remote on `feature/demo-hardening`; see "Where things stand" at the top.
 - Backend runs and serves the UI. All eight pages render, `tsc --noEmit` is
   clean, `vite build` succeeds, and the Graph Explorer now draws the SKG as
   well as the CSBG. `/api/health` reports `connected` on a Gemini key alone.
@@ -425,10 +465,11 @@ Neither of these depends on the script, so both survive into the paper:
   nobody made. `kavach.inspect_corpus --translit` lists them.
 
 ```bash
-git clone https://github.com/PremKxmar/speech.git
-cd speech
+git clone https://github.com/baveshraam/kavach.git     # the teammate's original is PremKxmar/speech
+cd kavach
+git checkout feature/demo-hardening
 pip install -r requirements-core.txt
-pytest                    # expect 1097 passed
+pytest                    # expect 1490 passed
 ```
 
 The suite reaches no network and loads no checkpoint. Two autouse fixtures in
@@ -816,11 +857,20 @@ Still open:
 
 ## Standing instructions from the user
 
-- Push to `PremKxmar/speech.git` at every step.
+- Push to the `kavach` remote (github.com/baveshraam/kavach) when asked. (Earlier instruction: push to the teammate's
+  `PremKxmar/speech.git` at every step. That repository is `origin`; it has been left untouched since the work
+  moved to `kavach`: ask before pushing there.)
+- **Every task ends with its documents updated** (CLAUDE.md section 1). The presenter always continues in a new
+  session; the documents are the only continuity.
+- Never merge to `main` without the presenter's say-so.
 - The UI lives in `kavach/` and is user-supplied. Extend it; do not replace it.
 - **No AI-looking design** — no neon colours, no gradient-heavy dashboards. This
   applies to figures too.
 - The deadline is the user's concern, not the assistant's. Build the project.
+- Recording: only the presenter's own voice; recording anyone else needs their say-so. Public corpora are fine as
+  an impostor cohort.
+- Heavy compute (full test suite, embeddings, downloads) runs on the laptop the presenter also trains on: check
+  `nvidia-smi` and running python processes first.
 
 ---
 

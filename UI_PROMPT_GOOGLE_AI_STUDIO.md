@@ -1,5 +1,8 @@
 # Google AI Studio Prompt — KAVACH Frontend
 
+> **Status, 2026-10-03: historical.** This is the prompt that produced the first version of the UI (2026-08-04). The UI has been reworked by hand since (new design tokens, a shared kit, the Unlock, Studio and Attack Lab changes) and this prompt is not kept in sync. The living description is `kavach/README.md`; the contract with the backend is `kavach/src/api/types.ts`.
+
+
 Paste everything below the line into Google AI Studio. It is written to produce a restrained, professional research-instrument UI (no AI-slop aesthetics) and to match the backend API contract exactly, so wiring it up afterwards is mechanical.
 
 ---

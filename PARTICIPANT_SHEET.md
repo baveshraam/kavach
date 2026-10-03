@@ -1,5 +1,8 @@
 # Voice recording — what to do
 
+> **Status, 2026-10-03: pilot closed.** This sheet and `participant_scripts/` were used to collect the 12-speaker pilot corpus; collection is finished. They are kept as the record of what participants were asked and are not revised. Do not send them to anyone new without reading `RECORDING_PROTOCOL.md` section 1 (consent) first.
+
+
 Thanks for helping. This takes **about 15 minutes**, you do it alone on your own
 phone, and there is nothing to prepare.
 

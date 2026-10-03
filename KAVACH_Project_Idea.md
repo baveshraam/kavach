@@ -1,6 +1,9 @@
 # KAVACH
 ### Knowledge-graph Anchored Voice Authentication for Code-switched, Hybrid-language speakers
 
+> **Status, 2026-10-03.** This is the research proposal as written on 2026-08-04 and is not rewritten. Since then: a 12-speaker pilot corpus was recorded and annotated; the CSBG scored 26.3% EER on scripted speech (a script classifier) and 50.0% on free speech (chance), so the fallback framing of §12 applies; and the project's direction became evidence for a single enrolled speaker behind a gated login. What was built, decided and measured since is in `PROJECT.md` (sections 3.9-3.12, 4 and 6), `DEMO_HARDENING.md` and the top of `HANDOFF.md`. The deadline discussion below is as of August and has been overtaken by events.
+
+
 **Target venue:** SPELLL-2026 — 5th International Conference on Speech and Language Technologies for Low-Resource Languages, Amrita Vishwa Vidyapeetham, Coimbatore, 17–19 December 2026.
 **Conference theme:** *Knowledge Graphs for low-resource languages using LLM and Multimodal data.*
 

@@ -92,7 +92,8 @@ No wifi: the phrase login needs none.
 
 ## 2. Demo order (about 8 minutes)
 
-From `DEMO_PLAN.md` §5. Overview/Corpus → Graph Explorer (two contrasting CSBGs) → Speakers
+Open with section 0 (**Unlock**, three minutes: owner, judge, replay, interruption). Then, for the deeper dive:
+the order below, from `DEMO_PLAN.md` §5 (the original script, now secondary). Overview/Corpus → Graph Explorer (two contrasting CSBGs) → Speakers
 (enrolled presenter, edit SKG facts) → **Authenticate, genuine** (answer the challenge live) →
 **Impostor** (button) → **Replay** (button) → **Clone attack** (button, once the bank exists) →
 Evaluation (the 50% free-speech CSBG EER, and why).
@@ -142,9 +143,12 @@ Times include issuing the challenge (a Gemini call, 1–3 s) unless stated.
   session each, 36 test trials, so the interval is wide); the scripted 26% is a script classifier,
   not a speaker habit. The demo shows a working *system* with an attack lab; it does not support the
   claim that the CSBG stops clones. Say so before anyone asks.
-- **"How good is the voiceprint?"** On these 12 speakers a genuine probe scores ~0.9 and impostor cuts
-  0.14–0.27 against a 0.62 threshold. One session per speaker and a same-sitting template flatter
-  both, so this is a plumbing check, not an error rate.
+- **"How good is the voiceprint?"** Say what was measured and what was not (`DEMO_HARDENING.md` section 3). On the
+  public corpora, no stranger reached 0.62 in about 31,000 trials (the nearest, 0.608), and strangers' scores barely
+  move with noise or echo; the owner's drop by about 0.11-0.19 in a bad room. The presenter's own held-out numbers
+  come from the Studio sessions (`kavach.eval.enrollee`, `kavach.calibrate_voice`): quote those with their intervals
+  once they exist, and until then say the threshold is not yet measured. It is one enrolled speaker, and the strangers
+  are studio recordings, so a same-room judge is not covered.
 - **"The Tamil transcript looks wrong."** Whisper `small` garbles Tamil; it is chosen for demo speed.
   Annotation for the corpus used `large-v3`.
 - **"Is the clone real?"** Only once the bank has been generated and annotated (section 6). Then: the
@@ -154,7 +158,9 @@ Times include issuing the challenge (a Gemini call, 1–3 s) unless stated.
 
 ## 6. Blocked on the presenter (nothing here can be faked)
 
-1. **Enter S04's facts** in Speakers → S04 → knowledge facts (hometown, college, favouriteFood …). They
+0. **Record the Studio sessions and run `run_after_recording.ps1`** (`RECORDING_GUIDE.md`): the Unlock demo's threshold,
+   enrolment and evidence all wait on it. Then the preflight and one live read-through.
+1. **Enter S04's facts** (optional now: only the personal-question step-up needs them) in Speakers → S04 → knowledge facts (hometown, college, favouriteFood …). They
    are personal details; until then S04 cannot be challenged and the preflight says `NOT READY`.
 2. **A teammate speaks one short answer per fact**, once, in their own Tamil–English style. Save as
    `data/clone_sources/<predicate>.wav`. Then:
