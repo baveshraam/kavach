@@ -92,7 +92,8 @@ What each does:
 2b. **The words check.** Transcribes your words clips exactly as the login does and reports the share that
    would have cleared the words gate. Under 95% it names the options (a larger Whisper, a looser match).
 3. **The enrolment.** Replaces the demo's voiceprint (built from phone recordings) with one built from the
-   same browser-microphone path the login uses, and records what it was built from.
+   same browser-microphone path the login uses, and records what it was built from. It checks every clip against the others: if one is
+   not like the rest (a second voice in the room, a TV) it refuses and names it; listen to it, or re-run with `--drop-outliers`.
 4. **The preflight.** Fails loudly if the voice gate is off, the policy is damaged, or a synthetic stranger
    gets in. Then do one live read-through on the real microphone: nothing replaces it.
 
