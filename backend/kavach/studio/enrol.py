@@ -21,9 +21,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from ..audio import AudioError, load_audio
 from ..embedding import SpeakerTemplate
 from .store import StudioError, StudioStore
+
+#: A clip whose similarity to the centroid of all the OTHER clips is under this is not like the others:
+#: strangers score 0.1-0.25 on average and 0.5 at the extreme, and the owner's own clips in a noisy room
+#: stay well above 0.4. Below 0.30 it is more likely a second voice in the room, a TV, or garbage.
+OUTLIER_FLOOR = 0.30
 
 
 class EnrolError(RuntimeError):
@@ -49,6 +56,7 @@ def enrol_from_studio(
     *,
     embedder: Any,
     backup_dir: Path | str | None = None,
+    drop_outliers: bool = False,
 ) -> dict[str, Any]:
     """Replace `pseudonym`'s voice template with one built from the named Studio sessions."""
     if embedder is None:
@@ -65,6 +73,7 @@ def enrol_from_studio(
             raise EnrolError(f"session {s} has no clips")
 
     embeddings = []
+    kept_clips = []
     skipped = 0
     for c in chosen:
         try:
@@ -73,10 +82,33 @@ def enrol_from_studio(
             raise EnrolError(f"{exc} (hash check failed; nothing was changed)") from exc
         try:
             embeddings.append(embedder.embed(load_audio(path)))
+            kept_clips.append(c)
         except AudioError:
             skipped += 1
     if not embeddings:
         raise EnrolError("no clip could be embedded; nothing was changed")
+
+    # A second voice in the room, a TV, a garbage clip: one such clip in the template makes a stranger's
+    # voice partly match. Each clip is compared with the centroid of all the others.
+    dropped: list[str] = []
+    if len(embeddings) >= 4:
+        mat = np.array([e.vector for e in embeddings], dtype=float)
+        mat /= np.linalg.norm(mat, axis=1, keepdims=True)
+        odd = []
+        for i in range(len(mat)):
+            rest = np.delete(mat, i, axis=0).mean(axis=0)
+            if float(mat[i] @ (rest / np.linalg.norm(rest))) < OUTLIER_FLOOR:
+                odd.append(i)
+        if odd:
+            names = ", ".join(f"{kept_clips[i].clip_id} ({kept_clips[i].session_id})" for i in odd)
+            if not drop_outliers:
+                raise EnrolError(
+                    f"{len(odd)} clip(s) are not like the others and could be another voice: {names}. "
+                    "Nothing was changed. Listen to them, or re-run with --drop-outliers to leave them out."
+                )
+            dropped = [kept_clips[i].clip_id for i in odd]
+            embeddings = [e for i, e in enumerate(embeddings) if i not in set(odd)]
+            kept_clips = [c for i, c in enumerate(kept_clips) if i not in set(odd)]
 
     template = SpeakerTemplate.from_embeddings(speaker_id, embeddings)
     devices = sorted({c.device for c in chosen})
@@ -87,6 +119,7 @@ def enrol_from_studio(
         "environments": sorted({c.environment for c in chosen}),
         "n_clips": len(embeddings),
         "skipped_clips": skipped,
+        "dropped_clips": dropped,
         "built_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "self_consistency": round(template.self_consistency, 4),
     }
@@ -111,7 +144,7 @@ def enrol_from_studio(
 
     store.save_template(speaker_id, {**template.to_dict(), "provenance": provenance})
     return {"speaker_id": speaker_id, "n_clips": len(embeddings), "sessions": list(sessions), "devices": devices,
-            "skipped": skipped, "self_consistency": provenance["self_consistency"], "backup": backup}
+            "skipped": skipped, "dropped": dropped, "self_consistency": provenance["self_consistency"], "backup": backup}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -124,6 +157,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--sessions", required=True, help="comma-separated Studio sessions, e.g. S1,S2,S3")
     p.add_argument("--studio", type=Path, default=None, help="default: data/studio/<speaker>")
     p.add_argument("--no-backup", action="store_true")
+    p.add_argument("--drop-outliers", action="store_true", help="leave out clips that are not like the others (another voice?)")
     args = p.parse_args(argv)
 
     cfg = Settings()
@@ -133,7 +167,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         out = enrol_from_studio(
             store, studio, args.speaker, [s.strip() for s in args.sessions.split(",") if s.strip()],
-            embedder=embedder, backup_dir=None if args.no_backup else cfg.data_dir,
+            embedder=embedder, backup_dir=None if args.no_backup else cfg.data_dir, drop_outliers=args.drop_outliers,
         )
     except EnrolError as exc:
         print(f"refused: {exc}", file=sys.stderr)

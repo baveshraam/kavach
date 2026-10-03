@@ -30,8 +30,8 @@ class CountingEmbedder:
 
     def embed(self, audio):
         self.n += 1
-        v = np.zeros(192)
-        v[self.n % 192] = 1.0
+        v = np.ones(192)            # the same voice every time...
+        v[self.n % 192] += 0.5      # ...with a mark that says which clip this was
         return SpeakerEmbedding(v)
 
 
@@ -100,3 +100,45 @@ def test_no_embedder_means_no_enrolment(world):
     db, _, studio, _ = world
     with pytest.raises(EnrolError, match="embedder"):
         enrol_from_studio(db, studio, "S04", ["S1"], embedder=None)
+
+
+# ---- a second voice or a garbage clip must not poison the template --------------------------------
+
+
+class OutlierEmbedder:
+    """Every clip is the owner (a vector near `base`) except the ones listed, which are someone else."""
+
+    def __init__(self, odd):
+        self.n = 0
+        self.odd = set(odd)
+        rng = np.random.default_rng(0)
+        self.base = rng.standard_normal(192)
+        self.other = rng.standard_normal(192)
+
+    def embed(self, audio):
+        self.n += 1
+        rng = np.random.default_rng(self.n)
+        v = (self.other if self.n in self.odd else self.base) + 0.2 * rng.standard_normal(192)
+        return SpeakerEmbedding(v)
+
+
+def test_a_clip_that_is_not_the_owner_blocks_the_enrolment_and_is_named(world):
+    db, sid, studio, _ = world
+    with pytest.raises(EnrolError, match="not like the others") as exc:
+        enrol_from_studio(db, studio, "S04", ["S1", "S2", "S3"], embedder=OutlierEmbedder(odd={4}))
+    assert "--drop-outliers" in str(exc.value)
+    assert db.load_template(sid) is None
+
+
+def test_with_drop_outliers_the_odd_clip_is_left_out_and_reported(world):
+    db, sid, studio, _ = world
+    out = enrol_from_studio(db, studio, "S04", ["S1", "S2", "S3"], embedder=OutlierEmbedder(odd={4}), drop_outliers=True)
+    assert out["n_clips"] == 6 and len(out["dropped"]) == 1
+    assert len(db.load_template(sid)["embeddings"]) == 6
+    assert db.load_template(sid)["provenance"]["dropped_clips"] == out["dropped"]
+
+
+def test_a_clean_set_drops_nothing(world):
+    db, sid, studio, _ = world
+    out = enrol_from_studio(db, studio, "S04", ["S1", "S2", "S3"], embedder=OutlierEmbedder(odd=set()))
+    assert out["dropped"] == [] and out["n_clips"] == 7
