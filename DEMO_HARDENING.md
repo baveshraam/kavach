@@ -154,12 +154,46 @@ This file is the memory of the pass. Read it top to bottom to resume.
   an anti-spoofing model or a secret the cloner lacks (the personal question) would. Not claimed.
 - The CSBG is a coin flip on free speech (50% EER). It is shown, never decisive.
 
-## 5. Open work (ordered)
+## 5. Where this leaves the app: the pivot
 
-1. Calibrate the voice threshold and grey band on the presenter's held-out sessions + cohorts.
-2. Channel and noise robustness of the voice gate (opus codec, noise, reverb) on the cohorts.
-3. Enrol-from-Studio tool; calibrated policy file loaded by the pipeline.
-4. Second-voice (interruption) guard.
-5. Stage-mode UI: one screen, big button, phrase on screen, clear verdicts, judge mode.
-6. Real-model rehearsal with synthetic voices (TTS) through the browser path; preflight for phrase mode.
-7. Final write-up: what changed, the numbers, the drills, what is still blocked on the presenter.
+**Before:** a research system whose login averaged three factors (voice 0.4, code-switch graph 0.3, personal answer
+0.3). Measured honestly, the code-switch graph is a coin flip on free speech (50% EER), the answer to a personal
+question is not a secret in a room, and the average let either outvote the voice. It could not be defended against a
+judge, and a re-recorded replay passed it.
+
+**After:** a gated login. A recording is accepted only if every gate passes: a live, unused challenge; an untouched
+recording; ten random words said now, in order; and the enrolled voice, judged on the stretch where the words were
+spoken, at a threshold measured on the presenter's own sessions. The personal question and the code-switch graph
+remain, as the stronger step-up and as the research contribution, but they no longer decide who gets in. This is a
+change in what carries the security claim, not a rewrite: the research core (CSBG, SKG, attack bank, evaluation) is
+untouched, and `FusionPolicy()` still averages for the ablations.
+
+**What the demo can now honestly claim:** one enrolled speaker, evaluated on sessions never used to enrol; strangers
+(public speech corpora and the corpus speakers) were refused at the measured rate with its interval; a replay, a
+wrong voice that knows the words, and a hammering judge were each refused for a stated reason. **What it cannot claim:**
+that it works for people in general; that a same-room, same-microphone stranger scores like a studio recording; that a
+live voice clone saying the shown words is stopped (the personal question is the only defence here).
+
+**What is still unproven, and only the presenter can close it:** the owner's own score distribution on the demo laptop,
+across sessions, devices and a noisy room (everything above used synthetic voices for the plumbing and public speech
+for the statistics). `run_after_recording.ps1` turns the recordings into the evidence report, the words check, the
+measured threshold and the enrolment, in that order.
+
+## 6. Status of the work list
+
+Done and tested: the voice gate (R1), the phrase login (R2), the throttle (R3), public cohorts as code (R4,
+`kavach.cohort`), the span (R5), the measured threshold and policy file (R6), the Studio `words` kind and the
+four-step chain (R7), the preflight (R8), ten words (R10), the Unlock screen with its evidence card, the step-up,
+outlier protection in enrolment, real-model rehearsal and browser end-to-end with synthetic voices, room and codec
+robustness on real speech.
+
+Open, in order:
+
+1. **The presenter's Studio sessions, then `run_after_recording.ps1`.** Everything numeric about *the owner* waits on
+   this; the threshold in force until then is the default 0.62, and the screen and the preflight say so.
+2. One live read-through on the real microphone in the presenter's room.
+3. Decide, from `words_check`, whether the words gate needs a larger Whisper or a looser match (6 of 10 now).
+4. Optional: enrol with noise and echo augmentation (tested on public speech, see the log below if it ran),
+   a code-switched phrase style, a second-voice guard (messaging only), anti-spoofing (not claimed).
+5. An independent review of this branch (`/code-review`): this pass reviewed its own work and found and fixed one real
+   bug that way (the fused threshold leaking into phrase logins), which is a reason to want another pair of eyes.
