@@ -177,3 +177,33 @@ def test_the_provenance_block_reports_the_threshold_actually_in_force(store, set
     rep = TestClient(app).get("/api/health").json()["reportable"]
     assert rep["speaker_threshold"] == pytest.approx(0.71)
     assert rep["voice_grey_margin"] == pytest.approx(0.06)
+
+
+class TestPhraseDecisionFollowsTheVoiceThresholdAlone:
+    """In a phrase login the voice is the only weighted branch, so the decision must be exactly the voice
+    zones. The generic fused threshold (0.55 +/- 0.05) used to leak in: a calibrated threshold of 0.58
+    turned a voice of 0.59, which passed, into BORDERLINE."""
+
+    def run(self, store, settings, speaker, tmp_path, threshold, margin, cosine):
+        from kavach.api.app import create_app, get_pipeline, get_settings, get_store
+        from kavach.api.pipeline import Pipeline
+        from test_phrase_login import ExplodingLID
+        (Path(settings.data_dir) / "voice_policy.json").write_text(
+            json.dumps({"threshold": threshold, "grey_margin": margin, "provisional": False}), encoding="utf-8")
+        p = Pipeline(store, settings)
+        p._lid = ExplodingLID()
+        app = create_app(settings)
+        app.dependency_overrides[get_store] = lambda: store
+        app.dependency_overrides[get_pipeline] = lambda: p
+        app.dependency_overrides[get_settings] = lambda: settings
+        c = TestClient(app)
+        ch = issue(c, speaker)
+        r, _ = login(c, p, tmp_path, ch, heard=" ".join(ch["phrase"]), cosine=cosine)
+        return r["decision"]
+
+    def test_a_voice_just_over_a_low_calibrated_threshold_is_accepted(self, store, settings, speaker, tmp_path):
+        assert self.run(store, settings, speaker, tmp_path, 0.58, 0.05, 0.59) == "ACCEPT"
+
+    def test_a_voice_at_the_default_fused_threshold_does_not_decide_anything(self, store, settings, speaker, tmp_path):
+        assert self.run(store, settings, speaker, tmp_path, 0.75, 0.05, 0.72) == "BORDERLINE"   # in the band: asked once more
+        assert self.run(store, settings, speaker, tmp_path, 0.75, 0.05, 0.55) == "REJECT"       # under the floor, though over 0.55

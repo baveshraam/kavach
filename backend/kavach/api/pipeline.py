@@ -1032,7 +1032,7 @@ class Pipeline:
             voice_audio, span_note = self._phrase_span_audio(audio, match.span_ms)
 
         branches.append(self._speaker_branch(challenge.speaker_id, voice_audio, notes, detail_suffix=span_note))
-        result = fuse(branches, self._policy(strict_voice=challenge.strict_voice))
+        result = fuse(branches, self._policy(strict_voice=challenge.strict_voice, phrase=True))
         return VerificationOutcome(
             fusion=result,
             annotation=annotation,
@@ -1066,11 +1066,14 @@ class Pipeline:
             f"; scored on the {end - start:.1f} s span where the shown words were spoken ({start:.1f}-{end:.1f} s of {audio.duration_sec:.1f} s)",
         )
 
-    def _policy(self, *, strict_voice: bool = False) -> FusionPolicy:
+    def _policy(self, *, strict_voice: bool = False, phrase: bool = False) -> FusionPolicy:
         """Fusion policy from settings.
 
         `strict_voice` is a step-up challenge: the voice must pass outright, so the
-        inconclusive band is closed.
+        inconclusive band is closed. `phrase` is a read-these-words login, where the voice is the only
+        weighted branch: the decision is then exactly the voice zones, so the generic fused threshold and
+        its borderline margin (0.55 +/- 0.05) must not decide anything -- with a calibrated threshold of
+        0.58 they turned a passing voice of 0.59 into BORDERLINE.
 
         The weights and the veto floor are `FusionPolicy`'s defaults, which are
         reasoned starting points rather than fitted values -- `eval.ablation`
@@ -1078,8 +1081,8 @@ class Pipeline:
         reports.
         """
         policy = FusionPolicy(
-            threshold=self.settings.fused_threshold,
-            borderline_margin=self.settings.borderline_margin,
+            threshold=self.voice_threshold if phrase else self.settings.fused_threshold,
+            borderline_margin=0.0 if phrase else self.settings.borderline_margin,
             voice_gate=self.settings.voice_gate,
             voice_grey_margin=0.0 if strict_voice else self.voice_grey_margin,
         )
