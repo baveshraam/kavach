@@ -8,7 +8,7 @@
 #   2. single enrolee      leave-one-sitting-out study per model, plus the whole-clip probe run                         -> paper\results_poc\
 #   3. population          many-enrollee LibriSpeech benchmark per model                                                -> paper\results_population\
 #   4. synthetic voices    kNN-VC clones of the presenter from their OWN recordings + text-to-speech, scored per model   (GPU) -> paper\results_spoof\
-#   5. the paper           numbers, tables, figures, then tectonic compiles paper\ieee\main.pdf
+#   5. the paper           numbers, tables, figures, then tectonic compiles paper\ieee\main.pdf and the project report paper\report\main.pdf
 # The laptop is also the training machine: this checks the GPU and running python first. The only voice ever cloned is the presenter's own
 # (KAVACH_CLONE_VICTIMS is set to S04 for step 4 only; the presenter asked for this evaluation).
 param(
@@ -83,5 +83,8 @@ if (-not $PaperOnly) {
 
 Step "paper: numbers, tables, figures" { & $py -m kavach.eval.paper_build }
 Step "paper: compile paper\ieee\main.pdf" { Push-Location paper\ieee; try { tectonic main.tex } finally { Pop-Location } }
+if (Test-Path paper\report\main.tex) {
+    Step "project report: compile paper\report\main.pdf" { Push-Location paper\report; try { tectonic main.tex } finally { Pop-Location } }
+}
 Write-Host ""
-Write-Host "Done. Open paper\ieee\main.pdf. Every number in it is a macro from paper\ieee\generated\numbers.tex." -ForegroundColor Green
+Write-Host "Done. Open paper\ieee\main.pdf (the IEEE paper) and paper\report\main.pdf (the project report). Every number in them is a macro from paper\ieee\generated\numbers.tex." -ForegroundColor Green

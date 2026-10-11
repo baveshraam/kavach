@@ -57,6 +57,8 @@ def load_all(paper: Path) -> dict[str, Any]:
         d["pop"][e] = _load(paper / "results_population" / e / "results.json", f"run `kavach.eval.population_run --embedder {e}`")
         d["spoof"][e] = _load(paper / "results_spoof" / e / "results.json", f"run `kavach.eval.spoof_run score --embedder {e}`")
     d["whole"] = _load(paper / "results_poc_whole" / "ecapa" / "results.json", "run `kavach.eval.poc_run --probe-seconds 0 --out paper/results_poc_whole/ecapa`")
+    # the earlier code-switch-graph evaluation on the pilot corpus (tracked in the repository; exploratory, never the headline)
+    d["csbg"] = _load(paper / "results" / "results.json", "it is the tracked output of `kavach.experiments`")
     return d
 
 
@@ -196,6 +198,23 @@ def macros(d: dict[str, Any]) -> dict[str, str]:
         m[f"{pre}Sel"] = s["selected"].replace("_", "+")
 
     w = d["whole"]["variants"]["baseline"]["test"]
+    cs = d["csbg"]
+    cfg = {c["name"]: c for c in cs["configurations"]}
+    m["csbgSpeakers"] = str(cs["corpus"]["n_speakers"])
+    m["csbgUtterances"] = str(cs["corpus"]["n_utterances"])
+    m["csbgTokens"] = str(cs["coverage"]["total_tokens"])
+    m["csbgChoiceTokens"] = str(cs["coverage"]["total_choice_tokens"])
+    m["csbgTestSpeakers"] = str(len(cs["split"]["test_speakers"]))
+    m["csbgDevSpeakers"] = str(len(cs["split"]["dev_speakers"]))
+    m["csbgNGen"] = str(cfg["CSBG alone"]["n_genuine"])
+    m["csbgNImp"] = str(cfg["CSBG alone"]["n_impostor"])
+    m["csbgVetoed"] = str(cfg["CSBG alone"]["n_vetoed"])
+    m["csbgEer"] = pct(cfg["CSBG alone"]["eer"]) + "\\%"
+    m["csbgEerLo"] = pct(cfg["CSBG alone"]["eer_ci"][0]) + "\\%"
+    m["csbgEerHi"] = pct(cfg["CSBG alone"]["eer_ci"][1]) + "\\%"
+    m["csbgAuc"] = num(cfg["CSBG alone"]["auc"], 3)
+    m["csbgVoiceEer"] = pct(cfg["ECAPA alone"]["eer"]) + "\\%"
+    m["csbgFusedEer"] = pct(cfg["+ CSBG only"]["eer"]) + "\\%"
     m["wholeBaseEer"] = pct(w["eer"]) + "\\%"
     m["wholeBaseEerHi"] = pct(w["eer_interval"][1]) + "\\%"
     m["wholeGap"] = f"{w['gap']:+.3f}".replace("-", "$-$")
@@ -378,6 +397,38 @@ def write_figures(d: dict[str, Any], paper: Path, out: Path) -> None:
     fig.tight_layout(); save(fig, out / "fig_det"); close(fig)
 
 
+def write_pipeline_figure(out: Path) -> None:
+    """The login as built: a row of gates, each able to refuse. Drawn here so the diagram can never disagree with a stale picture."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    from .figures import INK, _new, close, save
+
+    fig, ax = _new((7.0, 2.1))
+    ax.set_axis_off()
+    ax.grid(False)
+    steps = [("1  Challenge", "ten random words\nsingle use, 60 s"), ("2  Liveness", "challenge known,\nunused, unexpired"),
+             ("3  Integrity", "not a copy of a\nstored recording"), ("4  Words", "speech recognition:\n6 of 10, in order"),
+             ("5  Voice", "ECAPA cosine vs\nenrolled template"), ("6  Decision", "accept / borderline\n/ refuse")]
+    w, gap = 1.22, 0.14
+    for i, (head, body) in enumerate(steps):
+        x = i * (w + gap)
+        ax.add_patch(matplotlib.patches.FancyBboxPatch((x, 0.9), w, 0.95, boxstyle="round,pad=0.02", fc="#f2f2f2", ec=INK[1], lw=0.8))
+        ax.text(x + w / 2, 1.58, head, ha="center", va="center", fontsize=7, fontweight="bold")
+        ax.text(x + w / 2, 1.2, body, ha="center", va="center", fontsize=5.4)
+        if i < len(steps) - 1:
+            ax.annotate("", xy=(x + w + gap, 1.37), xytext=(x + w, 1.37), arrowprops=dict(arrowstyle="->", color=INK[1], lw=0.9))
+        if 1 <= i <= 4:
+            ax.annotate("", xy=(x + w / 2, 0.42), xytext=(x + w / 2, 0.9), arrowprops=dict(arrowstyle="->", color="#8a4b2f", lw=0.8))
+    total = len(steps) * (w + gap) - gap
+    ax.add_patch(matplotlib.patches.FancyBboxPatch((1 * (w + gap), 0.05), 4 * w + 3 * gap, 0.37, boxstyle="round,pad=0.02", fc="#ffffff", ec="#8a4b2f", lw=0.8))
+    ax.text(1 * (w + gap) + (4 * w + 3 * gap) / 2, 0.235, "any failed gate: refuse; the next attempts at that account wait 5, 10, 20, then 30 s", ha="center", va="center", fontsize=5.8, color="#8a4b2f")
+    ax.set_xlim(-0.05, total + 0.05)
+    ax.set_ylim(0, 2.0)
+    save(fig, out / "fig_pipeline")
+    close(fig)
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse
 
@@ -391,6 +442,7 @@ def main(argv: list[str] | None = None) -> int:
         write_macros(macros(d), out / "numbers.tex")
         write_tables(d, out)
         write_figures(d, args.paper, out)
+        write_pipeline_figure(out)
     except BuildError as exc:
         print(f"refused: {exc}", file=sys.stderr)
         return 2
