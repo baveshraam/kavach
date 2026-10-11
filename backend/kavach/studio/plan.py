@@ -55,12 +55,17 @@ RECIPES: dict[str, Recipe] = {
 }
 DEFAULT_RECIPE = Recipe(read=10, free=1, fact=3, words=8)
 
+#: The quick plan (`Settings.studio_voice_only`): ten-word clips only, the Unlock login's own task. About
+#: 4 minutes of speech per sitting; the held-out sittings (S4, S5) are as big as the enrolling ones.
+VOICE_ONLY_WORDS: dict[str, int] = {"S1": 30, "S2": 30, "S3": 25, "S4": 25, "S5": 25}
+DEFAULT_VOICE_ONLY_WORDS = 20
+
 #: (prompt_id, Tamil-script text with English words, English gloss)
 DEMO_SENTENCES: tuple[tuple[str, str, str], ...] = (
-    ("demo1", "நாளைக்கு காலையில meeting இருக்கு, அதனால நான் seven மணிக்கே கிளம்பிடுவேன்.",
-     "I have a meeting tomorrow morning, so I'll leave by seven."),
-    ("demo2", "என் phone-ல battery கம்மியா இருக்கு, charger எடுத்துட்டு வந்தீங்களா?",
-     "My phone's battery is low; did you bring the charger?"),
+    ("demo1", "நாளைக்கு காலையில seven o'clock-க்கு meeting இருக்கு, so நான் சீக்கிரமே கிளம்பிடுவேன்.",
+     "I have a meeting at seven o'clock tomorrow morning, so I'll leave early."),
+    ("demo2", "இந்த bag how much? two hundred rupees-ஆ, கொஞ்சம் குறைச்சுக்கோங்க.",
+     "How much is this bag? Two hundred rupees? Please reduce it a little."),
     ("demo3", "இந்த weekend எங்க ஊருக்கு போறேன், train ticket நேத்தே book பண்ணிட்டேன்.",
      "I'm going to my hometown this weekend; I booked the train ticket yesterday."),
 )
@@ -94,7 +99,10 @@ def build_plan(
     sentences: Sequence[tuple[str, str, str]] = DEMO_SENTENCES,
     *,
     phrase_words: int = DEFAULT_PHRASE_WORDS,
+    voice_only: bool = False,
 ) -> list[PlanItem]:
+    if voice_only:
+        return words_items(session_id, VOICE_ONLY_WORDS.get(session_id, DEFAULT_VOICE_ONLY_WORDS), phrase_words)
     r = RECIPES.get(session_id, DEFAULT_RECIPE)
     items = [PlanItem("read", pid, en, ta, r.read) for pid, ta, en in sentences]
     items += [PlanItem("free", p.prompt_id, p.text_en, p.text_ta, r.free) for p in PROTOCOL_V1]

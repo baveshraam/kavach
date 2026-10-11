@@ -10,6 +10,7 @@ import { AttackLab } from './pages/AttackLab';
 import { Evaluation } from './pages/Evaluation';
 import { Corpus } from './pages/Corpus';
 import { Studio } from './pages/Studio';
+import { Dataset } from './pages/Dataset';
 import { Unlock } from './pages/Unlock';
 
 const queryClient = new QueryClient({
@@ -37,6 +38,7 @@ export default function App() {
             <Route path="evaluation" element={<Evaluation />} />
             <Route path="corpus" element={<Corpus />} />
             <Route path="studio" element={<Studio />} />
+            <Route path="dataset" element={<Dataset />} />
           </Route>
         </Routes>
       </BrowserRouter>

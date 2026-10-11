@@ -1,4 +1,4 @@
-import { AuthResult, Challenge, Voiceprint, VoiceEvidence, CloneBankInfo, CloneMatch, CSBG, StudioPlan, StudioSummary, EvalMetrics, Speaker, Utterance, Triple, AttackRun, AttackType, PerSpeakerIapmr, OfflineRun } from './types';
+import { AuthResult, Challenge, Voiceprint, VoiceEvidence, CloneBankInfo, CloneMatch, CSBG, StudioPlan, StudioSummary, DatasetSummary, StudioCheck, EvalMetrics, Speaker, Utterance, Triple, AttackRun, AttackType, PerSpeakerIapmr, OfflineRun } from './types';
 import { mockSpeakers, mockUtterances, mockTriples, mockCSBG, mockAuthResults, mockAttacks, mockEvalMetrics } from './mock';
 
 // @ts-ignore
@@ -57,6 +57,14 @@ export const apiClient = {
     return fetchApi('/api/studio/clips', { method: 'POST', body: f });
   },
 
+  studioCheck: async (v: { speaker: string; words: string[]; blob: Blob; filename?: string }): Promise<StudioCheck> => {
+    if (USE_MOCK) throw new Error('The Studio needs the real backend.');
+    const f = new FormData();
+    f.append('audio', v.blob, v.filename ?? 'clip.webm');
+    f.append('speaker', v.speaker); f.append('words', v.words.join(','));
+    return fetchApi('/api/studio/check', { method: 'POST', body: f });
+  },
+
   /** What the clone bank can answer (demo builds only; 404 otherwise). */
   cloneBankInfo: async (): Promise<CloneBankInfo> => {
     if (USE_MOCK) throw new Error('The clone bank needs the real backend.');
@@ -71,6 +79,11 @@ export const apiClient = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ challengeId }),
     });
+  },
+
+  dataset: async (): Promise<DatasetSummary> => {
+    if (USE_MOCK) throw new Error('The dataset page needs the real backend.');
+    return fetchApi('/api/dataset');
   },
 
   getSpeakers: async (): Promise<Speaker[]> => {

@@ -120,6 +120,10 @@ class VerificationOutcome:
     """The `PhraseMatch` of a phrase challenge (which shown words were heard), else None."""
 
 
+#: A phrase login with no claimed identity: the voice itself says who is speaking. See `Pipeline._identify`.
+ANONYMOUS_ID = "anonymous"
+
+
 class Pipeline:
     """Holds the models and runs enrolment and verification.
 
@@ -771,16 +775,20 @@ class Pipeline:
         be read, a dead challenge or a missing model say nothing about who was speaking, so
         they must not slow the owner down.
         """
+        pending = self.ledger.get(challenge_id)
         outcome = self._verify(challenge_id, audio_bytes, extension=extension)
         measured = any(
             b.branch is Branch.SPEAKER and b.available for b in outcome.fusion.branches
         )
-        if outcome.speaker_id and measured:
-            self.throttle.record(outcome.speaker_id, accepted=outcome.fusion.accepted)
+        # An anonymous login is throttled as one identity: a stranger's failures slow the next
+        # attempt whoever makes it, and the owner's success clears them.
+        key = pending.speaker_id if pending is not None else outcome.speaker_id
+        if key and measured:
+            self.throttle.record(key, accepted=outcome.fusion.accepted)
             if outcome.fusion.decision is Decision.BORDERLINE:
-                self._step_up[outcome.speaker_id] = time.monotonic()
+                self._step_up[key] = time.monotonic()
             else:
-                self._step_up.pop(outcome.speaker_id, None)
+                self._step_up.pop(key, None)
         return outcome
 
     def _verify(self, challenge_id: str, audio_bytes: bytes, *, extension: str) -> VerificationOutcome:
@@ -1031,13 +1039,17 @@ class Pipeline:
             )
             voice_audio, span_note = self._phrase_span_audio(audio, match.span_ms)
 
-        branches.append(self._speaker_branch(challenge.speaker_id, voice_audio, notes, detail_suffix=span_note))
+        speaker_id = challenge.speaker_id
+        if speaker_id == ANONYMOUS_ID:
+            speaker_id = self._identify(voice_audio)
+            notes.append(f"Identified by voice as {speaker_id!r}." if speaker_id else "No enrolled account matched the voice.")
+        branches.append(self._speaker_branch(speaker_id, voice_audio, notes, detail_suffix=span_note))
         result = fuse(branches, self._policy(strict_voice=challenge.strict_voice, phrase=True))
         return VerificationOutcome(
             fusion=result,
             annotation=annotation,
             csbg_score=None,
-            speaker_id=challenge.speaker_id,
+            speaker_id=speaker_id,
             challenge_id=challenge.id,
             latency_ms=int((time.perf_counter() - started) * 1000),
             notes=notes,
@@ -1092,6 +1104,32 @@ class Pipeline:
             # `Settings.csbg_veto_enabled`.
             policy.veto_thresholds = {}
         return policy
+
+    def _identify(self, audio: Audio) -> str:
+        """Which enrolled account does this voice sound most like? "" when there is none to compare.
+
+        Only accounts enrolled from Studio sessions (the demo laptop's own microphone path) are
+        candidates: the voice threshold was measured for that path, and the pilot speakers'
+        phone-built templates were not, so letting them compete would multiply the false-accept
+        chances by a threshold nobody calibrated. The best candidate still has to pass the same
+        voice gate as a claimed identity; this only names who to test.
+        """
+        embedder = self.embedder
+        if embedder is None:
+            return ""
+        try:
+            probe = embedder.embed(audio)
+        except (AudioError, ValueError):
+            return ""
+        best, best_score = "", float("-inf")
+        for row in self.store.list_speakers():
+            payload = self.store.load_template(row["id"])
+            if not payload or (payload.get("provenance") or {}).get("source") != "studio":
+                continue
+            score = SpeakerTemplate.from_dict(payload).score(probe)
+            if score > best_score:
+                best, best_score = row["id"], score
+        return best
 
     def _speaker_branch(
         self, speaker_id: str, audio: Audio, notes: list[str], *, detail_suffix: str = ""

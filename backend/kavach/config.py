@@ -324,6 +324,10 @@ class Settings(BaseSettings):
     **Off by default and never turned on by the demo build.** Recording is a deliberate act: a separate
     switch (`run_studio.ps1`) enables it. `/api/health` reports the flag."""
 
+    studio_voice_only: bool = False
+    """The Studio offers only ten-word clips (the Unlock login's own task), about 4 minutes a sitting, instead of
+    the full three-hour plan. Set by `run_studio.ps1 -VoiceOnly`; the threshold and the voiceprint need nothing more."""
+
     studio_speakers: list[str] = Field(default_factory=list)
     """Corpus pseudonyms the Studio may record. **Empty: nobody.** Fail closed, like `clone_victims`."""
 

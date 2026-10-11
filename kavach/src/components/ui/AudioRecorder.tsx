@@ -1,3 +1,4 @@
+import { MIC_CONSTRAINTS, RECORDER_OPTIONS } from '../../lib/mic';
 import { useState, useRef, useEffect } from 'react';
 import { cn, Button } from './kit';
 import { Mic, Square, RotateCcw, Check, Upload, FileAudio } from 'lucide-react';
@@ -50,7 +51,7 @@ export function AudioRecorder({ onRecordingComplete, onAccept, allowUpload, acce
 
   const startRecording = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS);
       audioContext.current = new AudioContext();
       const source = audioContext.current.createMediaStreamSource(stream);
       analyser.current = audioContext.current.createAnalyser();
@@ -58,7 +59,7 @@ export function AudioRecorder({ onRecordingComplete, onAccept, allowUpload, acce
       source.connect(analyser.current);
       dataArray.current = new Uint8Array(analyser.current.fftSize);
 
-      mediaRecorder.current = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+      mediaRecorder.current = new MediaRecorder(stream, RECORDER_OPTIONS);
       chunks.current = [];
       mediaRecorder.current.ondataavailable = e => { if (e.data.size > 0) chunks.current.push(e.data); };
       mediaRecorder.current.onstop = () => {

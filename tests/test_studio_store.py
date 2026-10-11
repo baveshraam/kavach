@@ -183,3 +183,12 @@ def test_a_wav_changed_after_it_was_indexed_is_not_trusted(tmp_path) -> None:
     s.wav_path(rec).unlink()
     with pytest.raises(StudioError, match="missing"):
         s.verified_wav_path(rec)
+
+
+def test_a_correction_relabels_a_clip_without_touching_the_index(tmp_path) -> None:
+    s = store(tmp_path)
+    rec = s.add_clip(audio=tone(seconds=2.0), **{**KW, "kind": "free"})
+    before = s.index_path.read_bytes()
+    (s.root / "corrections.jsonl").write_text(json.dumps({"clip_id": rec.clip_id, "kind": "read_prompt"}) + "\n", encoding="utf-8")
+    assert [c.kind for c in s.clips()] == ["read_prompt"]
+    assert s.index_path.read_bytes() == before

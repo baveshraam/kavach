@@ -41,12 +41,13 @@ from ..studio.plan import build_plan, estimate_minutes
 from ..studio.store import DEVICES, ENVIRONMENTS, MAX_UPLOAD_BYTES, StudioError, StudioStore
 from ..audio import AudioError, decode_bytes, warm_resample
 from ..challenge import ChallengeError
+from ..phrase import match_phrase
 from ..config import Settings, get_settings
 from ..csbg.metrics import compute_all_metrics
 from . import converters as conv
 from . import schemas
 from .attacks import run_attack
-from .pipeline import Pipeline
+from .pipeline import ANONYMOUS_ID, Pipeline
 from .store import Store, StoreError
 
 _store: Store | None = None
@@ -191,6 +192,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/speakers", response_model=list[schemas.Speaker])
     def list_speakers(store: StoreDep, pipeline: PipelineDep) -> list[schemas.Speaker]:
         return [_speaker(store, pipeline, row) for row in store.list_speakers()]
+
+    @app.get("/api/dataset")
+    def dataset(store: StoreDep, cfg: SettingsDep) -> dict[str, Any]:
+        """Clips per person, for the Dataset page: the pilot corpus and, where a person has one, their Studio sittings.
+
+        Read-only and independent of `studio_enabled`: it only counts what is already on disk.
+        """
+        rows = []
+        for row in store.list_speakers():
+            pseudonym = row["display_name"].split(" · ")[0].strip()
+            studio = cfg.data_dir / "studio" / pseudonym
+            clips = StudioStore(studio, pseudonym).clips() if (studio / "index.jsonl").exists() else []
+            by_session: dict[str, int] = {}
+            by_kind: dict[str, int] = {}
+            for c in clips:
+                by_session[c.session_id] = by_session.get(c.session_id, 0) + 1
+                by_kind[c.kind] = by_kind.get(c.kind, 0) + 1
+            rows.append({
+                "id": row["id"], "name": row["display_name"], "pseudonym": pseudonym,
+                "pilotClips": len(store.list_utterances(row["id"])),
+                "studioClips": len(clips), "studioBySession": dict(sorted(by_session.items())), "studioByKind": by_kind,
+            })
+        rows.sort(key=lambda r: r["pseudonym"])
+        return {"speakers": rows, "totalClips": sum(r["pilotClips"] + r["studioClips"] for r in rows)}
 
     @app.get("/api/speakers/{speaker_id}", response_model=schemas.Speaker)
     def get_speaker(
@@ -456,7 +481,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             facts = list(store.get_skg(resolve_speaker_id(store.list_speakers(), speaker)))
         except BankError:
             facts = []
-        items = build_plan(session_id, facts, phrase_words=cfg.phrase_words)
+        items = build_plan(session_id, facts, phrase_words=cfg.phrase_words, voice_only=cfg.studio_voice_only)
         return {
             "speaker": speaker,
             "sessionId": session_id,
@@ -509,6 +534,53 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except StudioError as exc:
             raise HTTPException(422, str(exc)) from exc
         return {"clip": record.to_dict(), "summary": studio.summary()}
+
+    @app.post("/api/studio/check")
+    async def studio_check(
+        cfg: SettingsDep,
+        pipeline: PipelineDep,
+        audio: Annotated[UploadFile, File()],
+        speaker: Annotated[str, Form()],
+        words: Annotated[str, Form()],
+    ) -> dict[str, Any]:
+        """Were the shown words said? The recording is transcribed the way the login does it and nothing is saved.
+
+        `words` is the comma-separated list on screen. Without speech recognition this still answers 200
+        (`available: false`), so a recording session is never blocked by a missing model.
+        """
+        _studio(cfg, speaker)
+        expected = [w.strip().lower() for w in words.split(",") if w.strip()]
+        if not expected:
+            raise HTTPException(422, "No words to check against.")
+        raw = await audio.read()
+        if len(raw) > MAX_UPLOAD_BYTES:
+            raise HTTPException(413, f"That upload is over {MAX_UPLOAD_BYTES // (1024 * 1024)} MB; a recording this long was not intended.")
+        if not raw:
+            raise HTTPException(400, "The uploaded audio is empty.")
+        suffix = Path(audio.filename or "clip.webm").suffix or ".webm"
+
+        def work() -> dict[str, Any]:
+            asr = pipeline.asr
+            if asr is None:
+                reason = pipeline._failed.get("asr", "speech recognition is not available")
+                return {"available": False, "ok": None, "reason": reason}
+            clip = decode_bytes(raw, suffix=suffix)
+            transcript = asr.transcribe(clip, language="en", initial_prompt="", fast=cfg.live_fast_asr)
+            match = match_phrase(expected, transcript.text, words=transcript.words)
+            return {
+                "available": True,
+                "ok": match.score >= cfg.phrase_min_match,
+                "matched": match.matched,
+                "total": match.total,
+                "matchedWords": list(match.matched_words),
+                "missingWords": list(match.missing_words),
+                "heard": transcript.text.strip(),
+            }
+
+        try:
+            return await run_in_threadpool(work)
+        except AudioError as exc:
+            raise HTTPException(400, str(exc)) from exc
 
     # ------------------------------------------------------------ clone bank
 
@@ -628,7 +700,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         cfg: SettingsDep,
     ) -> schemas.Challenge:
         """Issue a single-use, expiring, adaptively-targeted challenge."""
-        _require_speaker(store, payload.speaker_id)
+        if not (payload.kind == "phrase" and payload.speaker_id == ANONYMOUS_ID):
+            _require_speaker(store, payload.speaker_id)
         wait = pipeline.throttle.wait_seconds(payload.speaker_id)
         if wait > 0:
             seconds = max(1, math.ceil(wait))

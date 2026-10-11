@@ -57,6 +57,7 @@ def enrol_from_studio(
     embedder: Any,
     backup_dir: Path | str | None = None,
     drop_outliers: bool = False,
+    kind: str | None = None,
 ) -> dict[str, Any]:
     """Replace `pseudonym`'s voice template with one built from the named Studio sessions."""
     if embedder is None:
@@ -67,10 +68,10 @@ def enrol_from_studio(
         clips = studio.clips()
     except StudioError as exc:
         raise EnrolError(str(exc)) from exc
-    chosen = [c for c in clips if c.session_id in set(sessions)]
+    chosen = [c for c in clips if c.session_id in set(sessions) and (kind is None or c.kind == kind)]
     for s in sessions:
         if not any(c.session_id == s for c in chosen):
-            raise EnrolError(f"session {s} has no clips")
+            raise EnrolError(f"session {s} has no {kind or ''} clips".replace("  ", " "))
 
     embeddings = []
     kept_clips = []
@@ -156,6 +157,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--speaker", required=True, help="corpus pseudonym, e.g. S04")
     p.add_argument("--sessions", required=True, help="comma-separated Studio sessions, e.g. S1,S2,S3")
     p.add_argument("--studio", type=Path, default=None, help="default: data/studio/<speaker>")
+    p.add_argument("--kind", default=None, help="enrol from this clip kind only, e.g. words (the login's own task)")
     p.add_argument("--no-backup", action="store_true")
     p.add_argument("--drop-outliers", action="store_true", help="leave out clips that are not like the others (another voice?)")
     args = p.parse_args(argv)
@@ -167,7 +169,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         out = enrol_from_studio(
             store, studio, args.speaker, [s.strip() for s in args.sessions.split(",") if s.strip()],
-            embedder=embedder, backup_dir=None if args.no_backup else cfg.data_dir, drop_outliers=args.drop_outliers,
+            embedder=embedder, backup_dir=None if args.no_backup else cfg.data_dir, drop_outliers=args.drop_outliers, kind=args.kind,
         )
     except EnrolError as exc:
         print(f"refused: {exc}", file=sys.stderr)

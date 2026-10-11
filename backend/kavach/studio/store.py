@@ -25,7 +25,7 @@ import os
 import re
 import threading
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -37,6 +37,11 @@ KINDS = ("read", "free", "fact", "words")
 DEVICES = ("DEMO_LAPTOP_MIC", "PHONE", "HEADSET", "OTHER")
 ENVIRONMENTS = tuple(e.value for e in Environment)
 INDEX_FILE = "index.jsonl"
+#: Append-only relabels, `{"clip_id", "kind", "reason"}` per line, applied by `clips()`. The index itself is
+#: never rewritten; this is how a mislabelled clip (e.g. a question read aloud instead of answered) is
+#: corrected without touching the recording or its hash. `READ_PROMPT` = a prompt read aloud as text.
+CORRECTIONS_FILE = "corrections.jsonl"
+READ_PROMPT = "read_prompt"
 MIN_CLIP_SEC = 1.0
 MAX_CLIP_SEC = 120.0
 #: An upload larger than this is refused before it is decoded: 120 s of 16 kHz WAV is ~4 MB.
@@ -123,6 +128,10 @@ class StudioStore:
                 out.append(ClipRecord(**json.loads(line)))
             except (json.JSONDecodeError, TypeError) as exc:
                 raise StudioError(f"{path.name} line {n} is not a valid clip record: {exc}") from exc
+        fix = self.root / CORRECTIONS_FILE
+        if fix.exists():
+            kinds = {d["clip_id"]: d["kind"] for d in map(json.loads, fix.read_text(encoding="utf-8").splitlines()) if d}
+            out = [replace(c, kind=kinds[c.clip_id]) if c.clip_id in kinds else c for c in out]
         return out
 
     def _repair_tail(self) -> None:

@@ -146,6 +146,11 @@ export interface StudioPlan {
   speaker: string; sessionId: string; hasFacts: boolean; estimatedMinutes: number;
   devices: string[]; environments: string[]; items: StudioPlanItem[];
 }
+/** The Studio's 'did you say it?' answer. `available: false` means no speech recognition: just save. */
+export interface StudioCheck {
+  available: boolean; ok: boolean | null; reason?: string;
+  matched?: number; total?: number; matchedWords?: string[]; missingWords?: string[]; heard?: string;
+}
 export interface StudioSummary {
   speaker: string; clips: number; minutes: number;
   by_session: Record<string, { clips: number; minutes: number; devices: string[]; environments: string[] }>;
@@ -259,3 +264,14 @@ export interface OfflineRun {
   results: OfflineResults;
   figures: string[];
 }
+
+export interface DatasetSpeaker {
+  id: string;
+  name: string;
+  pseudonym: string;
+  pilotClips: number;
+  studioClips: number;
+  studioBySession: Record<string, number>;
+  studioByKind: Record<string, number>;
+}
+export interface DatasetSummary { speakers: DatasetSpeaker[]; totalClips: number }

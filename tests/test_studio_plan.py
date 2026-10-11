@@ -104,3 +104,13 @@ def test_the_store_accepts_the_kind() -> None:
     from kavach.studio.store import KINDS
 
     assert "words" in KINDS
+
+
+def test_voice_only_plan_is_ten_word_clips_and_nothing_else() -> None:
+    """The quick plan for the Unlock demo: the login's own task, no read/free/fact prompts."""
+    for sid in ("S1", "S2", "S3", "S4", "S5", "X9"):
+        items = build_plan(sid, facts("hometown"), voice_only=True)
+        assert items and {i.kind for i in items} == {"words"}
+        assert count(items, "words") >= 20
+    assert estimate_minutes(build_plan("S1", [], voice_only=True)) < 6
+    assert count(build_plan("S4", [], voice_only=True), "words") >= 25  # held-out sittings still carry weight

@@ -511,3 +511,33 @@ class TestVoiceprintInfo:
     def test_it_never_returns_the_embeddings(self, client, speaker):
         body = client.get(f"/api/speakers/{speaker}/voiceprint").text
         assert "centroid" not in body and "embeddings" not in body
+
+
+class TestSignInWithoutClaimingAnIdentity:
+    """No account is chosen: the voice says who is speaking, among laptop-enrolled accounts only."""
+
+    @pytest.fixture()
+    def studio_speaker(self, client: TestClient, store: Store) -> str:
+        sid = client.post("/api/speakers", json={"displayName": "Presenter", "consentGiven": True}).json()["id"]
+        payload = SpeakerTemplate.from_embeddings(sid, [SpeakerEmbedding(TEMPLATE_VEC)]).to_dict()
+        store.save_template(sid, {**payload, "provenance": {"source": "studio"}})
+        return sid
+
+    def test_the_enrolled_voice_is_named_and_accepted(self, client, pipeline, studio_speaker, tmp_path):
+        c = issue(client, "anonymous")
+        result, _ = login(client, pipeline, tmp_path, c, heard=" ".join(c["phrase"]), cosine=0.85)
+        assert result["decision"] == "ACCEPT", result["explanation"]
+        assert result["speakerId"] == studio_speaker
+
+    def test_another_voice_saying_the_right_words_is_refused(self, client, pipeline, studio_speaker, tmp_path):
+        c = issue(client, "anonymous")
+        result, _ = login(client, pipeline, tmp_path, c, heard=" ".join(c["phrase"]), cosine=0.25)
+        assert result["decision"] == "REJECT"
+
+    def test_an_account_not_enrolled_on_the_laptop_is_never_a_candidate(self, client, pipeline, speaker, tmp_path):
+        c = issue(client, "anonymous")  # `speaker` has a template with no Studio provenance
+        result, _ = login(client, pipeline, tmp_path, c, heard=" ".join(c["phrase"]), cosine=0.95)
+        assert result["decision"] == "REJECT" and result["speakerId"] == ""
+
+    def test_only_a_phrase_challenge_may_be_anonymous(self, client, studio_speaker):
+        assert client.post("/api/challenge", json={"speakerId": "anonymous", "kind": "question"}).status_code == 404

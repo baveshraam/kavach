@@ -1,9 +1,10 @@
+import { MIC_CONSTRAINTS, RECORDER_OPTIONS } from '../lib/mic';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Mic, Square, CheckCircle2, XCircle, AlertTriangle, RefreshCw, Lock, LockOpen, Timer, MinusCircle } from 'lucide-react';
 import { apiClient } from '../api/client';
 import { PageHeader, PageBody } from '../components/layout/PageHeader';
-import { Card, CardHeader, CardBody, Button, Field, Select, Badge, Notice, cn } from '../components/ui/kit';
+import { Card, CardHeader, CardBody, Button, Badge, Notice, cn } from '../components/ui/kit';
 import type { AuthResult, BranchScore, Challenge } from '../api/types';
 
 const MIN_MS = 3500;   // shorter than this cannot hold the words; ask again without spending the challenge
@@ -44,7 +45,7 @@ function useCapture(onDone: (blob: Blob, ms: number) => void) {
   const start = useCallback(async () => {
     try {
       setError(null);
-      const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const s = await navigator.mediaDevices.getUserMedia(MIC_CONSTRAINTS);
       stream.current = s;
       const ac = new AudioContext();
       ctx.current = ac;
@@ -52,7 +53,7 @@ function useCapture(onDone: (blob: Blob, ms: number) => void) {
       an.fftSize = 1024;
       ac.createMediaStreamSource(s).connect(an);
       const buf = new Uint8Array(an.fftSize);
-      const mr = new MediaRecorder(s, { mimeType: 'audio/webm;codecs=opus' });
+      const mr = new MediaRecorder(s, RECORDER_OPTIONS);
       chunks.current = [];
       mr.ondataavailable = e => { if (e.data.size > 0) chunks.current.push(e.data); };
       mr.onstop = () => {
@@ -87,7 +88,11 @@ function useCapture(onDone: (blob: Blob, ms: number) => void) {
   return { recording, ms, level, error, start, stop };
 }
 
-type Attempt = { at: string; decision: AuthResult['decision']; voice?: number; note: string };
+// No account is chosen: the voice says who is signing in. The server treats this id as 'anyone'.
+const ANONYMOUS = 'anonymous';
+const accountName = (displayName?: string) => (displayName ?? '').replace(/^S\d+\s*·\s*/, '') || 'unknown';
+
+type Attempt = { at: string; decision: AuthResult['decision']; who: string; note: string };
 
 const retrySeconds = (msg: string) => {
   const m = /wait (\d+) s/i.exec(msg);
@@ -98,7 +103,6 @@ export function Unlock() {
   const { data: speakers } = useQuery({ queryKey: ['speakers'], queryFn: apiClient.getSpeakers });
   const { data: health } = useQuery({ queryKey: ['health'], queryFn: apiClient.health });
   const { data: evidence } = useQuery({ queryKey: ['voicePolicy'], queryFn: apiClient.voicePolicy, retry: false });
-  const [speakerId, setSpeakerId] = useState('');
   const [challenge, setChallenge] = useState<Challenge | null>(null);
   const [result, setResult] = useState<AuthResult | null>(null);
   const [attempts, setAttempts] = useState<Attempt[]>([]);
@@ -106,18 +110,10 @@ export function Unlock() {
   const [wait, setWait] = useState(0);
   const [note, setNote] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!speakerId && speakers?.length) {
-      setSpeakerId((speakers.find(s => /bavesh/i.test(s.displayName)) ?? speakers[0]).id);
-    }
-  }, [speakers, speakerId]);
-
-  const speaker = speakers?.find(s => s.id === speakerId);
-  const { data: vp } = useQuery({ queryKey: ['voiceprint', speakerId], queryFn: () => apiClient.voiceprint(speakerId), enabled: !!speakerId, retry: false });
-  const firstName = speaker?.displayName.split(/[\s(·-]/)[0] ?? 'this speaker';
+  const nameOf = (id?: string) => accountName(speakers?.find(s => s.id === id)?.displayName);
 
   const issue = useMutation({
-    mutationFn: (stepUp: boolean) => apiClient.issueChallenge(speakerId, 'phrase', stepUp),
+    mutationFn: (stepUp: boolean) => apiClient.issueChallenge(ANONYMOUS, 'phrase', stepUp),
     onSuccess: c => { setChallenge(c); setResult(null); setNote(null); setWait(0); },
     onError: e => setWait(retrySeconds((e as Error).message)),
   });
@@ -126,9 +122,8 @@ export function Unlock() {
     mutationFn: (blob: Blob) => apiClient.authenticate(challenge!.id, blob),
     onSuccess: r => {
       setResult(r);
-      const voice = r.branches.find(b => b.name === 'speaker_embedding');
       setAttempts(prev => [
-        { at: new Date().toLocaleTimeString(), decision: r.decision, voice: voice?.score, note: r.explanation[0] ?? '' },
+        { at: new Date().toLocaleTimeString(), decision: r.decision, who: r.decision === 'ACCEPT' ? nameOf(r.speakerId) : '', note: r.explanation[0] ?? '' },
         ...prev,
       ].slice(0, 6));
     },
@@ -169,46 +164,36 @@ export function Unlock() {
   const remaining = challenge ? Math.max(0, new Date(challenge.expiresAt).getTime() - now) : 0;
   const expired = !!challenge && !result && remaining <= 0 && !capture.recording && !auth.isPending;
 
-  const reset = (id: string) => { setSpeakerId(id); setChallenge(null); setResult(null); setNote(null); issue.reset(); auth.reset(); };
+  const reset = () => { setChallenge(null); setResult(null); setNote(null); issue.reset(); auth.reset(); };
 
   return (
     <>
       <PageHeader
-        eyebrow="Voice access"
-        title="Unlock"
-        description="Read the words on the screen. The system checks that they are fresh, that the recording is untouched, and that the voice is the enrolled one. A correct answer cannot make up for a different voice."
+        eyebrow="Voice sign-in"
+        title="Sign in with your voice"
+        description="Nobody is selected. Read the words on the screen and the system works out who you are, or turns you away. Every attempt is checked for freshness, tampering and the words said."
       />
       <PageBody>
         <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)] gap-6 items-start">
           <Card className="min-h-[520px]">
             <CardHeader
-              title={<span className="flex items-center gap-2">{result?.decision === 'ACCEPT' ? <LockOpen className="w-4 h-4 text-app-accept" /> : <Lock className="w-4 h-4 text-app-text-subtle" />} {speaker ? `${firstName}'s voiceprint` : 'No speaker enrolled'}</span>}
-              subtitle={speaker ? (vp?.provenance
-                ? `Voiceprint from ${vp.nClips} clips · Studio sessions ${vp.provenance.sessions.join(', ')} · ${vp.provenance.devices.join(', ').toLowerCase().replace(/_/g, ' ')}`
-                : `Voiceprint from ${vp?.nClips ?? speaker.utteranceCount} enrolment clips`) : undefined}
-              actions={speakers && speakers.length > 1 ? (
-                <Select value={speakerId} onChange={e => reset(e.target.value)} className="!h-8 !text-[12.5px] w-44">
-                  {speakers.map(s => <option key={s.id} value={s.id}>{s.displayName}</option>)}
-                </Select>
-              ) : undefined}
+              title={<span className="flex items-center gap-2">{result?.decision === 'ACCEPT' ? <LockOpen className="w-4 h-4 text-app-accept" /> : <Lock className="w-4 h-4 text-app-text-subtle" />} Sign in</span>}
             />
             <CardBody className="flex flex-col gap-5">
-              {!speaker && <Notice tone="warning" title="Nobody is enrolled">Enrol a speaker first.</Notice>}
-
-              {speaker && !challenge && !result && (
+              {!challenge && !result && (
                 <div className="flex flex-col items-center text-center gap-4 py-10">
                   <div className="w-20 h-20 rounded-full bg-app-surface-muted flex items-center justify-center"><Lock className="w-8 h-8 text-app-text-muted" /></div>
                   <div>
-                    <div className="font-serif text-[26px] leading-tight">Say it to open it</div>
+                    <div className="font-serif text-[26px] leading-tight">Say it to sign in</div>
                     <p className="text-[13.5px] text-app-text-muted mt-1.5 max-w-sm">You will be shown {health?.phraseWords ?? 10} random words to read aloud, about seven seconds. They are different every time, and a longer sample is what makes the voice check reliable.</p>
                   </div>
                   <Button variant="primary" size="lg" onClick={() => issue.mutate(false)} loading={issue.isPending} disabled={wait > 0} icon={<Mic className="w-4 h-4" />}>
-                    {wait > 0 ? `Wait ${wait} s` : `Unlock as ${firstName}`}
+                    {wait > 0 ? `Wait ${wait} s` : 'Sign in'}
                   </Button>
                 </div>
               )}
 
-              {speaker && challenge && !result && (
+              {challenge && !result && (
                 <div className="flex flex-col items-center gap-6 py-4">
                   <div className="flex items-center gap-3 w-full max-w-md">
                     <Timer className={cn('w-4 h-4', expired ? 'text-app-reject' : 'text-app-text-subtle')} />
@@ -259,13 +244,11 @@ export function Unlock() {
                 </div>
               )}
 
-              {speaker && result && challenge && (
+              {result && challenge && (
                 <Verdict
                   result={result}
                   challenge={challenge}
-                  name={firstName}
-                  threshold={health?.voiceThreshold ?? 0.62}
-                  margin={health?.voiceGreyMargin ?? 0.08}
+                  name={nameOf(result.speakerId)}
                   onAgain={() => issue.mutate(false)}
                   onStepUp={() => issue.mutate(true)}
                   busy={issue.isPending}
@@ -279,13 +262,14 @@ export function Unlock() {
           </Card>
 
           <div className="flex flex-col gap-4">
+            <PipelineCard health={health} />
             <Card>
               <CardHeader title="What is checked" subtitle="Every gate must pass. None can be outvoted." />
               <CardBody className="flex flex-col gap-2.5 text-[13px]">
                 <GateLine title="Fresh" text="The phrase is drawn at random for this attempt, single-use, and expires in a minute." />
                 <GateLine title="Untouched" text="The recording is not a copy of one already seen." />
                 <GateLine title="Said now" text="The words you speak are the words on screen, in order. A recording made for another attempt cannot contain them." />
-                <GateLine title="Your voice" text={`The voiceprint must reach ${(health?.voiceThreshold ?? 0.62).toFixed(2)}. Below ${((health?.voiceThreshold ?? 0.62) - (health?.voiceGreyMargin ?? 0.08)).toFixed(2)} it is a flat no; in between you are asked once more.`} />
+                <GateLine title="Your voice" text="The voice must match one enrolled account clearly. A close call earns one more phrase; anything else is a no." />
                 <div className="pt-1 flex flex-wrap gap-2">
                   <Badge tone={health?.voicePolicySource === 'calibrated' && !health?.voicePolicyProvisional ? 'accept' : 'warning'}>
                     {health?.voicePolicySource === 'calibrated' ? (health?.voicePolicyProvisional ? 'threshold measured (provisional)' : 'threshold measured on held-out sessions') : 'default threshold, not yet measured'}
@@ -304,8 +288,8 @@ export function Unlock() {
                       <li key={i} className="flex items-center gap-2 text-[12.5px]">
                         {a.decision === 'ACCEPT' ? <CheckCircle2 className="w-4 h-4 text-app-accept shrink-0" /> : a.decision === 'REJECT' ? <XCircle className="w-4 h-4 text-app-reject shrink-0" /> : <AlertTriangle className="w-4 h-4 text-app-warning shrink-0" />}
                         <span className="tnum text-app-text-subtle whitespace-nowrap shrink-0">{a.at}</span>
-                        <span className="tnum whitespace-nowrap shrink-0 font-medium">{a.voice !== undefined ? a.voice.toFixed(2) : '—'}</span>
-                        <span className="text-app-text-muted truncate min-w-0" title={a.note}>{a.decision === 'ACCEPT' ? 'unlocked' : a.decision === 'BORDERLINE' ? 'voice not conclusive: asked once more' : a.note.replace(/^Rejected: /, '')}</span>
+                        <span className="whitespace-nowrap shrink-0 font-medium">{a.who || '—'}</span>
+                        <span className="text-app-text-muted truncate min-w-0" title={a.note}>{a.decision === 'ACCEPT' ? 'signed in' : a.decision === 'BORDERLINE' ? 'voice not conclusive: asked once more' : a.note.replace(/^Rejected: /, '')}</span>
                       </li>
                     ))}
                   </ul>
@@ -316,6 +300,34 @@ export function Unlock() {
         </div>
       </PageBody>
     </>
+  );
+}
+
+/** The sign-in pipeline in the sidebar's style: what runs for this login. It needs neither the tagger nor the matcher. */
+function PipelineCard({ health }: { health?: { models: string[]; device: string; phraseWords?: number } }) {
+  const model = (needle: string) => health?.models?.find(m => m.toLowerCase().includes(needle));
+  const asr = model('whisper');
+  const rows: [string, string][] = [
+    ['Challenge', `${health?.phraseWords ?? 10} random words, single use`],
+    ['Integrity', 'copy of an earlier recording'],
+    ['ASR', asr ? `Whisper ${asr.split('/')[1] ?? ''}`.trim() : 'not loaded'],
+    ['Voiceprint', model('ecapa') ? 'ECAPA-TDNN' : 'not loaded'],
+    ['Identity', 'best enrolled account'],
+    ['Decision', 'every gate must pass'],
+    ['Device', (health?.device || 'unknown').toUpperCase()],
+  ];
+  return (
+    <Card>
+      <CardHeader title="Sign-in pipeline" subtitle="Runs offline: no tagger, no matcher." />
+      <CardBody className="flex flex-col gap-1.5">
+        {rows.map(([k, v]) => (
+          <div key={k} className="flex justify-between gap-3 text-[13px]">
+            <span className="text-app-text-subtle">{k}</span>
+            <span className="text-app-text-muted truncate">{v}</span>
+          </div>
+        ))}
+      </CardBody>
+    </Card>
   );
 }
 
@@ -334,8 +346,8 @@ function heard(expected: string[], transcript: string) {
   return expected.map(w => toks.some(t => t === w || (t.length >= 4 && Math.abs(t.length - w.length) <= 2 && (t.startsWith(w.slice(0, -1)) || w.startsWith(t.slice(0, -1))))));
 }
 
-function Verdict({ result, challenge, name, threshold, margin, onAgain, onStepUp, busy, wait }: {
-  result: AuthResult; challenge: Challenge; name: string; threshold: number; margin: number;
+function Verdict({ result, challenge, name, onAgain, onStepUp, busy, wait }: {
+  result: AuthResult; challenge: Challenge; name: string;
   onAgain: () => void; onStepUp: () => void; busy: boolean; wait: number;
 }) {
   const by = (n: BranchScore['name']) => result.branches.find(b => b.name === n);
@@ -348,7 +360,8 @@ function Verdict({ result, challenge, name, threshold, margin, onAgain, onStepUp
   const border = result.decision === 'BORDERLINE';
   const tone = ok ? 'accept' : border ? 'warning' : 'reject';
   const stripped = (result.explanation[0] ?? '').replace(/^(Rejected|ACCEPT|BORDERLINE|REJECT): ?/, '');
-  const first = stripped.charAt(0).toUpperCase() + stripped.slice(1);
+  // A voice refusal states its score in the explanation; the sign-in screen does not show scores.
+  const first = voice && !voice.passed && !border ? 'The voice does not match any enrolled account.' : stripped.charAt(0).toUpperCase() + stripped.slice(1);
   // The backend says which words it matched; the browser-side guess is only for an old server.
   const got = result.phraseMatched
     ? challenge.phrase.map(w => result.phraseMatched!.includes(w))
@@ -368,20 +381,18 @@ function Verdict({ result, challenge, name, threshold, margin, onAgain, onStepUp
         tone === 'accept' && 'bg-app-accept-soft border-app-accept/25', tone === 'warning' && 'bg-app-warning-soft border-app-warning/25', tone === 'reject' && 'bg-app-reject-soft border-app-reject/25')}>
         {ok ? <LockOpen className="w-8 h-8 text-app-accept shrink-0 mt-0.5" /> : border ? <AlertTriangle className="w-8 h-8 text-app-warning shrink-0 mt-0.5" /> : <Lock className="w-8 h-8 text-app-reject shrink-0 mt-0.5" />}
         <div className="min-w-0">
-          <div className="font-serif text-[30px] leading-tight">{ok ? 'Unlocked' : border ? 'Not sure yet' : 'Access denied'}</div>
+          <div className="font-serif text-[30px] leading-tight">{ok ? `Welcome, ${name}` : border ? 'Not sure yet' : 'Not recognised'}</div>
           <p className="text-[13.5px] text-app-text-muted mt-1">
-            {ok ? `The voice matched ${name}'s voiceprint and the words were the ones shown.` : border ? `The voice is close to ${name}'s but not conclusive. One more phrase, and it has to match outright.` : first}
+            {ok ? 'Your voice was recognised and the words were the ones shown.' : border ? 'The voice is close to an enrolled account but not conclusive. One more phrase, and it has to match outright.' : first}
           </p>
         </div>
       </div>
-
-      {voice && <VoiceMeter score={voice.score} threshold={voice.threshold || threshold} margin={margin} />}
 
       <div className="flex flex-col gap-2.5">
         <Row label="Fresh challenge" b={live} detail="unused and in time" />
         <Row label="Recording untouched" b={integ} detail="not a copy of one seen before" />
         <Row label="Words said" b={words} detail={words ? `${Math.round(words.score * total)} of ${total} words, in order` : undefined} />
-        <Row label="Voice" b={voice} detail={voice ? `${voice.score.toFixed(2)} (needs ${(voice.threshold || threshold).toFixed(2)})` : undefined} />
+        <Row label="Voice" b={voice} detail={voice ? (voice.passed ? 'recognised' : 'not recognised') : undefined} />
       </div>
 
       {result.transcript && (
@@ -398,32 +409,8 @@ function Verdict({ result, challenge, name, threshold, margin, onAgain, onStepUp
 
       <div className="flex items-center gap-3">
         {border && <Button variant="primary" onClick={onStepUp} loading={busy} disabled={wait > 0} icon={<Mic className="w-4 h-4" />}>Say one more phrase</Button>}
-        {!border && <Button variant={ok ? 'secondary' : 'primary'} onClick={onAgain} loading={busy} disabled={wait > 0} icon={<RefreshCw className="w-4 h-4" />}>{wait > 0 ? `Wait ${wait} s` : ok ? 'Lock and try again' : 'Try again'}</Button>}
+        {!border && <Button variant={ok ? 'secondary' : 'primary'} onClick={onAgain} loading={busy} disabled={wait > 0} icon={<RefreshCw className="w-4 h-4" />}>{wait > 0 ? `Wait ${wait} s` : ok ? 'Sign out' : 'Try again'}</Button>}
         <span className="text-[12px] text-app-text-subtle tnum">decided in {(result.latencyMs / 1000).toFixed(1)} s</span>
-      </div>
-    </div>
-  );
-}
-
-/** The voice score against the three zones it is judged in: no / once more / yes. */
-function VoiceMeter({ score, threshold, margin }: { score: number; threshold: number; margin: number }) {
-  const clamp = (v: number) => Math.max(0, Math.min(1, v));
-  const floor = threshold - margin;
-  return (
-    <div>
-      <div className="flex justify-between text-[12px] text-app-text-subtle mb-1.5">
-        <span>Voice match</span>
-        <span className="tnum text-app-text font-medium">{score.toFixed(2)}</span>
-      </div>
-      <div className="relative h-3 rounded-full overflow-hidden flex">
-        <div className="bg-app-reject-soft" style={{ width: `${clamp(floor) * 100}%` }} />
-        <div className="bg-app-warning-soft" style={{ width: `${(clamp(threshold) - clamp(floor)) * 100}%` }} />
-        <div className="bg-app-accept-soft flex-1" />
-        <div className="absolute top-0 bottom-0 w-[3px] bg-app-text rounded" style={{ left: `calc(${clamp(score) * 100}% - 1.5px)` }} />
-      </div>
-      <div className="relative h-4 text-[11px] text-app-text-subtle tnum">
-        <span className="absolute" style={{ left: `${clamp(floor) * 100}%`, transform: 'translateX(-50%)' }}>{floor.toFixed(2)}</span>
-        <span className="absolute" style={{ left: `${clamp(threshold) * 100}%`, transform: 'translateX(-50%)' }}>{threshold.toFixed(2)}</span>
       </div>
     </div>
   );

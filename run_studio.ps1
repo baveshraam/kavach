@@ -1,20 +1,25 @@
 # Start a RECORDING session: the backend with the Studio enabled for the presenter, and the UI.
 #
 #   powershell -ExecutionPolicy Bypass -File .\run_studio.ps1
+#   powershell -ExecutionPolicy Bypass -File .\run_studio.ps1 -VoiceOnly   # the short plan: ten-word clips only
 #
 # Separate from run_demo.ps1 on purpose: the demo build never accepts recordings into the dataset.
-# No speech models are loaded (recording needs only the decoder), so it starts in seconds. It uses the
+# The full plan loads no speech models (recording needs only the decoder), so it starts in seconds; -VoiceOnly loads Whisper to check each clip. It uses the
 # real demo database, so the personal facts you enter on the Speakers page are the ones the demo asks about.
-param([string]$Speaker = "S04")
+param([string]$Speaker = "S04", [switch]$VoiceOnly)
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $root
 $py = Join-Path $root ".venv\Scripts\python.exe"
 $env:PYTHONIOENCODING = "utf-8"
-$env:KAVACH_OFFLINE = "1"
+# The full plan needs only the decoder, so no models. The quick plan also checks that you said the words,
+# which needs Whisper: it loads at start (about 20 s) and the first check is then fast.
+if (-not $VoiceOnly) { $env:KAVACH_OFFLINE = "1" } else { $env:KAVACH_WARM_MODELS_ON_START = "true" }
 $env:KAVACH_STUDIO_ENABLED = "true"
 $env:KAVACH_STUDIO_SPEAKERS = "[`"$Speaker`"]"
+# Quick plan: ten-word clips only (about 4 minutes a sitting), the Unlock login's own task.
+if ($VoiceOnly) { $env:KAVACH_STUDIO_VOICE_ONLY = "true" }
 
 Write-Host "Starting backend on http://localhost:8000 (Studio enabled for $Speaker) ..." -ForegroundColor Cyan
 $backend = Start-Process -FilePath $py `

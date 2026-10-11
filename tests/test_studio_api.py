@@ -129,3 +129,10 @@ def test_a_second_device_in_the_same_session_is_a_422(tmp_path) -> None:
     assert post(client, wav_bytes(tmp_path)).status_code == 200
     r = post(client, wav_bytes(tmp_path, seed=1), device="PHONE")
     assert r.status_code == 422 and "one sitting" in r.json()["detail"]
+
+
+def test_the_voice_only_setting_serves_a_words_only_plan(tmp_path) -> None:
+    client, *_ = studio(tmp_path, studio_voice_only=True)
+    plan = client.get("/api/studio/plan", params={"speaker": "S04", "session": "S1"}).json()
+    assert {i["kind"] for i in plan["items"]} == {"words"}
+    assert plan["estimatedMinutes"] < 6
