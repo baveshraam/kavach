@@ -87,6 +87,18 @@ PipelineDep = Annotated[Pipeline, Depends(get_pipeline)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 
+async def _read_audio(upload: UploadFile) -> bytes:
+    """The upload's bytes, refusing more than `MAX_UPLOAD_BYTES` while reading, not after: an unbounded `read()` lets one request fill memory."""
+    chunks: list[bytes] = []
+    total = 0
+    while chunk := await upload.read(1024 * 1024):
+        total += len(chunk)
+        if total > MAX_UPLOAD_BYTES:
+            raise HTTPException(413, f"That upload is over {MAX_UPLOAD_BYTES // (1024 * 1024)} MB; a recording this long was not intended.")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Build the application.
 
@@ -213,7 +225,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 by_session[c.session_id] = by_session.get(c.session_id, 0) + 1
                 by_kind[c.kind] = by_kind.get(c.kind, 0) + 1
             rows.append({
-                "id": row["id"], "name": row["display_name"], "pseudonym": pseudonym,
+                # Pseudonyms only, never display names (participants' first names are direct identifiers); an ill-formed one is withheld.
+                "id": row["id"], "pseudonym": pseudonym if valid else "",
                 "pilotClips": len(store.list_utterances(row["id"])),
                 "studioClips": len(clips), "studioBySession": dict(sorted(by_session.items())), "studioByKind": by_kind,
             })
@@ -401,7 +414,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         annotating one later is not.
         """
         _require_speaker(store, speakerId)
-        raw = await audio.read()
+        raw = await _read_audio(audio)
         if not raw:
             raise HTTPException(400, "The uploaded audio is empty.")
 
@@ -516,7 +529,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         state_note: Annotated[str, Form()] = "",
     ) -> dict[str, Any]:
         studio = _studio(cfg, speaker)
-        raw = await audio.read()
+        raw = await _read_audio(audio)
         if len(raw) > MAX_UPLOAD_BYTES:
             raise HTTPException(413, f"That upload is over {MAX_UPLOAD_BYTES // (1024 * 1024)} MB; a recording this long was not intended.")
         if not raw:
@@ -555,7 +568,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         expected = [w.strip().lower() for w in words.split(",") if w.strip()]
         if not expected:
             raise HTTPException(422, "No words to check against.")
-        raw = await audio.read()
+        raw = await _read_audio(audio)
         if len(raw) > MAX_UPLOAD_BYTES:
             raise HTTPException(413, f"That upload is over {MAX_UPLOAD_BYTES // (1024 * 1024)} MB; a recording this long was not intended.")
         if not raw:
@@ -739,7 +752,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         challengeId: Annotated[str, Form()],
     ) -> schemas.AuthResult:
         """Score a spoken response and return the decision with its reasoning."""
-        raw = await audio.read()
+        raw = await _read_audio(audio)
         if not raw:
             raise HTTPException(400, "The uploaded audio is empty.")
         suffix = Path(audio.filename or "response.webm").suffix or ".webm"

@@ -9,7 +9,7 @@ const KIND_LABEL: Record<string, string> = {
   read_prompt: 'Prompts read aloud',
 };
 
-const person = (name: string) => name.replace(/^S\d+\s*·\s*/, '');
+const person = (r: { pseudonym: string; id: string }) => r.pseudonym || r.id;
 
 function Tile({ label, value }: { label: string; value: number }) {
   return (
@@ -49,7 +49,7 @@ export function Dataset() {
                   const total = r.pilotClips + r.studioClips;
                   return (
                     <div key={r.id} className="grid grid-cols-[150px_minmax(0,1fr)_64px] items-center gap-4 text-[14px]">
-                      <span className="font-medium truncate" title={r.name}>{person(r.name)}</span>
+                      <span className="font-medium truncate">{person(r)}</span>
                       <div className="flex h-6 rounded overflow-hidden bg-app-surface-muted" style={{ width: `${(total / max) * 100}%`, minWidth: total ? 4 : 0 }}>
                         <div className="bg-app-accent" style={{ width: `${total ? (r.pilotClips / total) * 100 : 0}%` }} title={`${r.pilotClips} pilot clips`} />
                         <div className="bg-app-accept" style={{ flex: 1 }} title={`${r.studioClips} Studio clips`} />
@@ -67,7 +67,7 @@ export function Dataset() {
 
             {recorded.map(r => (
               <Card key={r.id}>
-                <CardHeader title={`${person(r.name)}: Recording Studio`} subtitle={`${r.studioClips} clips across ${Object.keys(r.studioBySession).length} sittings`} />
+                <CardHeader title={`${person(r)}: Recording Studio`} subtitle={`${r.studioClips} clips across ${Object.keys(r.studioBySession).length} sittings`} />
                 <CardBody className="grid grid-cols-1 md:grid-cols-2 gap-8 text-[14px]">
                   <div className="flex flex-col gap-2">
                     <div className="text-app-text-subtle text-[12.5px]">By sitting</div>

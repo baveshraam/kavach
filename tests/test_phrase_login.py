@@ -591,3 +591,36 @@ class TestSignInCannotBeUsedToSidestepTheThrottleOrLearnWhoIsEnrolled:
         d = client.get("/api/dataset")
         assert d.status_code == 200, d.text
         assert all(row["studioClips"] == 0 for row in d.json()["speakers"])
+
+
+class TestSecondReviewPass:
+    """Findings of the review of the pushed commits: bounded uploads, no names in the dataset, no matched-or-not oracle."""
+
+    def test_an_oversized_upload_is_refused_while_it_is_read(self, client):
+        big = b"x" * (31 * 1024 * 1024)
+        r = client.post("/api/authenticate", files={"audio": ("a.wav", big, "audio/wav")}, data={"challengeId": "none"})
+        assert r.status_code == 413
+
+    def test_the_dataset_lists_pseudonyms_never_names(self, client):
+        client.post("/api/speakers", json={"displayName": "S04 · Alice", "consentGiven": True})
+        client.post("/api/speakers", json={"displayName": "Mallory Example", "consentGiven": True})
+        d = client.get("/api/dataset")
+        assert d.status_code == 200
+        text = d.text
+        assert "Alice" not in text and "Mallory" not in text and "Example" not in text
+        rows = d.json()["speakers"]
+        assert all("name" not in row for row in rows)
+        assert sorted(row["pseudonym"] for row in rows) == ["", "S04"]  # an ill-formed pseudonym is withheld, not echoed
+
+    def test_a_refusal_reads_the_same_whether_or_not_an_account_matched(self, client, pipeline, store, speaker, tmp_path):
+        def note(result):
+            return [n for n in result["explanation"] if "enrolled accounts" in n]
+
+        c = issue(client, "anonymous")
+        none_matched, _ = login(client, pipeline, tmp_path, c, heard=" ".join(c["phrase"]), cosine=0.25)  # `speaker` is not laptop-enrolled
+        payload = SpeakerTemplate.from_embeddings(speaker, [SpeakerEmbedding(TEMPLATE_VEC)]).to_dict()
+        store.save_template(speaker, {**payload, "provenance": {"source": "studio"}})
+        c = issue(client, "anonymous")
+        matched, _ = login(client, pipeline, tmp_path, c, heard=" ".join(c["phrase"]), cosine=0.25)
+        assert note(none_matched) and note(none_matched) == note(matched)
+        assert none_matched["speakerId"] == "" and matched["speakerId"] == ""

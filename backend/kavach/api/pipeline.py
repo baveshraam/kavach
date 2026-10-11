@@ -1049,7 +1049,7 @@ class Pipeline:
         if speaker_id == ANONYMOUS_ID:
             speaker_id = self._identify(voice_audio)
             # No account id here: these notes go to an unauthenticated client, and a rejected stranger must not learn which account they sounded like.
-            notes.append("An enrolled account was matched by voice." if speaker_id else "No enrolled account matched the voice.")
+            notes.append("The voice was compared with the enrolled accounts.")  # the same words whether or not one matched: no oracle
         branches.append(self._speaker_branch(speaker_id, voice_audio, notes, detail_suffix=span_note))
         result = fuse(branches, self._policy(strict_voice=challenge.strict_voice, phrase=True))
         return VerificationOutcome(

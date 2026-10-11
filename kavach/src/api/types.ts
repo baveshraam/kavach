@@ -267,7 +267,6 @@ export interface OfflineRun {
 
 export interface DatasetSpeaker {
   id: string;
-  name: string;
   pseudonym: string;
   pilotClips: number;
   studioClips: number;
