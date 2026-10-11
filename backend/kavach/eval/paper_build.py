@@ -350,7 +350,7 @@ def write_figures(d: dict[str, Any], paper: Path, out: Path) -> None:
     z = np.load(paper / "results_poc" / "ecapa" / "scores.npz")
     sp = np.load(paper / "results_spoof" / "ecapa" / "scores.npz")
     G, I = z["baseline__genuine"], z["baseline__impostor"]
-    fig, ax = _new((3.4, 2.35))
+    fig, ax = _new((3.4, 2.1))
     lo = min(G.min(), I.min(), sp["knn_vc__baseline"].min())
     hi = max(G.max(), I.max(), sp["knn_vc__baseline"].max())
     bins = np.linspace(lo, hi, 45)
@@ -372,7 +372,7 @@ def write_figures(d: dict[str, Any], paper: Path, out: Path) -> None:
     from .figures import apply_style
 
     apply_style()
-    fig, axes = plt.subplots(1, 2, figsize=(7.0, 2.35), sharey=True)
+    fig, axes = plt.subplots(1, 2, figsize=(7.0, 2.05), sharey=True)
     styles = ("-", "--", ":")
     shades = (INK[0], INK[2], INK[1])
     floor = 100.0
