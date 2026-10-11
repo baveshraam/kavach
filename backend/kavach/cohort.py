@@ -90,6 +90,14 @@ def enumerate_slr65(
     return out
 
 
+def enumerate_cached(cache: Path | str) -> list[Item]:
+    """The clips of an already-built whole-clip cohort file, to embed them again with another model.
+
+    Used for the consented pilot corpus, whose audio is listed in `kavach12__ecapa.npz`."""
+    z = np.load(cache, allow_pickle=False)
+    return [Item(str(s), str(e), str(p)) for s, e, p in zip(z["speaker"], z["session"], z["path"])]
+
+
 def embed_cohort(items: list[Item], embedder: Any, *, chunk_seconds: float = 0.0) -> Cohort:
     """Embed every clip (or every `chunk_seconds` piece of it; a tail under 60% of a chunk is dropped)."""
     if not items:
@@ -136,22 +144,39 @@ def main(argv: list[str] | None = None, *, embedder: Any = None) -> int:
 
     cfg = Settings()
     p = argparse.ArgumentParser(prog="python -m kavach.cohort", description=__doc__.splitlines()[0])
-    p.add_argument("--corpus", required=True, choices=[*SPLITS, "tamil-m", "tamil-f"])
-    p.add_argument("--root", type=Path, required=True, help="where the corpus was extracted")
+    p.add_argument("--corpus", required=True, choices=[*SPLITS, "tamil-m", "tamil-f", "kavach12"])
+    p.add_argument("--root", type=Path, default=None, help="where the corpus was extracted")
+    p.add_argument("--from-cache", type=Path, default=None, help="kavach12 only: the whole-clip cohort file listing the audio")
     p.add_argument("--chunk", type=float, default=0.0, help="cut clips into pieces of this many seconds (5 = login length)")
+    p.add_argument("--embedder", default="ecapa", help="ecapa (default), resnet or wavlm: each has its own cache directory")
+    p.add_argument("--device", default=None, help="cpu or cuda; default Settings.embedding_device")
     p.add_argument("--per-speaker", type=int, default=30)
-    p.add_argument("--out", type=Path, default=cfg.data_dir / "cohort" / "emb")
+    p.add_argument("--out", type=Path, default=None, help="default: the embedder's own cohort directory")
     args = p.parse_args(argv)
+    from .eval.embedders import cohort_dir, make_embedder
 
-    if args.corpus in SPLITS:
+    if args.out is None:
+        args.out = cohort_dir(cfg.data_dir, args.embedder)
+
+    if args.corpus == "kavach12":
+        if not args.from_cache:
+            print("refused: kavach12 needs --from-cache <the whole-clip cohort file>", file=sys.stderr)
+            return 2
+        items = enumerate_cached(args.from_cache)
+    elif args.root is None:
+        print("refused: --root is required", file=sys.stderr)
+        return 2
+    elif args.corpus in SPLITS:
         items = enumerate_libri(args.root, SPLITS[args.corpus], per_speaker=args.per_speaker)
     else:
         items = enumerate_slr65(args.root, "male" if args.corpus == "tamil-m" else "female", per_speaker=args.per_speaker)
     if embedder is None:
-        from .embedding import ECAPAEmbedder
-
-        embedder = ECAPAEmbedder(model_name=cfg.ecapa_model, device=cfg.embedding_device)
-    tag = f"ecapa@{args.chunk:g}s" if args.chunk else "ecapa"
+        try:
+            embedder = make_embedder(args.embedder, device=args.device or cfg.embedding_device)
+        except ValueError as exc:
+            print(f"refused: {exc}", file=sys.stderr)
+            return 2
+    tag = f"{args.embedder}@{args.chunk:g}s" if args.chunk else args.embedder
     target = args.out / f"{args.corpus}__{tag}.npz"
     if target.exists():
         print(f"{target} exists; delete it to rebuild", file=sys.stderr)
