@@ -103,3 +103,16 @@ def test_reset_clears_one_identity_or_all(throttle):
     assert throttle.wait_seconds("a") == 0.0 and throttle.wait_seconds("b") > 0
     throttle.reset()
     assert throttle.wait_seconds("b") == 0.0
+
+
+def test_the_longest_wait_is_the_worst_over_every_identity(throttle, clock):
+    assert throttle.longest_wait() == 0.0
+    for _ in range(4):
+        throttle.record("a", accepted=False)
+    for _ in range(6):
+        throttle.record("b", accepted=False)
+    assert throttle.longest_wait() == throttle.wait_seconds("b") > throttle.wait_seconds("a") > 0
+    throttle.record("b", accepted=True)
+    assert throttle.longest_wait() == throttle.wait_seconds("a")
+    clock.advance(1000)  # failures are forgotten
+    assert throttle.longest_wait() == 0.0

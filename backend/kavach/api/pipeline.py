@@ -118,6 +118,8 @@ class VerificationOutcome:
     rather than with a bare score."""
     phrase: Any = None
     """The `PhraseMatch` of a phrase challenge (which shown words were heard), else None."""
+    anonymous: bool = False
+    """The challenge named no account: who was speaking is the pipeline's guess, which only an ACCEPT may reveal."""
 
 
 #: A phrase login with no claimed identity: the voice itself says who is speaking. See `Pipeline._identify`.
@@ -780,15 +782,19 @@ class Pipeline:
         measured = any(
             b.branch is Branch.SPEAKER and b.available for b in outcome.fusion.branches
         )
-        # An anonymous login is throttled as one identity: a stranger's failures slow the next
-        # attempt whoever makes it, and the owner's success clears them.
+        # An anonymous login is throttled as one identity (a stranger's failures slow the next attempt
+        # whoever makes it, and the owner's success clears them) AND against the account its voice
+        # matched, so naming no account never buys a second budget of tries at that account.
         key = pending.speaker_id if pending is not None else outcome.speaker_id
-        if key and measured:
-            self.throttle.record(key, accepted=outcome.fusion.accepted)
-            if outcome.fusion.decision is Decision.BORDERLINE:
-                self._step_up[key] = time.monotonic()
-            else:
-                self._step_up.pop(key, None)
+        outcome.anonymous = pending is not None and pending.speaker_id == ANONYMOUS_ID
+        keys = {k for k in (key, outcome.speaker_id if outcome.anonymous else "") if k}
+        if measured:
+            for k in keys:
+                self.throttle.record(k, accepted=outcome.fusion.accepted)
+                if outcome.fusion.decision is Decision.BORDERLINE:
+                    self._step_up[k] = time.monotonic()
+                else:
+                    self._step_up.pop(k, None)
         return outcome
 
     def _verify(self, challenge_id: str, audio_bytes: bytes, *, extension: str) -> VerificationOutcome:
@@ -1042,7 +1048,8 @@ class Pipeline:
         speaker_id = challenge.speaker_id
         if speaker_id == ANONYMOUS_ID:
             speaker_id = self._identify(voice_audio)
-            notes.append(f"Identified by voice as {speaker_id!r}." if speaker_id else "No enrolled account matched the voice.")
+            # No account id here: these notes go to an unauthenticated client, and a rejected stranger must not learn which account they sounded like.
+            notes.append("An enrolled account was matched by voice." if speaker_id else "No enrolled account matched the voice.")
         branches.append(self._speaker_branch(speaker_id, voice_audio, notes, detail_suffix=span_note))
         result = fuse(branches, self._policy(strict_voice=challenge.strict_voice, phrase=True))
         return VerificationOutcome(

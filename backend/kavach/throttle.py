@@ -59,6 +59,23 @@ class AttemptThrottle:
             delay = min(self.max_delay, self.base_delay * 2 ** (over - 1))
             return max(0.0, failures[-1] + delay - self._clock())
 
+    def longest_wait(self) -> float:
+        """The longest wait over every identity: what a login that has not said who it is must honour.
+
+        An anonymous login could otherwise sidestep the account it is attacking by never naming it."""
+        if not self.enabled:
+            return 0.0
+        with self._lock:
+            return max([0.0] + [self._wait_unlocked(k) for k in list(self._failures)])
+
+    def _wait_unlocked(self, key: str) -> float:
+        failures = self._live(key)
+        over = len(failures) - self.free_attempts
+        if over <= 0:
+            return 0.0
+        delay = min(self.max_delay, self.base_delay * 2 ** (over - 1))
+        return max(0.0, failures[-1] + delay - self._clock())
+
     def record(self, key: str, *, accepted: bool) -> None:
         """Note the outcome of an attempt: a success forgets the failures, a failure adds one."""
         with self._lock:

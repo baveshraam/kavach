@@ -541,3 +541,53 @@ class TestSignInWithoutClaimingAnIdentity:
 
     def test_only_a_phrase_challenge_may_be_anonymous(self, client, studio_speaker):
         assert client.post("/api/challenge", json={"speakerId": "anonymous", "kind": "question"}).status_code == 404
+
+
+class TestSignInCannotBeUsedToSidestepTheThrottleOrLearnWhoIsEnrolled:
+    """Findings of the commit security review: naming nobody must not buy a second budget of tries or reveal an account."""
+
+    @pytest.fixture()
+    def studio_speaker(self, client: TestClient, store: Store) -> str:
+        sid = client.post("/api/speakers", json={"displayName": "Presenter", "consentGiven": True}).json()["id"]
+        payload = SpeakerTemplate.from_embeddings(sid, [SpeakerEmbedding(TEMPLATE_VEC)]).to_dict()
+        store.save_template(sid, {**payload, "provenance": {"source": "studio"}})
+        return sid
+
+    def fail_anonymously(self, client, pipeline, tmp_path):
+        c = issue(client, "anonymous")
+        result, _ = login(client, pipeline, tmp_path, c, heard=" ".join(c["phrase"]), cosine=0.25)
+        assert result["decision"] == "REJECT"
+        return result
+
+    def test_anonymous_failures_count_against_the_account_the_voice_matched(self, client, pipeline, studio_speaker, tmp_path):
+        for _ in range(4):
+            self.fail_anonymously(client, pipeline, tmp_path)
+        # the account itself is now slowed for a login that DOES name it: no second budget of tries
+        blocked = client.post("/api/challenge", json={"speakerId": studio_speaker, "kind": "phrase"})
+        assert blocked.status_code == 429
+
+    def test_a_slowed_account_also_slows_a_login_that_names_nobody(self, client, pipeline, studio_speaker):
+        for _ in range(4):
+            pipeline.throttle.record(studio_speaker, accepted=False)
+        assert client.post("/api/challenge", json={"speakerId": "anonymous", "kind": "phrase"}).status_code == 429
+
+    def test_a_refused_stranger_is_not_told_which_account_they_resembled(self, client, pipeline, studio_speaker, tmp_path):
+        result = self.fail_anonymously(client, pipeline, tmp_path)
+        assert result["speakerId"] == ""
+        assert studio_speaker not in " ".join(result["explanation"])
+
+    def test_the_owner_is_still_named_on_an_accept(self, client, pipeline, studio_speaker, tmp_path):
+        c = issue(client, "anonymous")
+        ok, _ = login(client, pipeline, tmp_path, c, heard=" ".join(c["phrase"]), cosine=0.85)
+        assert ok["decision"] == "ACCEPT" and ok["speakerId"] == studio_speaker
+
+    def test_the_dataset_page_never_builds_a_path_from_a_hostile_display_name(self, client, settings, tmp_path):
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "index.jsonl").write_text("not a clip record\n", encoding="utf-8")
+        for name in ("../outside", "..\\outside", "a/b", "S0 4"):
+            r = client.post("/api/speakers", json={"displayName": name, "consentGiven": True})
+            assert r.status_code == 201, r.text
+        d = client.get("/api/dataset")
+        assert d.status_code == 200, d.text
+        assert all(row["studioClips"] == 0 for row in d.json()["speakers"])

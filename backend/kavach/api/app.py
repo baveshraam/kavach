@@ -27,6 +27,7 @@ TWO THINGS A REVIEWER WILL LOOK FOR
 from __future__ import annotations
 
 import math
+import re
 import time
 from pathlib import Path
 from typing import Annotated, Any
@@ -202,8 +203,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         rows = []
         for row in store.list_speakers():
             pseudonym = row["display_name"].split(" · ")[0].strip()
+            # The display name is user-chosen: only a well-formed pseudonym may become a path under data/studio.
             studio = cfg.data_dir / "studio" / pseudonym
-            clips = StudioStore(studio, pseudonym).clips() if (studio / "index.jsonl").exists() else []
+            valid = re.fullmatch(r"[A-Za-z0-9]{1,8}", pseudonym) is not None
+            clips = StudioStore(studio, pseudonym).clips() if valid and (studio / "index.jsonl").exists() else []
             by_session: dict[str, int] = {}
             by_kind: dict[str, int] = {}
             for c in clips:
@@ -702,7 +705,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """Issue a single-use, expiring, adaptively-targeted challenge."""
         if not (payload.kind == "phrase" and payload.speaker_id == ANONYMOUS_ID):
             _require_speaker(store, payload.speaker_id)
-        wait = pipeline.throttle.wait_seconds(payload.speaker_id)
+        wait = (pipeline.throttle.longest_wait() if payload.speaker_id == ANONYMOUS_ID
+                else pipeline.throttle.wait_seconds(payload.speaker_id))
         if wait > 0:
             seconds = max(1, math.ceil(wait))
             raise HTTPException(
@@ -763,6 +767,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             result.explanation = list(result.explanation) + outcome.notes
         if outcome.speaker_id:
             store.record_auth(outcome.speaker_id, result.model_dump(by_alias=True))
+        if outcome.anonymous and result.decision != "ACCEPT":
+            result.speaker_id = ""  # a refused stranger is not told which account their voice resembled
         return result
 
     @app.get("/api/auth-history", response_model=list[schemas.AuthResult])
