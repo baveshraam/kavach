@@ -21,7 +21,9 @@ from typing import Any, Sequence
 
 from ..challenge import TEMPLATE_QUESTIONS
 from ..corpus import PROTOCOL_V1
+from ..mixed_phrase import new_mixed_phrase
 from ..phrase import DEFAULT_PHRASE_WORDS, new_phrase
+from ..tamil_words import BANK
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,7 +73,7 @@ DEMO_SENTENCES: tuple[tuple[str, str, str], ...] = (
 )
 
 #: Rough seconds per recording including the pause to read the prompt.
-_SECONDS = {"read": 9.0, "free": 40.0, "fact": 15.0, "words": 8.0}
+_SECONDS = {"read": 9.0, "free": 40.0, "fact": 15.0, "words": 8.0, "tamil": 5.0, "mixed": 12.0}
 
 
 def words_items(session_id: str, n: int, n_words: int = DEFAULT_PHRASE_WORDS) -> list[PlanItem]:
@@ -88,6 +90,24 @@ def words_items(session_id: str, n: int, n_words: int = DEFAULT_PHRASE_WORDS) ->
     return out
 
 
+def tamil_word_items(session_id: str) -> list[PlanItem]:
+    """One prompt per Tamil word of the bank, in an order fixed by the session id: the experimental
+    mixed login's word dataset (`kavach.tamil_dataset`). Say the word once, clearly."""
+    order = list(BANK)
+    random.Random(f"kavach-tamil-{session_id}").shuffle(order)
+    return [PlanItem("tamil", w.word_id, f"{w.gloss} ({w.roman})", w.ta, 1) for w in order]
+
+
+def mixed_items(session_id: str, n: int = 20) -> list[PlanItem]:
+    """`n` mixed challenges (ten English words, two Tamil), each different, the same every time this is called."""
+    rng = random.Random(f"kavach-mixed-{session_id}")
+    out = []
+    for k in range(n):
+        tokens, _ = new_mixed_phrase(rng=rng)
+        out.append(PlanItem("mixed", f"mixed_{session_id}_{k + 1:02d}", "Read all the words in order, then stop", "Say: " + ", ".join(tokens), 1))
+    return out
+
+
 def fact_question(predicate: str) -> str:
     options = TEMPLATE_QUESTIONS.get(predicate, ())
     return options[0] if options else f"Tell me about your {predicate}."
@@ -100,7 +120,12 @@ def build_plan(
     *,
     phrase_words: int = DEFAULT_PHRASE_WORDS,
     voice_only: bool = False,
+    mode: str = "",
 ) -> list[PlanItem]:
+    if mode == "tamil":
+        return tamil_word_items(session_id)
+    if mode == "mixed":
+        return mixed_items(session_id)
     if voice_only:
         return words_items(session_id, VOICE_ONLY_WORDS.get(session_id, DEFAULT_VOICE_ONLY_WORDS), phrase_words)
     r = RECIPES.get(session_id, DEFAULT_RECIPE)

@@ -198,8 +198,9 @@ class Triple(Model):
 
 class ChallengeRequest(Model):
     speaker_id: str
-    kind: Literal["question", "phrase"] = "question"
-    """'phrase' is the read-these-random-words login: no facts, no network."""
+    kind: Literal["question", "phrase", "mixed"] = "question"
+    """'phrase' is the read-these-random-words login: no facts, no network. 'mixed' is the experimental
+    Tamil-English variant (ten English words, two Tamil), off unless `Settings.mixed_enabled`."""
     step_up: bool = False
     """Ask for the stricter second sample after a borderline attempt (server-checked)."""
 
@@ -208,7 +209,7 @@ class Challenge(Model):
     id: str
     speaker_id: str
     question_text: str
-    kind: Literal["question", "phrase"] = "question"
+    kind: Literal["question", "phrase", "mixed"] = "question"
     phrase: list[str] = Field(default_factory=list)
     """The words to read, for a phrase challenge; empty for a question."""
     step_up: bool = False

@@ -97,7 +97,8 @@ class Challenge:
 
     kind: str = "question"
     """'question' (answer a personal question) or 'phrase' (read these random
-    words). A phrase challenge needs no facts and no language tagger."""
+    words). A phrase challenge needs no facts and no language tagger. 'mixed' is
+    the experimental Tamil-English variant of 'phrase' (`mixed_phrase`)."""
 
     phrase: tuple[str, ...] = ()
     """The words shown to the speaker, for a phrase challenge. Not a secret:
@@ -418,6 +419,31 @@ class ChallengeGenerator:
             generator="random_words",
             kind="phrase",
             phrase=words,
+            strict_voice=strict_voice,
+        )
+        self.ledger.record(challenge)
+        return challenge
+
+    def generate_mixed(
+        self, speaker_id: str, *, n_english: int = 10, n_tamil: int = 2, pool=None, strict_voice: bool = False
+    ) -> Challenge:
+        """Issue the experimental mixed challenge: English words with Tamil words between them. No facts, no network."""
+        from .mixed_phrase import new_mixed_phrase
+
+        tokens, _ = new_mixed_phrase(n_english, n_tamil, pool=pool)
+        now = time.time()
+        challenge = Challenge(
+            id=f"chg_{secrets.token_hex(6)}",
+            speaker_id=speaker_id,
+            question_text="Please read aloud, clearly, in this order: " + ", ".join(tokens),
+            target_class=SemanticClass.OTHER,
+            expected_predicate="",
+            expected_answer="",
+            issued_at=now,
+            expires_at=now + self.ttl_seconds,
+            generator="random_mixed_words",
+            kind="mixed",
+            phrase=tuple(tokens),
             strict_voice=strict_voice,
         )
         self.ledger.record(challenge)

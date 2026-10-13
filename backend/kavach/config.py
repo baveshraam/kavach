@@ -161,6 +161,30 @@ class Settings(BaseSettings):
     Four misheard words are forgiven; a recording made for another attempt
     matches almost none of them."""
 
+    mixed_enabled: bool = False
+    """The experimental Tamil-English login (`kind="mixed"`): ten English words and two Tamil words read in
+    order. Off by default so the English-only login is the only one a deployment offers until the experiment
+    has an end-to-end result. Everything else (voice gate and threshold, replay, integrity, throttle) is the
+    English login's, unchanged."""
+
+    mixed_demo_words: bool = True
+    """Draw the two Tamil words from `tamil_words.DEMO_WORDS` (8 simple, distinct words) instead of the 101-word bank.
+    The bank needs recordings and a recogniser better than Whisper `small`; the demo set does not."""
+
+    mixed_check_tamil: bool = True
+    """Require both Tamil words, in place. Strict by default. Set false (KAVACH_MIXED_CHECK_TAMIL=false) and the mixed login
+    decides on the ten English words, the voice and the freshness and integrity gates, and says on screen that the Tamil
+    words were NOT checked; it is then an English login that happens to display two Tamil words, not a Tamil check."""
+
+    mixed_tamil_prompt: bool = False
+    """Give the Tamil decode the demo words as its initial prompt (closed-vocabulary biasing). Off until a real
+    microphone test says it helps; it can make the recogniser write those words when they were not said, which
+    is why the words check still needs the SPECIFIC words of this challenge, in place, and the voice gate."""
+
+    mixed_whisper_model: str = ""
+    """Whisper checkpoint used by the mixed login only; empty means `whisper_model`. The English login never
+    reads this, so trying a larger model for Tamil cannot change the baseline."""
+
     throttle_enabled: bool = True
     throttle_free_attempts: int = 3
     throttle_base_delay: float = 5.0

@@ -31,6 +31,8 @@ against a UBM that is mostly one person.
 
 from __future__ import annotations
 
+import json
+import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -58,11 +60,19 @@ from ..integrity import IntegrityChecker, IntegrityReport, build_integrity_branc
 from ..lid.lexicon import MIN_USEFUL_COVERAGE
 from ..lid.pipeline import LIDPipeline
 from ..matcher import AnswerMatcher, SemanticMatcher
+from ..mixed_phrase import MIXED_EN_PROMPT, MIXED_TA_DEMO_PROMPT, MIXED_TA_PROMPT, match_mixed
 from ..phrase import match_phrase
+from ..tamil_words import BANK, demo_pool, load_recorded
 from ..calibrate_voice import POLICY_FILE, PolicyError, VoicePolicy, load_voice_policy
 from ..throttle import AttemptThrottle
 from .converters import utterance_tokens_from_wire
 from .store import Store, StoreError
+
+logger = logging.getLogger("kavach.mixed")
+
+#: The Tamil words a mixed challenge may use are restricted to those the recogniser heard from the enrolled
+#: speaker (`kavach.tamil_dataset`) only when at least this many were. Below it the whole bank is used.
+MIN_MIXED_POOL = 30
 
 #: Enrolled speakers needed before a background model means anything. Below
 #: this the LLR is a comparison against one other person, not a population.
@@ -158,6 +168,7 @@ class Pipeline:
         )
 
         self._asr: WhisperASR | None = None
+        self._mixed_asr: WhisperASR | None = None
         self._embedder: ECAPAEmbedder | None = None
         self._lid: LIDPipeline | None = None
         self._matcher: AnswerMatcher | None = None
@@ -238,6 +249,31 @@ class Pipeline:
                 self._asr = None
                 self._failed["asr"] = str(exc)
         return self._asr
+
+    @property
+    def mixed_asr(self) -> WhisperASR | None:
+        """The recogniser for the mixed login: `mixed_whisper_model` if set, otherwise the English login's own."""
+        model = self.settings.mixed_whisper_model
+        if not model or model == self.settings.whisper_model:
+            return self.asr
+        if self.settings.offline:
+            self._failed.setdefault("mixed_asr", _OFFLINE_REASON)
+            return None
+        if self._mixed_asr is None and "mixed_asr" not in self._failed:
+            try:
+                asr = WhisperASR(
+                    model_size=model,
+                    device=self.settings.whisper_device,
+                    compute_type=self.settings.whisper_compute_type,
+                    language=self.settings.whisper_language,
+                    suppress_numerals=self.settings.suppress_numerals,
+                )
+                _ = asr.model
+                self._mixed_asr = asr
+            except Exception as exc:
+                self._mixed_asr = None
+                self._failed["mixed_asr"] = str(exc)
+        return self._mixed_asr
 
     @property
     def embedder(self) -> ECAPAEmbedder | None:
@@ -743,7 +779,7 @@ class Pipeline:
                 facts, or a step-up is requested without a recent borderline attempt.
         """
         if step_up:
-            if kind != "phrase":
+            if kind not in ("phrase", "mixed"):
                 raise ChallengeError("A step-up challenge is a read-these-words challenge.")
             earned = self._step_up.pop(speaker_id, None)
             if earned is None or time.monotonic() - earned > self.STEP_UP_WINDOW_SEC:
@@ -755,6 +791,12 @@ class Pipeline:
             return self.challenges.generate_phrase(
                 speaker_id, n_words=self.settings.phrase_words, strict_voice=step_up
             )
+        if kind == "mixed":
+            if not self.settings.mixed_enabled:
+                raise ChallengeError(
+                    "The Tamil-English mixed login is an experiment and is switched off (KAVACH_MIXED_ENABLED)."
+                )
+            return self.challenges.generate_mixed(speaker_id, strict_voice=step_up, pool=self._mixed_pool())
         skg = self.store.get_skg(speaker_id)
         if len(skg) == 0:
             raise ChallengeError(
@@ -910,6 +952,8 @@ class Pipeline:
 
         if challenge.kind == "phrase":
             return self._verify_phrase(challenge, audio, branches, notes, started, integrity)
+        if challenge.kind == "mixed":
+            return self._verify_mixed(challenge, audio, branches, notes, started, integrity)
 
         branches.append(self._speaker_branch(speaker_id, audio, notes))
 
@@ -1063,6 +1107,125 @@ class Pipeline:
             integrity=integrity,
             phrase=match,
         )
+
+    def _mixed_pool(self) -> list[Any] | None:
+        """The Tamil words a mixed challenge may use: the demo set, else bank words the recogniser heard the speaker say, else None (whole bank)."""
+        if self.settings.mixed_demo_words:
+            return demo_pool()
+        try:
+            heard = {r["word_id"] for r in load_recorded(self.settings.data_dir) if r.get("heard")}
+        except (OSError, ValueError, KeyError):
+            return None
+        pool = [w for w in BANK if w.word_id in heard]
+        return pool if len(pool) >= MIN_MIXED_POOL else None
+
+    def _verify_mixed(
+        self,
+        challenge: Challenge,
+        audio: Audio,
+        branches: list[BranchScore],
+        notes: list[str],
+        started: float,
+        integrity: IntegrityReport,
+    ) -> VerificationOutcome:
+        """Score a 'ten English words and two Tamil words' response: this challenge's words, then the voice.
+
+        The same gates as `_verify_phrase` and nothing relaxed: liveness and integrity already ran in `_verify`,
+        the words check is a gate that fails closed, and the voice is the hard gate with the English login's
+        threshold. Differences: two decodes (the English one for the English words, the Tamil one for the Tamil
+        words, because no single decode hears both), and a words check that names the stage it failed at.
+        The voice score and the challenge-matching result are separate branches and are logged separately.
+        """
+        threshold = self.settings.phrase_min_match
+        asr = self.mixed_asr
+        annotation: Annotation | None = None
+        match = None
+        voice_audio, span_note = audio, ""
+        if asr is None:
+            reason = self._failed.get("mixed_asr") or self._failed.get("asr", "speech recognition is not available")
+            notes.append(f"Speech recognition is unavailable: {reason}")
+            branches.append(
+                BranchScore(
+                    branch=Branch.PHRASE, score=0.0, threshold=threshold, weight=0.0,
+                    available=False, detail=reason,
+                )
+            )
+        else:
+            fast = self.settings.live_fast_asr
+            english = asr.transcribe(audio, language="en", initial_prompt=MIXED_EN_PROMPT, fast=fast)
+            ta_prompt = MIXED_TA_DEMO_PROMPT if self.settings.mixed_tamil_prompt else MIXED_TA_PROMPT
+            tamil = asr.transcribe(audio, language="ta", initial_prompt=ta_prompt, fast=fast)
+            match = match_mixed(challenge.phrase, english, tamil, min_english=threshold, check_tamil=self.settings.mixed_check_tamil)
+            if not self.settings.mixed_check_tamil:
+                heard = [w for w, s in match.tamil_status.items() if s == "heard"]
+                notes.append(f"Tamil words: {len(heard)} of {match.tamil_total} heard ({', '.join(f'{w}: {s.replace(chr(95), chr(32))}' for w, s in match.tamil_status.items())}).")
+            branches.append(
+                BranchScore(
+                    branch=Branch.PHRASE, score=match.score, threshold=threshold,
+                    weight=0.0, detail=match.detail,
+                )
+            )
+            if match.failure_stage:
+                why = {
+                    "tamil_words": "A Tamil word was not written by the Tamil decode: either another word was said or the recogniser "
+                                   "failed on it, and this check cannot tell which. It refuses either way.",
+                    "english_words": "Too few of the English words were heard in order.",
+                    "order": "A Tamil word was not heard between the English words that surround it.",
+                    "no_timings": "A decode returned no word timings, so the order of the words cannot be verified.",
+                }.get(match.failure_stage, "")
+                notes.append(f"Words check failed at the {match.failure_stage.replace('_', ' ')} stage. {why}".strip())
+            notes.append(f"Tamil decode heard: {tamil.text or '(nothing)'}")
+            annotation = Annotation(
+                transcript=english,
+                tokens=UtteranceTokens(
+                    utterance_id=challenge.id, tokens=[], speaker_id=challenge.speaker_id,
+                    transcript=english.text,
+                ),
+            )
+            voice_audio, span_note = self._phrase_span_audio(audio, match.span_ms)
+
+        speaker_id = challenge.speaker_id
+        if speaker_id == ANONYMOUS_ID:
+            speaker_id = self._identify(voice_audio)
+            notes.append("The voice was compared with the enrolled accounts.")  # same words whether or not one matched: no oracle
+        voice = self._speaker_branch(speaker_id, voice_audio, notes, detail_suffix=span_note)
+        branches.append(voice)
+        result = fuse(branches, self._policy(strict_voice=challenge.strict_voice, phrase=True))
+        # Two separate facts, logged side by side and never merged: how the voice scored, and what the words check found.
+        logger.info("mixed_login %s", json.dumps({
+            "challenge": challenge.id,
+            "decision": result.decision.value,
+            "voice": {"score": round(voice.score, 4) if voice.available else None, "threshold": round(voice.threshold, 4), "available": voice.available},
+            "challenge_match": match.to_log() if match is not None else None,
+        }))
+        self._log_mixed_attempt(challenge, result, voice, match, english if asr is not None else None, tamil if asr is not None else None)
+        return VerificationOutcome(
+            fusion=result,
+            annotation=annotation,
+            csbg_score=None,
+            speaker_id=speaker_id,
+            challenge_id=challenge.id,
+            latency_ms=int((time.perf_counter() - started) * 1000),
+            notes=notes,
+            integrity=integrity,
+            phrase=match,
+        )
+
+    def _log_mixed_attempt(self, challenge: Challenge, result: FusionResult, voice: BranchScore, match: Any, english: Any, tamil: Any) -> None:
+        """Append what each decode heard beside the words check and the voice score, for tuning. Local, git-ignored (`data/`)."""
+        try:
+            path = Path(self.settings.data_dir) / "tamil_words" / "live_mixed.jsonl"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            row = {
+                "at": time.strftime("%Y-%m-%d %H:%M:%S"), "decision": result.decision.value, "challenge": list(challenge.phrase),
+                "english_decode": getattr(english, "text", None), "tamil_decode": getattr(tamil, "text", None),
+                "words_check": match.to_log() if match is not None else None,
+                "voice": {"score": round(voice.score, 4) if voice.available else None, "threshold": round(voice.threshold, 4)},
+            }
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+        except OSError:
+            pass  # diagnostics must never break a login
 
     #: Margin kept around the phrase when the voice is scored on it alone.
     SPAN_MARGIN_SEC = 0.2

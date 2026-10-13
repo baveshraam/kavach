@@ -35,10 +35,11 @@ export const apiClient = {
     return fetchApi('/api/health');
   },
 
-  studioPlan: async (speaker: string, session?: string): Promise<StudioPlan> => {
+  studioPlan: async (speaker: string, session?: string, mode?: string): Promise<StudioPlan> => {
     if (USE_MOCK) throw new Error('The Studio needs the real backend.');
     const q = new URLSearchParams({ speaker });
     if (session) q.set('session', session);
+    if (mode) q.set('mode', mode);
     return fetchApi(`/api/studio/plan?${q}`);
   },
 
@@ -198,7 +199,7 @@ export const apiClient = {
     return fetchApi(`/api/speakers/${speakerId}/voiceprint`);
   },
 
-  issueChallenge: async (speakerId: string, kind: 'question' | 'phrase' = 'question', stepUp = false): Promise<Challenge> => {
+  issueChallenge: async (speakerId: string, kind: 'question' | 'phrase' | 'mixed' = 'question', stepUp = false): Promise<Challenge> => {
     if (USE_MOCK) {
       return delay(300).then(() => ({
         id: `chg_${Math.random().toString(36).substr(2, 6)}`,

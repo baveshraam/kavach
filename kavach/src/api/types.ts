@@ -54,7 +54,7 @@ export interface Challenge {
   id: string;
   speakerId: string;
   questionText: string;        // code-mixed Tamil-English, or the instruction for a phrase challenge
-  kind: 'question' | 'phrase'; // 'phrase' = read these random words (no facts, no network)
+  kind: 'question' | 'phrase' | 'mixed'; // 'phrase' = read these random words (no facts, no network); 'mixed' = the experimental ten English + two Tamil words
   phrase: string[];            // the words to read, for a phrase challenge; empty otherwise
   stepUp: boolean;             // the stricter second sample that follows a borderline attempt
   targetClass: SemanticClass;
@@ -141,7 +141,7 @@ export interface Voiceprint {
   nClips: number; selfConsistency: number;
   provenance: { source: string; sessions: string[]; devices: string[]; n_clips: number } | null;
 }
-export interface StudioPlanItem { kind: 'read' | 'free' | 'fact' | 'words'; promptId: string; textEn: string; textTa: string; repeat: number }
+export interface StudioPlanItem { kind: 'read' | 'free' | 'fact' | 'words' | 'tamil' | 'mixed'; promptId: string; textEn: string; textTa: string; repeat: number }
 export interface StudioPlan {
   speaker: string; sessionId: string; hasFacts: boolean; estimatedMinutes: number;
   devices: string[]; environments: string[]; items: StudioPlanItem[];

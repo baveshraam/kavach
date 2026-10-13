@@ -111,9 +111,11 @@ export function Unlock() {
   const [note, setNote] = useState<string | null>(null);
 
   const nameOf = (id?: string) => accountName(speakers?.find(s => s.id === id)?.displayName);
+  // /unlock?mode=mixed: the experimental Tamil-English login (ten English words, two Tamil). Everything else is the same gates.
+  const mixed = new URLSearchParams(window.location.search).get('mode') === 'mixed';
 
   const issue = useMutation({
-    mutationFn: (stepUp: boolean) => apiClient.issueChallenge(ANONYMOUS, 'phrase', stepUp),
+    mutationFn: (stepUp: boolean) => apiClient.issueChallenge(ANONYMOUS, mixed ? 'mixed' : 'phrase', stepUp),
     onSuccess: c => { setChallenge(c); setResult(null); setNote(null); setWait(0); },
     onError: e => setWait(retrySeconds((e as Error).message)),
   });
@@ -203,6 +205,7 @@ export function Unlock() {
                     <span className="tnum text-[12.5px] w-16 text-right text-app-text-muted">{expired ? 'expired' : `${Math.ceil(remaining / 1000)} s`}</span>
                   </div>
 
+                  {challenge.kind === 'mixed' && <Badge tone="accent">Experimental: read the English words and switch to Tamil for the Tamil words</Badge>}
                   {challenge.stepUp && <Badge tone="warning">Second sample: the voice must match outright this time</Badge>}
 
                   <div className="flex flex-wrap justify-center gap-x-5 gap-y-3 max-w-xl" aria-label="Words to read">
@@ -383,7 +386,7 @@ function Verdict({ result, challenge, name, onAgain, onStepUp, busy, wait }: {
         <div className="min-w-0">
           <div className="font-serif text-[30px] leading-tight">{ok ? `Welcome, ${name}` : border ? 'Not sure yet' : 'Not recognised'}</div>
           <p className="text-[13.5px] text-app-text-muted mt-1">
-            {ok ? 'Your voice was recognised and the words were the ones shown.' : border ? 'The voice is close to an enrolled account but not conclusive. One more phrase, and it has to match outright.' : first}
+            {ok ? (challenge.kind === 'mixed' ? 'Your voice was recognised and the English words were the ones shown.' : 'Your voice was recognised and the words were the ones shown.') : border ? 'The voice is close to an enrolled account but not conclusive. One more phrase, and it has to match outright.' : first}
           </p>
         </div>
       </div>
@@ -391,7 +394,7 @@ function Verdict({ result, challenge, name, onAgain, onStepUp, busy, wait }: {
       <div className="flex flex-col gap-2.5">
         <Row label="Fresh challenge" b={live} detail="unused and in time" />
         <Row label="Recording untouched" b={integ} detail="not a copy of one seen before" />
-        <Row label="Words said" b={words} detail={words ? `${Math.round(words.score * total)} of ${total} words, in order` : undefined} />
+        <Row label="Words said" b={words} detail={words ? (challenge.kind === 'mixed' ? (words.passed ? 'the English words, in order' : 'see the reason above') : `${Math.round(words.score * total)} of ${total} words, in order`) : undefined} />
         <Row label="Voice" b={voice} detail={voice ? (voice.passed ? 'recognised' : 'not recognised') : undefined} />
       </div>
 

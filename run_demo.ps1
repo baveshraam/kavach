@@ -33,6 +33,10 @@ $env:KAVACH_CLONE_VICTIMS = '["S04"]'
 # The preflight (python -m kavach.demo_check --flows) drives failed logins against the presenter;
 # this lets it clear the strikes afterwards so the owner starts the demo with a clean slate.
 $env:KAVACH_DEMO_TOOLS = "true"
+# The experimental Tamil-English login (/unlock?mode=mixed): ten English words, two Tamil. The English /unlock is unaffected.
+$env:KAVACH_MIXED_ENABLED = "true"
+# Mixed login: the two Tamil words are tagged heard / not heard; the decision rests on the English words and the voice.
+$env:KAVACH_MIXED_CHECK_TAMIL = "false"
 
 if ($Prefetch) {
     Write-Host "Downloading every model the demo needs (run once, on a good connection) ..." -ForegroundColor Cyan

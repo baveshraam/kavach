@@ -490,14 +490,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return StudioStore(cfg.data_dir / "studio" / pseudonym, pseudonym)
 
     @app.get("/api/studio/plan")
-    def studio_plan(speaker: str, store: StoreDep, cfg: SettingsDep, session: str = "") -> dict[str, Any]:
+    def studio_plan(speaker: str, store: StoreDep, cfg: SettingsDep, session: str = "", mode: str = "") -> dict[str, Any]:
         studio = _studio(cfg, speaker)
         session_id = session or studio.next_session_id()
         try:
             facts = list(store.get_skg(resolve_speaker_id(store.list_speakers(), speaker)))
         except BankError:
             facts = []
-        items = build_plan(session_id, facts, phrase_words=cfg.phrase_words, voice_only=cfg.studio_voice_only)
+        items = build_plan(session_id, facts, phrase_words=cfg.phrase_words, voice_only=cfg.studio_voice_only, mode=mode)
         return {
             "speaker": speaker,
             "sessionId": session_id,
@@ -716,7 +716,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         cfg: SettingsDep,
     ) -> schemas.Challenge:
         """Issue a single-use, expiring, adaptively-targeted challenge."""
-        if not (payload.kind == "phrase" and payload.speaker_id == ANONYMOUS_ID):
+        if not (payload.kind in ("phrase", "mixed") and payload.speaker_id == ANONYMOUS_ID):
             _require_speaker(store, payload.speaker_id)
         wait = (pipeline.throttle.longest_wait() if payload.speaker_id == ANONYMOUS_ID
                 else pipeline.throttle.wait_seconds(payload.speaker_id))

@@ -109,7 +109,8 @@ def test_a_corrupt_complete_line_fails_loudly_and_is_not_built_on(tmp_path) -> N
 
 
 def test_the_closed_sets_are_what_the_spec_says() -> None:
-    assert KINDS == ("read", "free", "fact", "words")
+    # The four baseline kinds are unchanged and first; "tamil" and "mixed" are the experimental Tamil-English additions.
+    assert KINDS == ("read", "free", "fact", "words", "tamil", "mixed")
     assert DEVICES == ("DEMO_LAPTOP_MIC", "PHONE", "HEADSET", "OTHER")
     assert "QUIET_ROOM" in ENVIRONMENTS
 

@@ -6,7 +6,7 @@ import { AudioRecorder } from '../components/ui/AudioRecorder';
 import { Card, CardHeader, CardBody, Button, Field, Select, Input, Badge, Notice, Spinner } from '../components/ui/kit';
 import type { StudioCheck, StudioPlanItem } from '../api/types';
 
-const KIND_LABEL: Record<string, string> = { read: 'Read aloud', free: 'Speak freely', fact: 'Answer about yourself', words: 'Read the words' };
+const KIND_LABEL: Record<string, string> = { read: 'Read aloud', free: 'Speak freely', fact: 'Answer about yourself', words: 'Read the words', tamil: 'Say the Tamil word', mixed: 'Read the English and Tamil words' };
 
 /** One queue entry per repetition, in the plan's order. */
 function expand(items: StudioPlanItem[]) {
@@ -41,7 +41,9 @@ export function Studio() {
     localStorage.setItem(SAVED_KEY, JSON.stringify({ speaker, session, index, started, device, environment }));
   }, [speaker, session, index, started, device, environment]);
 
-  const plan = useQuery({ queryKey: ['studioPlan', speaker, session], queryFn: () => apiClient.studioPlan(speaker, session || undefined), retry: false });
+  // /studio?mode=tamil records the Tamil word list; /studio?mode=mixed records mixed challenges (experimental Tamil-English login).
+  const mode = useMemo(() => new URLSearchParams(window.location.search).get('mode') ?? '', []);
+  const plan = useQuery({ queryKey: ['studioPlan', speaker, session, mode], queryFn: () => apiClient.studioPlan(speaker, session || undefined, mode || undefined), retry: false });
   const summary = useQuery({ queryKey: ['studioSummary', speaker], queryFn: () => apiClient.studioSummary(speaker), retry: false, enabled: plan.isSuccess });
   const queue = useMemo(() => expand(plan.data?.items ?? []), [plan.data]);
   const sessionId = session || plan.data?.sessionId || 'S1';
