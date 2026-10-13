@@ -624,3 +624,38 @@ class TestSecondReviewPass:
         matched, _ = login(client, pipeline, tmp_path, c, heard=" ".join(c["phrase"]), cosine=0.25)
         assert note(none_matched) and note(none_matched) == note(matched)
         assert none_matched["speakerId"] == "" and matched["speakerId"] == ""
+
+
+class TestBurstOfChallengesCannotOutrunTheThrottle:
+    """Review finding: the wait was checked only when a challenge was issued, so challenges collected before the first failure were all answerable."""
+
+    def attempt(self, client, pipeline, tmp_path, challenge):
+        pipeline._embedder = FakeEmbedder(probe_with_cosine(0.2))
+        pipeline._asr = FakeASR(" ".join(challenge["phrase"]))
+        return client.post("/api/authenticate", files={"audio": ("a.wav", wav_bytes(tmp_path), "audio/wav")},
+                           data={"challengeId": challenge["id"]})
+
+    def test_pre_issued_challenges_stop_working_once_the_account_is_slowed(self, client, pipeline, speaker, tmp_path):
+        burst = [issue(client, speaker) for _ in range(8)]  # all issued while no failure is on record
+        codes = [self.attempt(client, pipeline, tmp_path, c).status_code for c in burst]
+        assert codes[:4] == [200, 200, 200, 200]  # three free failures, then the fourth is scored and the account is slowed
+        assert set(codes[4:]) == {429}
+
+    def test_the_same_holds_for_an_anonymous_burst(self, client, pipeline, store, tmp_path):
+        sid = client.post("/api/speakers", json={"displayName": "Presenter", "consentGiven": True}).json()["id"]
+        payload = SpeakerTemplate.from_embeddings(sid, [SpeakerEmbedding(TEMPLATE_VEC)]).to_dict()
+        store.save_template(sid, {**payload, "provenance": {"source": "studio"}})
+        burst = [issue(client, "anonymous") for _ in range(8)]
+        codes = [self.attempt(client, pipeline, tmp_path, c).status_code for c in burst]
+        assert set(codes[4:]) == {429}
+
+    def test_a_refused_attempt_does_not_consume_the_challenge(self, client, pipeline, speaker, tmp_path):
+        burst = [issue(client, speaker) for _ in range(6)]
+        for c in burst[:4]:
+            self.attempt(client, pipeline, tmp_path, c)
+        blocked = self.attempt(client, pipeline, tmp_path, burst[5])
+        assert blocked.status_code == 429 and int(blocked.headers["Retry-After"]) >= 1
+        pipeline.throttle.reset()  # the owner waits it out (or the demo reset clears it); the challenge still works
+        pipeline._embedder = FakeEmbedder(probe_with_cosine(0.9))
+        ok = client.post("/api/authenticate", files={"audio": ("a.wav", wav_bytes(tmp_path), "audio/wav")}, data={"challengeId": burst[5]["id"]})
+        assert ok.status_code == 200 and ok.json()["decision"] == "ACCEPT"

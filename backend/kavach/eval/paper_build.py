@@ -286,8 +286,8 @@ def write_tables(d: dict[str, Any], out: Path) -> None:
     w = d["whole"]["variants"]["baseline"]["test"]
     c = d["poc"]["ecapa"]["variants"]["baseline"]["test"]
     a = d["pop"]["ecapa"]["artefact"]
-    rows = [["Owner (S04), 5 s probes vs 5 s strangers", pct(c["eer"]), num(c["gap"], 3)],
-            ["Owner (S04), whole clips vs 5 s strangers", pct(w["eer"]), num(w["gap"], 3)],
+    rows = [["Enrolled speaker (S04), 5 s probes vs 5 s strangers", pct(c["eer"]), num(c["gap"], 3)],
+            ["Enrolled speaker (S04), whole clips vs 5 s strangers", pct(w["eer"]), num(w["gap"], 3)],
             ["LibriSpeech, 5 s vs 5 s", pct(a["matched_probes"]["eer"]), "--"],
             ["LibriSpeech, whole vs whole", pct(a["matched_whole"]["eer"]), "--"],
             ["LibriSpeech, whole vs 5 s", pct(a["mismatched"]["eer"]), "--"]]
@@ -305,7 +305,7 @@ def write_tables(d: dict[str, Any], out: Path) -> None:
             rows.append([LABEL[e], label, num(rep["score_mean"], 3), pct(rep["rules"]["eer"]["rate"], 1),
                          pct(vo["eer"], 1), pct(vo["owner_frr_at_attack_far_0.05"], 1)])
     (out / "tab_spoof.tex").write_text(_tab(
-        ["Model", "Attack", "Mean", "Accepted", "Atk. EER", "Owner rej."],
+        ["Model", "Attack", "Mean", "Accepted", "Atk. EER", "Genuine rej."],
         rows, "llcccc"), encoding="utf-8")
 
     # attacker's budget, ECAPA and ResNet baseline
@@ -357,11 +357,11 @@ def write_figures(d: dict[str, Any], paper: Path, out: Path) -> None:
     ax.hist(I, bins=bins, density=True, color="#cfcfcf", edgecolor="white", linewidth=0.3, label=f"strangers ($n$={len(I)})", zorder=2)
     ax.hist(sp["knn_vc__baseline"], bins=bins, density=True, histtype="step", color=INK[2], linestyle="--", linewidth=1.2,
             label=f"kNN-VC clone ($n$={len(sp['knn_vc__baseline'])})", zorder=3)
-    ax.hist(G, bins=bins, density=True, histtype="step", color=INK[0], linewidth=1.3, label=f"owner ($n$={len(G)})", zorder=4)
+    ax.hist(G, bins=bins, density=True, histtype="step", color=INK[0], linewidth=1.3, label=f"genuine ($n$={len(G)})", zorder=4)
     for i, t in enumerate(d["poc"]["ecapa"]["variants"]["baseline"]["folds"].values()):
         ax.axvline(t["thresholds"]["eer"], color="#555555", linewidth=0.6, linestyle=":", zorder=1, label="fold thresholds" if i == 0 else None)
     ax.set_ylim(top=ax.get_ylim()[1] * 1.45)
-    ax.set_xlabel("Cosine score against the owner's template")
+    ax.set_xlabel("Cosine score against the enrolled template")
     ax.set_ylabel("Density")
     ax.legend(loc="upper left", framealpha=0.9, facecolor="white", edgecolor="none", frameon=True)
     fig.tight_layout(); save(fig, out / "fig_scores"); close(fig)
@@ -377,7 +377,7 @@ def write_figures(d: dict[str, Any], paper: Path, out: Path) -> None:
     shades = (INK[0], INK[2], INK[1])
     floor = 100.0
     curves = []
-    for k, (title, key) in enumerate((("(a) strangers", "baseline__impostor"), ("(b) kNN-VC clone of the owner", None))):
+    for k, (title, key) in enumerate((("(a) strangers", "baseline__impostor"), ("(b) kNN-VC clone of the enrolled speaker", None))):
         for i, e in enumerate(EMBEDDERS):
             zz = np.load(paper / "results_poc" / e / "scores.npz")
             bad = zz[key] if key else np.load(paper / "results_spoof" / e / "scores.npz")["knn_vc__baseline"]
@@ -391,7 +391,7 @@ def write_figures(d: dict[str, Any], paper: Path, out: Path) -> None:
         ax.plot([floor, 100], [floor, 100], color="#cccccc", linewidth=0.6, zorder=1)
         ax.set_xscale("log"); ax.set_yscale("log"); ax.set_xlim(floor, 100); ax.set_ylim(floor, 100)
         ax.set_xlabel("False acceptance rate (%)")
-        ax.set_title(("(a) strangers", "(b) kNN-VC clone of the owner")[k], loc="left")
+        ax.set_title(("(a) strangers", "(b) kNN-VC clone of the enrolled speaker")[k], loc="left")
     axes[0].set_ylabel("False rejection rate (%)")
     axes[0].legend(loc="upper right", framealpha=0.9, facecolor="white", edgecolor="none", frameon=True)
     fig.tight_layout(); save(fig, out / "fig_det"); close(fig)

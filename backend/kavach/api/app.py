@@ -752,6 +752,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         challengeId: Annotated[str, Form()],
     ) -> schemas.AuthResult:
         """Score a spoken response and return the decision with its reasoning."""
+        # The wait is enforced when the answer arrives, not only when the challenge was issued: otherwise a burst of
+        # challenges collected before the first failure could all be answered. The challenge is not consumed by a refusal.
+        pending = pipeline.ledger.get(challengeId)
+        if pending is not None:
+            wait = (pipeline.throttle.longest_wait() if pending.speaker_id == ANONYMOUS_ID
+                    else pipeline.throttle.wait_seconds(pending.speaker_id))
+            if wait > 0:
+                seconds = max(1, math.ceil(wait))
+                raise HTTPException(
+                    429,
+                    f"Too many failed attempts for this identity. Please wait {seconds} s before the next one.",
+                    headers={"Retry-After": str(seconds)},
+                )
         raw = await _read_audio(audio)
         if not raw:
             raise HTTPException(400, "The uploaded audio is empty.")
